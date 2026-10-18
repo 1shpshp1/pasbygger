@@ -515,7 +515,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. okt. 2026 (e)</p>
+<p class="build" id="build">App-version 18. okt. 2026 (f)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -860,10 +860,13 @@ const AUTH = { token: "", until: 0 };
 let AUTH_TIMER = null;
 const isAuthed = () => !!AUTH.token && Date.now() < AUTH.until;
 
+/* The login is kept in localStorage, so it survives closing the app (sessionStorage is wiped by phones
+   when the app is closed or put to sleep). It still ends after 30 minutes. */
 function saveAuth() {
   try {
-    if (AUTH.token) sessionStorage.setItem("oevAuth", JSON.stringify(AUTH));
-    else sessionStorage.removeItem("oevAuth");
+    if (AUTH.token) localStorage.setItem("oevAuth", JSON.stringify(AUTH));
+    else localStorage.removeItem("oevAuth");
+    sessionStorage.removeItem("oevAuth");     // from older versions of the app
   } catch (e) { /* storage not available: the login then lasts until the page is reloaded */ }
 }
 
@@ -890,10 +893,11 @@ function expire() {
   }
 }
 
-(function restoreAuth() {                     // a reload within the 30 minutes keeps the login
+(function restoreAuth() {                     // opening the app again within the 30 minutes keeps the login
   try {
-    const a = JSON.parse(sessionStorage.getItem("oevAuth") || "null");
+    const a = JSON.parse(localStorage.getItem("oevAuth") || sessionStorage.getItem("oevAuth") || "null");
     if (a && a.token && Date.now() < a.until) { AUTH.token = a.token; AUTH.until = a.until; scheduleExpiry(); }
+    else localStorage.removeItem("oevAuth");   // expired: tidy up
   } catch (e) { /* ignore */ }
 })();
 
