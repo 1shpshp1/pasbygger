@@ -515,7 +515,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. okt. 2026 (c)</p>
+<p class="build" id="build">App-version 18. okt. 2026 (d)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -564,7 +564,7 @@ document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML
 
 /* ===================== Connection to the Google Sheet ===================== */
 /* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
-const API_URL = "https://script.google.com/macros/s/AKfycbwMi0qggnRvoW8MCYx0v7dUWDoXrIzTxnACrX7m73Gvdv4EQ0qkSivz4fnNdYIssRPm/exec";
+const API_URL = "PASTE_YOUR_WEB_APP_URL_HERE";
 
 /* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
    The body is sent as plain text, which Google accepts from another website without extra checks. */
@@ -792,7 +792,8 @@ const LIB_FILTERS = [
   { col: "Aldersgruppe", label: "Aldersgruppe" },
   { col: "Temaer",       label: "Tema" },
   { col: "Undertemaer",  label: "Undertema", parent: "Temaer" },   // only shows the subthemes of the chosen theme
-  { col: "Fokus",        label: "Fokus", byCount: true, limit: 12 }, // most used first; "Vis alle" for the rest
+  { col: "Fokus",        label: "Fokus", byCount: true, limit: 12, grouped: true }, // under group headings from the "Tags" tab;
+                                                                            // without groups: most used first, "Vis alle" for the rest
   { col: "Kategori",     label: "Kategori" }
 ];
 /* Columns whose values are cleaned up: quotes removed, "?" and capitals ignored when comparing */
@@ -1097,7 +1098,8 @@ function loadLibrary(cb, silent) {
         }
       });
 
-      LIB = { drills: drills, headers: res.headers, sections: sectionsFor(res.headers), total: total, tree: tree };
+      LIB = { drills: drills, headers: res.headers, sections: sectionsFor(res.headers), total: total, tree: tree,
+              groups: tagGroups(res.groups) };
       if (PRESET != null) applyPreset(); else renderLibrary();
       libDone();
     }, function (err) {
@@ -1135,9 +1137,37 @@ function chipHtml(f, v) {
             data-col="${esc(f.col)}" data-val="${esc(v)}">${esc(v)}<span class="n">${n}</span></button>`;
 }
 
+/* Groups from the "Tags" tab, per column: { order: [group names], of: tag key -> group, rank: tag key -> position } */
+function tagGroups(list) {
+  const out = {};
+  (list || []).forEach(function (g, i) {
+    const G = out[g.col] = out[g.col] || { order: [], of: new Map(), rank: new Map() };
+    const k = tagKey(aliasOf(g.col, g.tag));
+    if (G.order.indexOf(g.group) === -1) G.order.push(g.group);
+    if (!G.of.has(k)) { G.of.set(k, g.group); G.rank.set(k, i); }
+  });
+  return out;
+}
+
 /* The buttons of one filter group */
 function groupBodyHtml(f) {
   const mk = v => chipHtml(f, v);
+
+  const G = f.grouped && LIB.groups && LIB.groups[f.col];
+  if (G) {                                    // tags under their group headings; tags without a group under "Andet"
+    const byGroup = new Map(G.order.map(g => [g, []]));
+    const rest = [];
+    LIB.total[f.col].forEach(function (n, v) {
+      const g = G.of.get(tagKey(v));
+      (g ? byGroup.get(g) : rest).push(v);
+    });
+    const rank = v => { const r = G.rank.get(tagKey(v)); return r == null ? 1e9 : r; };
+    const blocks = [];
+    byGroup.forEach(function (vals, g) { if (vals.length) blocks.push([g, vals.sort((a, b) => rank(a) - rank(b))]); });
+    if (rest.length) blocks.push(["Andet", rest.sort(byAlpha)]);
+    return blocks.map(b => `<div class="fsub"><span class="fsub-label">${esc(b[0])}</span>${b[1].map(mk).join("")}</div>`).join("")
+      || '<span class="fnone">Ingen match</span>';
+  }
 
   if (f.parent) {                             // subthemes, grouped under their theme
     const tree = LIB.tree[f.col], sel = SEL[f.parent];
@@ -1165,7 +1195,7 @@ function renderLibrary() {
   document.getElementById("lib-filters").innerHTML = LIB_FILTERS.map(function (f) {
     const total = LIB.total[f.col].size;
     if (!total) return "";
-    const more = f.limit && total > f.limit;
+    const more = !(f.grouped && LIB.groups && LIB.groups[f.col]) && f.limit && total > f.limit;
     const open = !!GROUP_OPEN[f.col];
     return `<div class="fgroup"><div class="fgroup-label">${esc(f.label)}</div>` +
       (more && open ? `<input type="search" class="fsearch" data-col="${esc(f.col)}" value="${esc(GROUP_QUERY[f.col] || "")}"
@@ -1282,11 +1312,13 @@ function applyPreset() {
 
   const tema = matchTags("Temaer", p.tema);
   const under = matchTags("Undertemaer", p.undertema);
+  const underFokus = matchTags("Fokus", p.undertema);       // the plan's Undertema can be a Fokus tag on the drills
   let fokus = matchTags("Fokus", p.fokus), similar = false;
   if (!fokus.length) { fokus = similarFokus(p.fokus); similar = fokus.length > 0; }
+  const both = fokus.concat(underFokus.filter(v => fokus.indexOf(v) === -1));
 
   // Try the most specific combination first; loosen it step by step until there are drills to show
-  const tries = [[tema, under, fokus], [tema, under, []], [tema, [], []], [[], [], fokus]];
+  const tries = [[tema, under, both], [tema, under, underFokus], [tema, under, []], [tema, [], []], [[], [], both]];
   let used = null;
   for (let i = 0; i < tries.length && !used; i++) {
     const t = tries[i];
