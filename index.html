@@ -520,6 +520,23 @@
 </div>
 
 <script>
+/* Runs before the main script. If the main script breaks (for example after an edit),
+   or the app has not started after 25 seconds, the spinner is replaced by a message. */
+(function () {
+  function show(msg) {
+    if (window.APP_STARTED) return;
+    var box = document.getElementById("sessions");
+    if (box) box.innerHTML = '<p style="grid-column:1/-1">' + msg + '</p>';
+  }
+  window.addEventListener("error", function (e) {
+    show("Appen kunne ikke starte. Fejl: " + String(e.message || "ukendt").replace(/[<>&]/g, ""));
+  });
+  setTimeout(function () { show("Appen svarer ikke. Tjek forbindelsen og genindlæs siden."); }, 25000);
+})();
+</script>
+
+<script>
+window.APP_STARTED = false;
 
 /* Shows any JavaScript error in the small grey line at the bottom of the page (for testing) */
 window.addEventListener("error", function (e) {
@@ -533,6 +550,7 @@ document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML
 
 google.script.run
   .withSuccessHandler(function (sessions) {
+    window.APP_STARTED = true;
     expandSpinner(function () {
       try {
         renderSessions(sessions);
@@ -547,6 +565,7 @@ google.script.run
     });
   })
   .withFailureHandler(function (err) {
+    window.APP_STARTED = true;
     document.getElementById("sessions").innerHTML =
       '<p style="grid-column:1/-1">Kunne ikke hente træningspas. Prøv igen om lidt.</p>';
   })
