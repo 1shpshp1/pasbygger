@@ -515,7 +515,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. okt. 2026 (d)</p>
+<p class="build" id="build">App-version 18. okt. 2026 (e)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1389,15 +1389,29 @@ function libBody(def, d) {
       return m ? `<li><strong>${esc(m[1])}:</strong> ${esc(m[2])}</li>` : `<li>${esc(l)}</li>`;
     }).join("") + "</ul>";
   }
-  if (def.type === "variations") {            // lines starting with + or - get a sign badge
+  if (def.type === "variations") {
+    /* A line gets a plus/minus badge when it starts with + or - (Sheets sometimes turns "+" into "=+";
+       that is understood too), or when it comes under a heading "Progression" or "Regression". */
     const lines = String(val).split(/\n+/).map(x => x.trim()).filter(Boolean);
-    return '<ul class="var-list">' + lines.map(function (l) {
+    const items = [];
+    let mode = "";
+    lines.forEach(function (l) {
+      l = l.replace(/^['=]+\s*(?=[-–−+])/, "");               // "=+ text" or "'+ text" -> "+ text"
+      const h = l.match(/^(pro\w*ion\w*|regre\w*)\s*:?\s*(.*)$/i);
+      if (h && !/\s/.test(h[1])) {                             // a heading, maybe with text after it
+        mode = /^pro/i.test(h[1]) ? "plus" : "minus";
+        if (!h[2]) return;
+        l = h[2];
+      }
       const m = l.match(/^(\+\/[-–−]|[-–−]\/\+|\+|[-–−])\s*(.*)$/);
-      if (!m) return `<li><span class="sign none"></span><span>${esc(l)}</span></li>`;
-      const cls = m[1].length > 1 ? "pm" : m[1] === "+" ? "plus" : "minus";
-      const sign = cls === "pm" ? "±" : cls === "plus" ? "+" : "−";
-      return `<li><span class="sign ${cls}">${sign}</span><span>${esc(m[2] || l)}</span></li>`;
-    }).join("") + "</ul>";
+      if (m) {
+        const cls = m[1].length > 1 ? "pm" : m[1] === "+" ? "plus" : "minus";
+        items.push([cls, m[2] || l]);
+      } else items.push([mode || "none", l]);
+    });
+    const SIGN = { plus: "+", minus: "−", pm: "±", none: "" };
+    return '<ul class="var-list">' + items.map(it =>
+      `<li><span class="sign ${it[0]}">${SIGN[it[0]]}</span><span>${esc(it[1])}</span></li>`).join("") + "</ul>";
   }
   if (def.type === "list") {
     const items = String(val).split(/[;\n]+/).map(x => x.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
