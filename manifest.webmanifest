@@ -1,0 +1,16 @@
+{
+  "name": "ØIF U12 træningspas",
+  "short_name": "ØIF U12",
+  "description": "Træningspas og øvelser for ØIF U12",
+  "lang": "da",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f4f4",
+  "theme_color": "#AD152F",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
