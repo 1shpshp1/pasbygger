@@ -1,17 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>ØIF U12 træningspas</title>
-  <meta name="theme-color" content="#AD152F">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="ØIF U12">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <base target="_top">
 
   <style>
     /* One place to change the red everywhere */
@@ -31,9 +21,6 @@
       background: #f4f4f4;
       margin: 0;
       padding: 20px;
-      /* keep clear of the notch and the home bar when opened from the home screen */
-      padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
-               max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
     }
 
     #sessions {
@@ -279,7 +266,6 @@
     }
     .v-top {
       display: flex; align-items: center; gap: 12px; padding: 10px 14px;
-      padding-top: calc(10px + env(safe-area-inset-top, 0px));
       background: #ffffff; border-bottom: 3px solid var(--red);
     }
     .v-back {
@@ -515,7 +501,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. okt. 2026</p>
+<p class="build" id="build">Version 18. okt. 2026 (ab)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -545,88 +531,26 @@ window.addEventListener("error", function (e) {
 const LINK_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML("afterbegin", LINK_ICON));
 
-/* ===================== Connection to the Google Sheet ===================== */
-/* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
-const API_URL = "https://script.google.com/macros/s/AKfycbwMi0qggnRvoW8MCYx0v7dUWDoXrIzTxnACrX7m73Gvdv4EQ0qkSivz4fnNdYIssRPm/exec";
-
-/* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
-   The body is sent as plain text, which Google accepts from another website without extra checks. */
-function api(action, args) {
-  return fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action: action, args: args || [] })
-  })
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
-    .then(function (res) {
-      if (res && res.error) throw new Error(res.error);
-      return res ? res.result : null;
+google.script.run
+  .withSuccessHandler(function (sessions) {
+    expandSpinner(function () {
+      try {
+        renderSessions(sessions);
+        loadAppUrl();
+        openSessionFromUrl();
+        if (isAuthed()) loadLibrary(null, true);   // only when already logged in: loads the drills in the background
+      } catch (err) {
+        clearLoading();
+        document.getElementById("sessions").innerHTML =
+          '<p style="grid-column:1/-1">Kunne ikke vise træningerne: ' + esc(err.message) + '</p>';
+      }
     });
-}
-
-/* ---- Start: show the last saved plan at once, then fetch the newest one ---- */
-const SESSIONS_KEY = "oevSessions";            // the plan is saved on the phone, so the app also opens offline
-let LATEST = null;                             // the newest plan we have
-let STARTED = false, SHOWN = false, PENDING_SESSIONS = false;
-
-function viewerOpen() {
-  return !document.getElementById("viewer").classList.contains("view-hidden");
-}
-
-function gotSessions(sessions) {
-  LATEST = sessions;
-  if (!STARTED) { STARTED = true; expandSpinner(firstRender); return; }
-  if (!SHOWN) return;                          // the first render is about to show LATEST anyway
-  if (viewerOpen()) { PENDING_SESSIONS = true; return; }   // don't change the list under an open training
-  renderSessions(LATEST);
-}
-
-function firstRender() {
-  SHOWN = true;
-  try {
-    renderSessions(LATEST);
-    openSessionFromUrl();
-    if (isAuthed()) loadLibrary(null, true);   // only when already logged in: loads the drills in the background
-  } catch (err) {
-    clearLoading();
-    document.getElementById("sessions").innerHTML =
-      '<p style="grid-column:1/-1">Kunne ikke vise træningerne: ' + esc(err.message) + '</p>';
-  }
-}
-
-(function start() {
-  if (API_URL.indexOf("PASTE_") === 0) {
-    clearLoading();
-    document.getElementById("sessions").innerHTML =
-      '<p style="grid-column:1/-1">Appen mangler adressen til Google Sheet-scriptet (API_URL i index.html).</p>';
-    return;
-  }
-  let saved = null;
-  try { saved = localStorage.getItem(SESSIONS_KEY); } catch (e) { /* storage not available */ }
-  if (saved) {
-    try { gotSessions(JSON.parse(saved)); } catch (e) { saved = null; }
-  }
-  api("getSessions").then(function (sessions) {
-    const text = JSON.stringify(sessions);
-    try { localStorage.setItem(SESSIONS_KEY, text); } catch (e) { /* storage full or blocked */ }
-    if (text !== saved) gotSessions(sessions);
-  }, function () {
-    if (saved) { showToast("Ingen forbindelse – viser den senest hentede plan."); return; }
-    clearLoading();
+  })
+  .withFailureHandler(function (err) {
     document.getElementById("sessions").innerHTML =
       '<p style="grid-column:1/-1">Kunne ikke hente træningspas. Prøv igen om lidt.</p>';
-  });
-})();
-
-/* Offline support and "Add to Home Screen" */
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function () {
-    navigator.serviceWorker.register("sw.js").catch(function () { /* the app works without it */ });
-  });
-}
+  })
+  .getSessions();
 
 /* Make sure the loading screen can never stay on top of the page */
 function clearLoading() {
@@ -799,7 +723,7 @@ function exerciseLink(d) {
 }
 
 /* Note shown under a link, by website */
-const LINK_NOTES = { "mit.dbu.dk": "Kræver login hos DBU" };
+const LINK_NOTES = { "mit.dbu.dk": "Kræver login hos DBU", "fck.better-coaching.dk": "Kræver login hos FCK" };
 
 /* "6–12 spillere", "Min. 6 spillere", "Op til 12 spillere" */
 function rangeText(a, b, unit) {
@@ -905,7 +829,8 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
   const go = document.getElementById("login-go"), err = document.getElementById("login-err");
   go.disabled = true; go.textContent = "Tjekker…"; err.textContent = "";
   const done = function () { go.disabled = false; go.textContent = "Åbn"; };
-  api("login", [pw]).then(function (res) {
+  google.script.run
+    .withSuccessHandler(function (res) {
       done();
       if (!res || !res.ok) {
         err.textContent =
@@ -921,10 +846,12 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
       const cb = LOGIN_CB; LOGIN_CB = null;
       closeLogin();
       if (cb && cb.ok) cb.ok();
-    }, function () {
+    })
+    .withFailureHandler(function () {
       done();
       err.textContent = "Kunne ikke kontrollere koden. Prøv igen om lidt.";
-    });
+    })
+    .login(pw);
 });
 
 function cancelLogin() {
@@ -1051,7 +978,8 @@ function loadLibrary(cb, silent) {
   if (cb) LIB_WAIT.push(cb);
   if (LIB_LOADING) return;
   LIB_LOADING = true;
-  api("getDrills", [AUTH.token]).then(function (res) {
+  google.script.run
+    .withSuccessHandler(function (res) {
       const drills = res.drills;              // the server already shows each drill only once
       setAliases(res.aliases);
 
@@ -1077,7 +1005,8 @@ function loadLibrary(cb, silent) {
       LIB = { drills: drills, headers: res.headers, sections: sectionsFor(res.headers), total: total, tree: tree };
       if (PRESET != null) applyPreset(); else renderLibrary();
       libDone();
-    }, function (err) {
+    })
+    .withFailureHandler(function (err) {
       if (/LOGIN/.test(String(err && err.message))) {      // the login is no longer valid on the server
         const waiting = LIB_WAIT.splice(0);
         wipeLibrary();
@@ -1089,7 +1018,8 @@ function loadLibrary(cb, silent) {
       document.getElementById("drill-grid").innerHTML =
         "<p>Kunne ikke hente øvelser. Prøv igen om lidt.</p>";
       libDone();
-    });
+    })
+    .getDrills(AUTH.token);
 }
 
 /* Does a drill match the search and the selected tags (ignoring one filter group, for counting)? */
@@ -1500,7 +1430,7 @@ const INERT_IDS = ["nav-bar", "sessions", "library"];
    3. Fokus og variation: focus points, variations, competition
    4. Mere: all tags, notes and the link. Columns not listed here (extra columns in the sheet) end up here too. */
 const LIB_GROUPS = [
-  { title: "Sådan gør du",         cols: ["Video", "Beskrivelse", "Felt"] },
+  { title: "Sådan gør du",         cols: ["Video", "Beskrivelse", "Materialer", "Felt"] },
   { title: "Fokus og variation",   cols: ["Læringsmål", "Fokuspunkter", "Variationer", "Konkurrence"] },
   { title: "Mere",                 cols: ["Noter", "Link"], takesRest: true, tags: true }
 ];
@@ -1607,7 +1537,8 @@ function loadSessionDrills(ids, cb) {
       cbs.forEach(f => f(d || null));
     });
   };
-  api("getSessionDrills", [ids]).then(function (res) {
+  google.script.run
+    .withSuccessHandler(function (res) {
       if (res && !LIB) {                                  // the same tidy-up of tags as in the library
         setAliases(res.aliases);
         res.drills.forEach(d => { SESSION_DRILLS[cleanVal(d["ID"])] = d; });
@@ -1615,7 +1546,9 @@ function loadSessionDrills(ids, cb) {
         MINI = { sections: sectionsFor(res.headers) };
       }
       finish(res);
-    }, function () { finish(null); });
+    })
+    .withFailureHandler(function () { finish(null); })
+    .getSessionDrills(ids);
 }
 
 /* Opens one drill; if it is already fetched it is instant, otherwise it waits for the fetch */
@@ -1697,9 +1630,17 @@ function openSession(index) {
 }
 
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
+let APP_URL = "";
+function loadAppUrl() {
+  google.script.run
+    .withSuccessHandler(function (u) { APP_URL = u || ""; })
+    .withFailureHandler(function () {})
+    .getAppUrl();
+}
+
 function sessionLink(s) {
-  if (!s || !s.iso) return "";
-  return location.origin + location.pathname + "?s=" + encodeURIComponent(s.iso);
+  if (!APP_URL || !s || !s.iso) return "";
+  return APP_URL + (APP_URL.indexOf("?") === -1 ? "?" : "&") + "s=" + encodeURIComponent(s.iso);
 }
 
 function copySessionLink(btn) {
@@ -1714,9 +1655,12 @@ function copySessionLink(btn) {
 
 /* Opened through a training link: show that training straight away */
 function openSessionFromUrl() {
-  const want = new URLSearchParams(location.search).get("s");
-  const i = want ? SESSIONS.findIndex(x => x.iso === want) : -1;
-  if (i !== -1) openSession(i);
+  if (!(window.google && google.script && google.script.url && google.script.url.getLocation)) return;
+  google.script.url.getLocation(function (loc) {
+    const want = loc && loc.parameter && loc.parameter.s;
+    const i = want ? SESSIONS.findIndex(x => x.iso === String(want)) : -1;
+    if (i !== -1) openSession(i);
+  });
 }
 
 function openViewer(title, pages, opener, onBack, drill) {
@@ -1759,11 +1703,6 @@ function closeDrill() {
   document.getElementById("v-pages").innerHTML = "";      // also stops any playing video
   INERT_IDS.forEach(id => document.getElementById(id).removeAttribute("inert"));
   document.body.classList.remove("noscroll");
-  if (PENDING_SESSIONS) {                                 // a newer plan arrived while the training was open
-    PENDING_SESSIONS = false;
-    renderSessions(LATEST);
-    V.opener = null;                                      // the old card is gone
-  }
   if (V.opener) V.opener.focus();
 }
 
