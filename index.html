@@ -238,6 +238,8 @@
     .tagbtn[aria-pressed="true"] .n { color: #ffffff; }
     .tagbtn:disabled { opacity: 0.4; cursor: default; }
 
+    .lib-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 0; color: #666; }
+    .lib-loading .spinner { --size: 64px; }
     .lib-status { display: flex; align-items: center; gap: 12px; margin: 14px 0; color: #555; }
     .clearbtn {
       padding: 4px 10px; border: 1px solid var(--red); border-radius: 99px;
@@ -500,7 +502,7 @@
   </details>
   <div class="lib-note" id="lib-note"></div>
   <div class="lib-status" id="lib-status" aria-live="polite"></div>
-  <div id="drill-grid"><p>Indlæser øvelser…</p></div>
+  <div id="drill-grid"><div class="lib-loading"><div class="spinner" aria-hidden="true"></div><span>Indlæser øvelser…</span></div></div>
 </div>
 
 <div id="login" class="login view-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -518,7 +520,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 19. okt. 2026 (b)</p>
+<p class="build" id="build">App-version 19. okt. 2026 (c)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -567,7 +569,7 @@ document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML
 
 /* ===================== Connection to the Google Sheet ===================== */
 /* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
-const API_URL = "https://script.google.com/macros/s/AKfycby0wfFKCl3JBcaERGKSbg6Vpu4IoZvvzZt20ZAe_mgPCrwUEiahJZJ7CwCgvu2I-3Ew/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKxQ6XJmC3j3q8ElGVHbQa3EGpHn5Bh-JmOnzWcjTzA37C8/exec";
 
 /* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
    The body is sent as plain text, which Google accepts from another website without extra checks. */
@@ -1079,10 +1081,19 @@ let LIB_LOADING = false;
 const LIB_WAIT = [];            // things to do when the library has loaded (or failed to load)
 function libDone() { LIB_LOADING = false; LIB_WAIT.splice(0).forEach(f => f()); }
 
+/* Spinning ball in the Øvelser tab while the drills are on their way */
+function showLibLoading() {
+  document.getElementById("lib-filters").innerHTML = "";
+  document.getElementById("lib-status").innerHTML = "";
+  document.getElementById("drill-grid").innerHTML =
+    '<div class="lib-loading" role="status"><div class="spinner" aria-hidden="true"></div><span>Indlæser øvelser…</span></div>';
+}
+
 function loadLibrary(cb, silent) {
   if (cb) LIB_WAIT.push(cb);
   if (LIB_LOADING) return;
   LIB_LOADING = true;
+  if (!LIB) showLibLoading();
   api("getDrills", [AUTH.token]).then(function (res) {
       const drills = res.drills;              // the server already shows each drill only once
       setAliases(res.aliases);
