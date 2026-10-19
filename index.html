@@ -331,6 +331,9 @@
     .dchip.sub { background: #ffffff; border: 1px solid #d6d6d6; }
     .dchip.focus { background: #ffffff; border: 1px solid var(--red); color: var(--red); }
     .dchip.more { background: #ffffff; border: 1px solid #d6d6d6; color: #555555; }
+    .dchip[hidden] { display: none; }
+    button.dchip.more { font: inherit; font-size: 13px; line-height: inherit; cursor: pointer; }
+    button.dchip.more:hover { border-color: var(--red); color: var(--red); }
 
     .v-bottom {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -515,7 +518,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 19. okt. 2026</p>
+<p class="build" id="build">App-version 19. okt. 2026 (b)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -564,7 +567,7 @@ document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML
 
 /* ===================== Connection to the Google Sheet ===================== */
 /* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
-const API_URL = "https://script.google.com/macros/s/AKfycbwLMQWXeDNlAtL-ufjIRaHMoYmmosLi18s92VN35Q0sC42mxuG14itnd-qrl_-g9QM/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycby0wfFKCl3JBcaERGKSbg6Vpu4IoZvvzZt20ZAe_mgPCrwUEiahJZJ7CwCgvu2I-3Ew/exec";
 
 /* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
    The body is sent as plain text, which Google accepts from another website without extra checks. */
@@ -1446,13 +1449,18 @@ function drillChips(d, full) {
   const chip = (cls, t) => `<span class="dchip ${cls}">${esc(t)}</span>`;
   const bane = cleanVal(d["Banestørrelse"]);
 
-  let fokus = focusTags(d), hidden = 0;
-  if (!full && fokus.length > 3) { hidden = fokus.length - 3; fokus = fokus.slice(0, 3); }
+  const fokus = focusTags(d);
+  const shown = full ? fokus.length : Math.min(fokus.length, 3);   // on the card: 3 focus tags, the rest behind "+n"
+  const hidden = fokus.length - shown;
 
   const red = [].concat(
     splitVals(d, "Format").map(v => chip("cat", v)),
-    fokus.map(v => chip("focus", v)));
-  if (hidden) red.push(`<span class="dchip more">+${hidden}</span>`);
+    fokus.slice(0, shown).map(v => chip("focus", v)));
+  if (hidden) {
+    red.push(`<button type="button" class="dchip more" aria-label="Vis ${hidden} flere tags"
+                onclick="event.stopPropagation(); showMoreChips(this)" onkeydown="event.stopPropagation()">+${hidden}</button>`);
+    fokus.slice(shown).forEach(v => red.push(chip("focus", v).replace("<span ", "<span hidden ")));
+  }
 
   const grey = [].concat(
     rawVals(d, "Aldersgruppe").map(v => chip("", v)),
@@ -1468,6 +1476,12 @@ function drillChips(d, full) {
   }
   return (red.length  ? `<div class="dchips">${red.join("")}</div>`  : "") +
          (grey.length ? `<div class="dchips">${grey.join("")}</div>` : "");
+}
+
+/* "+n" on a card: show the hidden tags (without opening the drill) */
+function showMoreChips(btn) {
+  btn.parentElement.querySelectorAll(".dchip[hidden]").forEach(el => { el.hidden = false; });
+  btn.remove();
 }
 
 /* Card in the list: tap to open the full-screen drill */
