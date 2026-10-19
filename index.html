@@ -524,7 +524,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 19. okt. 2026 (e)</p>
+<p class="build" id="build">App-version 19. okt. 2026 (f)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1093,51 +1093,89 @@ function showLibLoading() {
     '<div class="lib-loading" role="status"><div class="spinner" aria-hidden="true"></div><span>Indlæser øvelser…</span></div>';
 }
 
+/* The last library the server sent is kept on this phone (key LIB_SAVE_KEY), so the Øvelser tab
+   can show it at once after login, while the app asks the server in the background whether anything
+   has changed. It is only shown with a valid login. */
+const LIB_SAVE_KEY = "oevLib";
+
+function readSavedLibrary() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LIB_SAVE_KEY) || "null");
+    return s && s.version && s.res && Array.isArray(s.res.drills) ? s : null;
+  } catch (e) { return null; }
+}
+
+function saveLibrary(res) {
+  try { localStorage.setItem(LIB_SAVE_KEY, JSON.stringify({ version: res.version, res: res })); }
+  catch (e) { try { localStorage.removeItem(LIB_SAVE_KEY); } catch (e2) { /* storage not available */ } }
+}
+
+/* Turns the server's answer into LIB and shows it (filters and search the coach has chosen stay) */
+function useLibrary(res) {
+  const drills = res.drills;              // the server already shows each drill only once
+  setAliases(res.aliases);
+
+  buildCanon(drills);
+  drills.forEach(function (d) {
+    d.__f = {};
+    LIB_FILTERS.forEach(f => { d.__f[f.col] = f.col === "Aldersgruppe" ? ageVals(d) : splitVals(d, f.col); });
+  });
+
+  const total = {}, tree = {};
+  LIB_FILTERS.forEach(function (f) {
+    total[f.col] = new Map();
+    drills.forEach(d => d.__f[f.col].forEach(v => total[f.col].set(v, (total[f.col].get(v) || 0) + 1)));
+    if (f.parent) {
+      tree[f.col] = new Map();
+      drills.forEach(d => d.__f[f.parent].forEach(function (p) {
+        if (!tree[f.col].has(p)) tree[f.col].set(p, new Set());
+        d.__f[f.col].forEach(c => tree[f.col].get(p).add(c));
+      }));
+    }
+  });
+
+  LIB = { drills: drills, headers: res.headers, sections: sectionsFor(res.headers), total: total, tree: tree,
+          groups: tagGroups(res.groups), version: res.version || "" };
+  if (PRESET != null) applyPreset(); else renderLibrary();
+}
+
 function loadLibrary(cb, silent) {
   if (cb) LIB_WAIT.push(cb);
   if (LIB_LOADING) return;
   LIB_LOADING = true;
-  if (!LIB) showLibLoading();
-  api("getDrills", [AUTH.token]).then(function (res) {
-      const drills = res.drills;              // the server already shows each drill only once
-      setAliases(res.aliases);
+  let version = LIB ? LIB.version : "";
+  if (!LIB) {
+    const saved = readSavedLibrary();
+    if (saved) {                                       // show the saved copy now; waiting callers can go on
+      useLibrary(saved.res);
+      version = saved.version;
+      LIB_WAIT.splice(0).forEach(f => f());
+    } else showLibLoading();
+  }
 
-      buildCanon(drills);
-      drills.forEach(function (d) {
-        d.__f = {};
-        LIB_FILTERS.forEach(f => { d.__f[f.col] = f.col === "Aldersgruppe" ? ageVals(d) : splitVals(d, f.col); });
-      });
+  function gotLibrary(res) {
+    if (!res.unchanged) {                              // something changed (or nothing was saved): show the new one
+      saveLibrary(res);
+      useLibrary(res);
+    }
+    libDone();
+  }
 
-      const total = {}, tree = {};
-      LIB_FILTERS.forEach(function (f) {
-        total[f.col] = new Map();
-        drills.forEach(d => d.__f[f.col].forEach(v => total[f.col].set(v, (total[f.col].get(v) || 0) + 1)));
-        if (f.parent) {
-          tree[f.col] = new Map();
-          drills.forEach(d => d.__f[f.parent].forEach(function (p) {
-            if (!tree[f.col].has(p)) tree[f.col].set(p, new Set());
-            d.__f[f.col].forEach(c => tree[f.col].get(p).add(c));
-          }));
-        }
-      });
+  function failedLibrary(err) {
+    if (/LOGIN/.test(String(err && err.message))) {      // the login is no longer valid on the server
+      const waiting = LIB_WAIT.splice(0);
+      wipeLibrary();
+      if (silent && !waiting.length) return;
+      requireLogin(function () { loadLibrary(function () { waiting.forEach(f => f()); }); },
+                   function () { if (!document.getElementById("library").classList.contains("view-hidden")) showView("sessions"); });
+      return;
+    }
+    if (!LIB) document.getElementById("drill-grid").innerHTML =       // a saved copy stays on screen
+      "<p>Kunne ikke hente øvelser. Prøv igen om lidt.</p>";
+    libDone();
+  }
 
-      LIB = { drills: drills, headers: res.headers, sections: sectionsFor(res.headers), total: total, tree: tree,
-              groups: tagGroups(res.groups) };
-      if (PRESET != null) applyPreset(); else renderLibrary();
-      libDone();
-    }, function (err) {
-      if (/LOGIN/.test(String(err && err.message))) {      // the login is no longer valid on the server
-        const waiting = LIB_WAIT.splice(0);
-        wipeLibrary();
-        if (silent && !waiting.length) return;
-        requireLogin(function () { loadLibrary(function () { waiting.forEach(f => f()); }); },
-                     function () { if (!document.getElementById("library").classList.contains("view-hidden")) showView("sessions"); });
-        return;
-      }
-      document.getElementById("drill-grid").innerHTML =
-        "<p>Kunne ikke hente øvelser. Prøv igen om lidt.</p>";
-      libDone();
-    });
+  api("getDrills", [AUTH.token, version]).then(gotLibrary, failedLibrary);
 }
 
 /* Does a drill match the search and the selected tags (ignoring one filter group, for counting)? */
