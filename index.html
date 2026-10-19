@@ -428,7 +428,11 @@
     }
     .lib-note:empty { display: none; }
 
-    .card-actions { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eeeeee; }
+    .card-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eeeeee; }
+    .src-badge {
+      margin-left: auto; padding: 3px 8px; border: 1px solid #d6d6d6; border-radius: 6px;
+      color: #666666; font-size: 12px; font-weight: bold; letter-spacing: 0.04em;
+    }
     .copybtn {
       display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid #d6d6d6;
       border-radius: 99px; background: #ffffff; color: var(--red); font: inherit; font-size: 14px;
@@ -520,7 +524,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 19. okt. 2026 (c)</p>
+<p class="build" id="build">App-version 19. okt. 2026 (e)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1495,6 +1499,12 @@ function showMoreChips(btn) {
   btn.remove();
 }
 
+/* The drill's source (Kilde), e.g. "DBU" or "FCK", in the card's bottom right corner */
+function sourceBadge(d) {
+  const src = cleanVal(String(d["Kilde"] || "").split(/[;,]/)[0]).toUpperCase();
+  return src ? '<span class="src-badge" title="Kilde: ' + esc(src) + '">' + esc(src) + '</span>' : "";
+}
+
 /* Card in the list: tap to open the full-screen drill */
 function drillCard(d, i) {
   return `
@@ -1511,6 +1521,7 @@ function drillCard(d, i) {
       </div>
       <div class="card-actions">
         <button type="button" class="copybtn" data-i="${i}" aria-label="Kopiér link til ${esc(d["Navn"])}">${LINK_ICON}<span class="lbl">Kopiér link</span></button>
+        ${sourceBadge(d)}
       </div>
     </div>`;
 }
