@@ -515,7 +515,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. okt. 2026 (f)</p>
+<p class="build" id="build">App-version 19. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -564,7 +564,7 @@ document.querySelectorAll("#v-share, #v-copy").forEach(b => b.insertAdjacentHTML
 
 /* ===================== Connection to the Google Sheet ===================== */
 /* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
-const API_URL = "https://script.google.com/macros/s/AKfycbwMi0qggnRvoW8MCYx0v7dUWDoXrIzTxnACrX7m73Gvdv4EQ0qkSivz4fnNdYIssRPm/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwLMQWXeDNlAtL-ufjIRaHMoYmmosLi18s92VN35Q0sC42mxuG14itnd-qrl_-g9QM/exec";
 
 /* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
    The body is sent as plain text, which Google accepts from another website without extra checks. */
@@ -789,15 +789,16 @@ function renderSessions(sessions) {
 /* Which columns become filters (within a group: either/or; between groups: and).
    Values in a cell are separated by semicolons, e.g. "U10; U12". */
 const LIB_FILTERS = [
-  { col: "Aldersgruppe", label: "Aldersgruppe" },
+  { col: "Kilde",        label: "Kilde" },                         // DBU / FCK / Egne
   { col: "Temaer",       label: "Tema" },
   { col: "Undertemaer",  label: "Undertema", parent: "Temaer" },   // only shows the subthemes of the chosen theme
   { col: "Fokus",        label: "Fokus", byCount: true, limit: 12, grouped: true }, // under group headings from the "Tags" tab;
                                                                             // without groups: most used first, "Vis alle" for the rest
-  { col: "Kategori",     label: "Kategori" }
+  { col: "Format",       label: "Format", grouped: true },
+  { col: "Aldersgruppe", label: "Aldersgruppe" }
 ];
 /* Columns whose values are cleaned up: quotes removed, "?" and capitals ignored when comparing */
-const TAG_COLS = ["Kategori", "Fokus", "Temaer", "Undertemaer"];
+const TAG_COLS = ["Kilde", "Format", "Fokus", "Temaer", "Undertemaer"];
 /* Sections inside an opened drill, in this order.
    Columns not mentioned anywhere are added automatically as text sections at the end. */
 const LIB_SECTIONS = [
@@ -813,7 +814,7 @@ const LIB_SECTIONS = [
   { col: "Link",         title: "Læs mere",          type: "link"  }
 ];
 /* Columns used elsewhere on the card, or never shown */
-const LIB_RESERVED = ["ID", "Navn", "Fokus", "Sessioner", "Publiceret", "Banestørrelse",
+const LIB_RESERVED = ["ID", "Navn", "Fokus", "Sessioner", "Publiceret", "Banestørrelse", "Kategori", "Kilde", "Format",
   "Antal spillere min", "Antal spillere max", "Varighed min", "Varighed max"];
 /* The link in "Mere" is built from the drill's ID */
 const DBU_EXERCISE_URL = "https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=";
@@ -1166,16 +1167,21 @@ function groupBodyHtml(f) {
       (g ? byGroup.get(g) : rest).push(v);
     });
     const rank = v => { const r = G.rank.get(tagKey(v)); return r == null ? 1e9 : r; };
+    // a group whose tags all give 0 drills with the other choices (and none chosen) is left out
+    const fits = vals => vals.some(v => SEL[f.col].has(v) ||
+      LIB.drills.some(d => libMatches(d, f.col) && filterVals(d, f.col).includes(v)));
     const blocks = [];
-    byGroup.forEach(function (vals, g) { if (vals.length) blocks.push([g, vals.sort((a, b) => rank(a) - rank(b))]); });
-    if (rest.length) blocks.push(["Andet", rest.sort(byAlpha)]);
+    byGroup.forEach(function (vals, g) { if (vals.length && fits(vals)) blocks.push([g, vals.sort((a, b) => rank(a) - rank(b))]); });
+    if (rest.length && fits(rest)) blocks.push(["Andet", rest.sort(byAlpha)]);
     return blocks.map(b => `<div class="fsub"><span class="fsub-label">${esc(b[0])}</span>${b[1].map(mk).join("")}</div>`).join("")
       || '<span class="fnone">Ingen match</span>';
   }
 
   if (f.parent) {                             // subthemes, grouped under their theme
     const tree = LIB.tree[f.col], sel = SEL[f.parent];
-    return Array.from(tree.keys()).filter(p => !sel.size || sel.has(p)).sort(byAlpha).map(p =>
+    const fitsAny = p => Array.from(tree.get(p)).some(v => SEL[f.col].has(v) ||   // hide themes with no matching drills
+      LIB.drills.some(d => libMatches(d, f.col) && filterVals(d, f.col).includes(v)));
+    return Array.from(tree.keys()).filter(p => (!sel.size || sel.has(p)) && fitsAny(p)).sort(byAlpha).map(p =>
       `<div class="fsub"><span class="fsub-label">${esc(p)}</span>${Array.from(tree.get(p)).sort(byAlpha).map(mk).join("")}</div>`
     ).join("");
   }
@@ -1444,7 +1450,7 @@ function drillChips(d, full) {
   if (!full && fokus.length > 3) { hidden = fokus.length - 3; fokus = fokus.slice(0, 3); }
 
   const red = [].concat(
-    splitVals(d, "Kategori").map(v => chip("cat", v)),
+    splitVals(d, "Format").map(v => chip("cat", v)),
     fokus.map(v => chip("focus", v)));
   if (hidden) red.push(`<span class="dchip more">+${hidden}</span>`);
 
@@ -1597,7 +1603,7 @@ function firstPage(d) {
   const diagram = diagramDef ? libBody(diagramDef, d) : "";
 
   // all red tags: category and every focus tag
-  const red = splitVals(d, "Kategori").map(v => `<span class="dchip cat">${esc(v)}</span>`)
+  const red = splitVals(d, "Format").map(v => `<span class="dchip cat">${esc(v)}</span>`)
     .concat(focusTags(d).map(v => `<span class="dchip focus">${esc(v)}</span>`));
 
   return (diagram ? `<div class="v-diagram">${diagram}</div>` : "") +
@@ -1610,10 +1616,11 @@ function tagsSection(d) {
   const row = (label, cls, vals) => vals.length
     ? `<div class="tag-row"><div class="tag-label">${esc(label)}</div><div class="dchips">${vals.map(v => `<span class="dchip ${cls}">${esc(v)}</span>`).join("")}</div></div>`
     : "";
-  const html = row("Kategori", "cat", splitVals(d, "Kategori")) +
-               row("Tema", "sub", splitVals(d, "Temaer")) +
+  const html = row("Tema", "sub", splitVals(d, "Temaer")) +
                row("Undertema", "sub", splitVals(d, "Undertemaer")) +
-               row("Fokus", "focus", focusTags(d));
+               row("Fokus", "focus", focusTags(d)) +
+               row("Format", "cat", splitVals(d, "Format")) +
+               row("Kilde", "sub", splitVals(d, "Kilde"));
   return html ? `<section class="v-sec"><h3>Tags</h3>${html}</section>` : "";
 }
 
