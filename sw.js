@@ -1,7 +1,7 @@
 /* Service worker: keeps the app's own files on the phone, so it opens without a connection.
    The page itself is always fetched fresh when there is a connection, so a new version shows at once.
    Change the number in CACHE when you change an icon or the manifest. */
-const CACHE = "oif-u12-v1";
+const CACHE = "oif-u12-v2";
 const FILES = [
   "./",
   "./index.html",
