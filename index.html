@@ -419,7 +419,8 @@
     .sign.plus { background: #e3f2e5; color: #1b5e20; }
     .sign.minus { background: #fdebd8; color: #8a4b00; }
     .sign.pm { background: #eeeeee; color: #444444; }
-    .sign.none { visibility: hidden; }
+    .sign.neutral { background: #e6eef8; color: #1f4e8c; }   /* a variation that is neither easier nor harder */
+    .var-list li.var-head { display: block; margin-top: 8px; font-weight: bold; }
     .link-note { margin: 2px 0 0 !important; color: #777777; font-size: 14px !important; }
 
     .lib-note {
@@ -524,7 +525,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 19. okt. 2026 (f)</p>
+<p class="build" id="build">App-version 20. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1457,7 +1458,9 @@ function libBody(def, d) {
   }
   if (def.type === "variations") {
     /* A line gets a plus/minus badge when it starts with + or - (Sheets sometimes turns "+" into "=+";
-       that is understood too), or when it comes under a heading "Progression" or "Regression". */
+       that is understood too), or when it comes under a heading "Progression" or "Regression".
+       A short line ending in ":" is a small heading; if it says harder/easier (also in Norwegian),
+       the lines under it get plus/minus. Every other line gets the neutral badge. */
     const lines = String(val).split(/\n+/).map(x => x.trim()).filter(Boolean);
     const items = [];
     let mode = "";
@@ -1473,11 +1476,16 @@ function libBody(def, d) {
       if (m) {
         const cls = m[1].length > 1 ? "pm" : m[1] === "+" ? "plus" : "minus";
         items.push([cls, m[2] || l]);
-      } else items.push([mode || "none", l]);
+      } else if (/:$/.test(l) && l.length <= 160) {            // small heading
+        mode = /sværere|svær|vanskelig|udfordrend|utfordrend|krævende|krevende|progres/i.test(l) ? "plus"
+             : /lettere|nemmere|enklere|regres/i.test(l) ? "minus" : "";
+        items.push(["head", l]);
+      } else items.push([mode || "neutral", l]);
     });
-    const SIGN = { plus: "+", minus: "−", pm: "±", none: "" };
-    return '<ul class="var-list">' + items.map(it =>
-      `<li><span class="sign ${it[0]}">${SIGN[it[0]]}</span><span>${esc(it[1])}</span></li>`).join("") + "</ul>";
+    const SIGN = { plus: "+", minus: "−", pm: "±", neutral: "•" };
+    return '<ul class="var-list">' + items.map(it => it[0] === "head"
+      ? `<li class="var-head">${esc(it[1])}</li>`
+      : `<li><span class="sign ${it[0]}">${SIGN[it[0]]}</span><span>${esc(it[1])}</span></li>`).join("") + "</ul>";
   }
   if (def.type === "list") {
     const items = String(val).split(/[;\n]+/).map(x => x.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
