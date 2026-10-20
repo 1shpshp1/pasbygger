@@ -250,6 +250,7 @@
       display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 20px; align-items: start;
     }
+    .grid-more { grid-column: 1 / -1; justify-self: center; }
     .dchips { margin-top: 8px; }
     .dchip {
       display: inline-block; margin: 0 6px 6px 0; padding: 2px 10px; border-radius: 99px;
@@ -540,7 +541,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. okt. 2026 (b)</p>
+<p class="build" id="build">App-version 20. okt. 2026 (c)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1230,8 +1231,9 @@ function loadLibrary(cb, silent) {
 function libMatches(d, skipCol) {
   if (FAV_ONLY && !isFav(d)) return false;
   if (LIB_QUERY) {
-    const text = Object.keys(d).filter(k => k.indexOf("__") !== 0 && k !== "Sessioner").map(k => d[k]).join(" ").toLowerCase();
-    if (!text.includes(LIB_QUERY)) return false;
+    if (d.__text == null)                     // the drill's text for the search, made once per drill
+      d.__text = Object.keys(d).filter(k => k.indexOf("__") !== 0 && k !== "Sessioner").map(k => d[k]).join(" ").toLowerCase();
+    if (!d.__text.includes(LIB_QUERY)) return false;
   }
   return LIB_FILTERS.every(function (f) {
     return f.col === skipCol || SEL[f.col].size === 0 || filterVals(d, f.col).some(v => SEL[f.col].has(v));
@@ -1334,12 +1336,44 @@ function renderLibrary() {
   renderLibStatus(list.length, anyFilter);
 
   const nFav = LIB.drills.filter(isFav).length;
+  CARDS_SHOWN = 0;
   document.getElementById("drill-grid").innerHTML = list.length
-    ? list.map(drillCard).join("")
+    ? ""
     : FAV_ONLY && !nFav
       ? "<p>Du har ingen favoritter endnu. Tryk på stjernen på en øvelse for at gemme den her.</p>"
       : "<p>Ingen øvelser matcher. Fjern et filter eller prøv en anden søgning.</p>";
+  if (list.length) showMoreCards();
 }
+
+/* The cards are drawn 40 at a time: drawing all of them at once takes seconds on a phone.
+   More are added when the button at the bottom comes near the screen (or is tapped). */
+const CARD_PAGE = 40;
+let CARDS_SHOWN = 0;
+const MORE_OBSERVER = "IntersectionObserver" in window
+  ? new IntersectionObserver(function (entries) {
+      if (entries.some(e => e.isIntersecting)) showMoreCards();
+    }, { rootMargin: "800px 0px" })
+  : null;
+
+function showMoreCards() {
+  const grid = document.getElementById("drill-grid");
+  const old = grid.querySelector(".grid-more");
+  if (old) { if (MORE_OBSERVER) MORE_OBSERVER.unobserve(old); old.remove(); }
+  const start = CARDS_SHOWN;
+  const next = LIB_LIST.slice(start, start + (MORE_OBSERVER ? CARD_PAGE : LIB_LIST.length));
+  grid.insertAdjacentHTML("beforeend", next.map((d, k) => drillCard(d, start + k)).join(""));
+  CARDS_SHOWN = start + next.length;
+  const left = LIB_LIST.length - CARDS_SHOWN;
+  if (left > 0) {
+    grid.insertAdjacentHTML("beforeend",
+      `<button type="button" class="clearbtn grid-more">Vis flere øvelser (${left} tilbage)</button>`);
+    if (MORE_OBSERVER) MORE_OBSERVER.observe(grid.querySelector(".grid-more"));
+  }
+}
+
+document.getElementById("drill-grid").addEventListener("click", function (e) {
+  if (e.target.closest(".grid-more")) showMoreCards();
+});
 
 /* Count, the "Favoritter" switch and "Ryd filtre" above the list */
 function renderLibStatus(n, anyFilter) {
@@ -1387,14 +1421,21 @@ document.getElementById("lib-status").addEventListener("click", function (e) {
   FAV_ONLY = false;
   LIB_FILTERS.forEach(f => { SEL[f.col].clear(); GROUP_QUERY[f.col] = ""; });
   LIB_QUERY = "";
+  clearTimeout(SEARCH_TIMER);
   document.getElementById("lib-search").value = "";
   setLibNote("");
   renderLibrary();
 });
 
-document.getElementById("lib-search").addEventListener("input", function (e) {
-  LIB_QUERY = e.target.value.toLowerCase().trim();
-  if (LIB) renderLibrary();
+let SEARCH_TIMER = null;
+document.getElementById("lib-search").addEventListener("input", function (e) {   // waits for a short pause in the typing
+  clearTimeout(SEARCH_TIMER);
+  const q = e.target.value.toLowerCase().trim();
+  SEARCH_TIMER = setTimeout(function () {
+    if (q === LIB_QUERY) return;
+    LIB_QUERY = q;
+    if (LIB) renderLibrary();
+  }, 200);
 });
 
 /* From a training session: open the library filtered on the session's theme, subtheme and focus */
@@ -1434,6 +1475,7 @@ function applyPreset() {
   const p = PRESET;
   PRESET = null;
   LIB_QUERY = "";
+  clearTimeout(SEARCH_TIMER);
   document.getElementById("lib-search").value = "";
   LIB_FILTERS.forEach(f => { GROUP_QUERY[f.col] = ""; });
 
