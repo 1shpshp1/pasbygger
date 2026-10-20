@@ -468,6 +468,17 @@
     }
 
     .v-diagram { margin-bottom: 14px; }
+    /* Placeholder when a drill has no picture: a faded, generic pitch with a clear label */
+    .ph-diagram {
+      position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 3 / 2;
+      max-height: 60vh; border: 2px dashed #c9c9c9; border-radius: 8px; background: #f7f7f7; overflow: hidden;
+    }
+    .ph-diagram svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .ph-label {
+      position: relative; max-width: 80%; padding: 10px 14px; border-radius: 10px; background: rgba(255,255,255,0.92);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12); color: #555555; font-size: 14px; text-align: center;
+    }
+    .ph-label strong { display: block; margin-bottom: 2px; color: #333333; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
     .v-diagram img.media { width: 100%; max-height: 60vh; }
     .v-inner .dchips { margin-top: 0; }
     .v-diagram + .dchips, .dchips + .dchips { margin-top: 6px; }
@@ -541,7 +552,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. okt. 2026 (c)</p>
+<p class="build" id="build">App-version 20. okt. 2026 (e)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1530,7 +1541,7 @@ function libMedia(type, raw) {
   if (type === "image") {
     const id = driveId(u);
     const src = id ? "https://drive.google.com/thumbnail?id=" + id + "&sz=w1400" : u;
-    return `<img class="media" src="${esc(src)}" alt="Diagram" loading="lazy">`;
+    return `<img class="media" src="${esc(src)}" alt="Diagram" loading="lazy" onerror="brokenDiagram(this)">`;
   }
   let m;
   if ((m = u.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/)))
@@ -1802,6 +1813,26 @@ function factChips(d) {
 }
 
 /* First page: diagram on top, then the facts, then the main focus tags */
+/* Shown instead of the diagram when a drill has no picture (or its picture can't be loaded).
+   A faded, generic pitch – clearly labelled, so nobody takes it for the drill itself. */
+const PITCH_SVG = '<svg viewBox="0 0 300 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true" fill="none" stroke="#d2d2d2" stroke-width="2">' +
+  '<rect x="10" y="10" width="280" height="180" rx="2"/><line x1="150" y1="10" x2="150" y2="190"/><circle cx="150" cy="100" r="26"/>' +
+  '<rect x="10" y="55" width="40" height="90"/><rect x="250" y="55" width="40" height="90"/>' +
+  '<rect x="10" y="80" width="14" height="40"/><rect x="276" y="80" width="14" height="40"/></svg>';
+
+function diagramPlaceholder(d) {
+  const hasVideo = !!(d && cleanVal(d["Video"]));
+  return `<div class="ph-diagram" role="img" aria-label="Pladsholder: der er intet billede af denne øvelse">${PITCH_SVG}` +
+    `<div class="ph-label"><strong>Pladsholder</strong>Der er intet billede af denne øvelse. Tegningen viser ikke øvelsen.` +
+    (hasVideo ? "<br>Se videoen under »Sådan gør du«." : "") + `</div></div>`;
+}
+
+/* An image that can't be loaded is swapped for the placeholder */
+function brokenDiagram(img) {
+  const box = img.closest(".v-diagram");
+  if (box) box.innerHTML = diagramPlaceholder(V.drill);
+}
+
 function firstPage(d) {
   const diagramDef = libSections().find(x => x.col === "Diagram");
   const diagram = diagramDef ? libBody(diagramDef, d) : "";
@@ -1810,7 +1841,7 @@ function firstPage(d) {
   const red = splitVals(d, "Format").map(v => `<span class="dchip cat">${esc(v)}</span>`)
     .concat(focusTags(d).map(v => `<span class="dchip focus">${esc(v)}</span>`));
 
-  return (diagram ? `<div class="v-diagram">${diagram}</div>` : "") +
+  return `<div class="v-diagram">${diagram || diagramPlaceholder(d)}</div>` +
          factChips(d) +
          (red.length ? `<div class="dchips">${red.join("")}</div>` : "");
 }
