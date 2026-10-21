@@ -1,7 +1,7 @@
 {
-  "name": "ØIF U12 træningspas",
-  "short_name": "ØIF U12",
-  "description": "Træningspas og øvelser for ØIF U12",
+  "name": "Pasbygger",
+  "short_name": "Pasbygger",
+  "description": "Træningspas og øvelser for fodboldtrænere",
   "lang": "da",
   "start_url": "./",
   "scope": "./",
