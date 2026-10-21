@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>ØIF U12 træningspas</title>
+  <title>Pasbygger</title>
   <meta name="theme-color" content="#AD152F">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="ØIF U12">
+  <meta name="apple-mobile-web-app-title" content="Pasbygger">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
   <style>
@@ -474,6 +474,8 @@
       max-height: 60vh; border: 2px dashed #c9c9c9; border-radius: 8px; background: #f7f7f7; overflow: hidden;
     }
     .ph-diagram svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .ph-diagram.ph-video { aspect-ratio: 16 / 9; flex-direction: column; gap: 10px; }
+    .ph-diagram.ph-video svg { position: static; width: 56px; height: 56px; }
     .ph-label {
       position: relative; max-width: 80%; padding: 10px 14px; border-radius: 10px; background: rgba(255,255,255,0.92);
       box-shadow: 0 1px 4px rgba(0,0,0,0.12); color: #555555; font-size: 14px; text-align: center;
@@ -522,7 +524,7 @@
 <div id="sessions">
   <div class="loading" role="status">
     <div class="spinner" aria-hidden="true"></div>
-    <span>Indlæser ØIF U12 træningspas…</span>
+    <span>Indlæser Pasbygger…</span>
   </div>
 </div>
 
@@ -552,7 +554,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. okt. 2026 (e)</p>
+<p class="build" id="build">App-version 21. okt. 2026 (d)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -725,10 +727,27 @@ function clearLoading() {
   document.querySelectorAll(".loading").forEach(function (el) { el.remove(); });
 }
 
+/* The spinner is never expanded before it has been drawn and seen for a moment. Without this, a plan
+   saved on the phone made the app expand it while the page was still starting up, so the first thing
+   drawn was the expansion itself: a blank screen, then the ball growing. */
+const SPINNER_MIN_MS = 400;
+
 function expandSpinner(done) {
   const box = document.querySelector(".loading");
   if (!box) { done(); return; }
+  requestAnimationFrame(function () {                 // the spinner is about to be drawn ...
+    requestAnimationFrame(function () {               // ... and now it has been
+      const shownFor = performance.now() - (SPINNER_DRAWN_AT == null ? performance.now() : SPINNER_DRAWN_AT);
+      setTimeout(function () { growSpinner(box, done); }, Math.max(0, SPINNER_MIN_MS - shownFor));
+    });
+  });
+}
 
+/* When the spinner was first drawn (so the 0.4 s also counts the time spent waiting for the plan) */
+let SPINNER_DRAWN_AT = null;
+requestAnimationFrame(function () { requestAnimationFrame(function () { SPINNER_DRAWN_AT = performance.now(); }); });
+
+function growSpinner(box, done) {
   const spinner = box.querySelector(".spinner");
   const diagonal = Math.hypot(window.innerWidth, window.innerHeight);
   box.style.setProperty("--grow", (diagonal / spinner.offsetWidth).toFixed(1));
@@ -1272,6 +1291,15 @@ function tagGroups(list) {
   return out;
 }
 
+/* A format like "5v3" or "2+1v3" is a number of players. Such a format goes under "Antal spillere" even when
+   the "Tags" tab doesn't list it yet (e.g. after an import), sorted by how many players it takes. */
+const PLAYER_FORMAT = /^\d+(\+\d+)*v\d+(\+\d+)*$/i;
+const PLAYERS_GROUP = "Antal spillere";
+function byPlayers(a, b) {
+  const total = v => v.split(/[v+]/i).reduce((n, x) => n + (+x || 0), 0);
+  return total(a) - total(b) || (a.indexOf("+") !== -1) - (b.indexOf("+") !== -1) || byAlpha(a, b);
+}
+
 /* The buttons of one filter group */
 function groupBodyHtml(f) {
   const mk = v => chipHtml(f, v);
@@ -1281,7 +1309,8 @@ function groupBodyHtml(f) {
     const byGroup = new Map(G.order.map(g => [g, []]));
     const rest = [];
     LIB.total[f.col].forEach(function (n, v) {
-      const g = G.of.get(tagKey(v));
+      const g = G.of.get(tagKey(v)) || (f.col === "Format" && PLAYER_FORMAT.test(v) ? PLAYERS_GROUP : "");
+      if (g && !byGroup.has(g)) byGroup.set(g, []);
       (g ? byGroup.get(g) : rest).push(v);
     });
     const rank = v => { const r = G.rank.get(tagKey(v)); return r == null ? 1e9 : r; };
@@ -1289,7 +1318,10 @@ function groupBodyHtml(f) {
     const fits = vals => vals.some(v => SEL[f.col].has(v) ||
       LIB.drills.some(d => libMatches(d, f.col) && filterVals(d, f.col).includes(v)));
     const blocks = [];
-    byGroup.forEach(function (vals, g) { if (vals.length && fits(vals)) blocks.push([g, vals.sort((a, b) => rank(a) - rank(b))]); });
+    byGroup.forEach(function (vals, g) {
+      if (!vals.length || !fits(vals)) return;
+      blocks.push([g, vals.sort(f.col === "Format" && g === PLAYERS_GROUP ? byPlayers : (a, b) => rank(a) - rank(b))]);
+    });
     if (rest.length && fits(rest)) blocks.push(["Andet", rest.sort(byAlpha)]);
     return blocks.map(b => `<div class="fsub"><span class="fsub-label">${esc(b[0])}</span>${b[1].map(mk).join("")}</div>`).join("")
       || '<span class="fnone">Ingen match</span>';
@@ -1827,6 +1859,17 @@ function diagramPlaceholder(d) {
     (hasVideo ? "<br>Se videoen under »Sådan gør du«." : "") + `</div></div>`;
 }
 
+/* Shown where the video would be, when a drill has no video. Same look as the picture placeholder. */
+const PLAY_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true">' +
+  '<circle cx="24" cy="24" r="21" fill="none" stroke="#c9c9c9" stroke-width="3"/><path d="M19 14 L35 24 L19 34 Z" fill="#c9c9c9"/></svg>';
+
+function videoPlaceholder(d) {
+  const hasPicture = !!(d && cleanVal(d["Diagram"]));
+  return `<div class="ph-diagram ph-video" role="img" aria-label="Pladsholder: der er ingen video af denne øvelse">${PLAY_SVG}` +
+    `<div class="ph-label"><strong>Pladsholder</strong>Der er ingen video af denne øvelse.` +
+    (hasPicture ? "<br>Se tegningen under »Øvelsen«." : "") + `</div></div>`;
+}
+
 /* An image that can't be loaded is swapped for the placeholder */
 function brokenDiagram(img) {
   const box = img.closest(".v-diagram");
@@ -1871,7 +1914,7 @@ function drillPages(d) {
     if (g.takesRest) defs = defs.concat(libSections().filter(x => !grouped.has(x.col)));
 
     let html = (g.tags ? tagsSection(d) : "") + defs.map(function (def) {
-      const body = libBody(def, d);
+      const body = libBody(def, d) || (def.col === "Video" ? videoPlaceholder(d) : "");
       return body ? `<section class="v-sec"><h3>${esc(def.title)}</h3>${body}</section>` : "";
     }).join("");
 
