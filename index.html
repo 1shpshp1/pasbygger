@@ -554,7 +554,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 21. okt. 2026 (d)</p>
+<p class="build" id="build">App-version 21. okt. 2026 (e)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -682,6 +682,7 @@ function firstRender() {
   try {
     renderSessions(LATEST);
     openSessionFromUrl();
+    openDrillFromUrl();
     if (isAuthed()) loadLibrary(null, true);   // only when already logged in: loads the drills in the background
   } catch (err) {
     clearLoading();
@@ -1641,6 +1642,10 @@ function libBody(def, d) {
     const label = (val === d["Link"] && d["__linktext"] && d["__linktext"] !== val) ? d["__linktext"] : "Åbn link til øvelsen hos DBU";
     let note = "";
     try { note = LINK_NOTES[new URL(val).hostname] || ""; } catch (e) { note = ""; }
+    if (isFckLink(val)) {                     // FCK has no page per drill: the link opens their drill bank
+      return libLink(val, "Find øvelsen i FCK's øvelsesbank") +
+        `<p class="link-note">Linket åbner forsiden af øvelsesbanken. Søg efter »${esc(cleanVal(d["Navn"]))}«. ${esc(note)}</p>`;
+    }
     return libLink(val, label) + (note ? `<p class="link-note">${esc(note)}</p>` : "");
   }
   if (def.type === "notes") {
@@ -1782,7 +1787,7 @@ function markCopied(btn, msg) {
 }
 
 function copyDrillLink(d, btn) {
-  const url = safeUrl(exerciseLink(d));
+  const url = safeUrl(isFckLink(exerciseLink(d)) ? appDrillLink(d) : exerciseLink(d));
   if (!url) { showToast("Øvelsen har intet ID at lave et link af."); return; }
   copyRich(url, d["Navn"]).then(function (ok) {
     if (!ok) { showToast("Kunne ikke kopiere automatisk. Markér og kopiér linket:", url); return; }
@@ -1930,10 +1935,12 @@ function openDrill(i) {
 }
 
 /* ---- training sessions in the same viewer ---- */
-/* The exercise ID in a link, from both the old and the new DBU address */
+/* The exercise ID in a link: from both the old and the new DBU address, and from a Pasbygger link (?d=ID) */
 function exerciseIdFromUrl(u) {
   const m = String(u || "").match(/[?&](?:exerciseId|id)=(\d+)/i);
-  return m ? m[1] : "";
+  if (m) return m[1];
+  const p = String(u || "").match(/[?&]d=([^&#]+)/);
+  try { return p ? decodeURIComponent(p[1]) : ""; } catch (e) { return ""; }
 }
 
 /* The drill behind a station: first by the ID in its link, then by its name */
@@ -2071,6 +2078,32 @@ function copySessionLink(btn) {
 }
 
 /* Opened through a training link: show that training straight away */
+/* FCK's drill bank has no address for a single drill (a drill opens as a pop-up on its front page).
+   So "Kopiér link" on an FCK drill gives a Pasbygger link instead, which opens the drill here. */
+function isFckLink(u) {
+  try { return new URL(u).hostname === "fck.better-coaching.dk"; } catch (e) { return false; }
+}
+
+/* <app address>?d=FCK-1677: opens that drill in the app (after the coach code) */
+function appDrillLink(d) {
+  const id = cleanVal(d && d["ID"]);
+  if (!id) return "";
+  return location.origin + location.pathname + "?d=" + encodeURIComponent(id);
+}
+
+/* Opened through a drill link (?d=...): ask for the code if needed, then show that drill */
+function openDrillFromUrl() {
+  const want = new URLSearchParams(location.search).get("d");
+  if (!want) return;
+  requireLogin(function () {
+    loadLibrary(function () {
+      const d = LIB && LIB.drills.find(x => cleanVal(x["ID"]) === want);
+      if (d) openViewer(d["Navn"], drillPages(d), null, null, d);
+      else showToast("Øvelsen findes ikke (længere) i øvelsesbanken.");
+    });
+  });
+}
+
 function openSessionFromUrl() {
   const want = new URLSearchParams(location.search).get("s");
   const i = want ? SESSIONS.findIndex(x => x.iso === want) : -1;
