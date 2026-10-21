@@ -554,7 +554,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 21. okt. 2026 (e)</p>
+<p class="build" id="build">App-version 21. okt. 2026 (f)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -793,6 +793,15 @@ function danishDate(iso, fallback) {
          " den " + d.getDate() + ". " + MONTHS[d.getMonth()] + " " + d.getFullYear();
 }
 
+/* "Ons 21. okt 2026" – the short date on the training cards */
+function cardDate(iso, fallback) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (!m) return fallback || "";            // no real date: show the sheet text instead
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const day = DAYS[d.getDay()].slice(0, 3);
+  return day.charAt(0).toUpperCase() + day.slice(1) + " " + d.getDate() + ". " + MONTHS[d.getMonth()].slice(0, 3) + " " + d.getFullYear();
+}
+
 /* "19 okt" – day number and the first three letters of the month */
 function shortDate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
@@ -819,7 +828,7 @@ function cardHtml(session, index, kind) {
            onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSession(${index}); }">
         <div class="header-text">
           ${kind === "next" ? '<span class="tag">Næste træning</span>' : ""}
-          <div>${esc(date)}</div>
+          <div>${esc(cardDate(session.iso, session.date))}</div>
           ${session.focus ? '<h3 class="theme">' + esc(session.focus) + '</h3>' : ""}
           ${sessionChips(session)}
         </div>
