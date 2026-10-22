@@ -335,6 +335,7 @@
     .dchip.focus { background: #ffffff; border: 1px solid var(--red); color: var(--red); }
     .dchip.more { background: #ffffff; border: 1px solid #d6d6d6; color: #555555; }
     .dchip[hidden] { display: none; }
+    .dchip.kamp { background: #e6eef8; color: #1f4e8c; }
     button.dchip.more { font: inherit; font-size: 13px; line-height: inherit; cursor: pointer; }
     button.dchip.more:hover { border-color: var(--red); color: var(--red); }
 
@@ -554,7 +555,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 22. okt. 2026</p>
+<p class="build" id="build">App-version 22. okt. 2026 (b)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -894,6 +895,7 @@ const LIB_FILTERS = [
   { col: "Fokus",        label: "Fokus", byCount: true, limit: 12, grouped: true }, // under group headings from the "Tags" tab;
                                                                             // without groups: most used first, "Vis alle" for the rest
   { col: "Format",       label: "Format", grouped: true },
+  { col: "Kampnærhed",   label: "Kampnærhed" },                    // 1-5: from repetition to the real game
   { col: "Aldersgruppe", label: "Aldersgruppe" }
 ];
 /* Columns whose values are cleaned up: quotes removed, "?" and capitals ignored when comparing */
@@ -913,7 +915,7 @@ const LIB_SECTIONS = [
   { col: "Link",         title: "Læs mere",          type: "link"  }
 ];
 /* Columns used elsewhere on the card, or never shown */
-const LIB_RESERVED = ["ID", "Navn", "Fokus", "Sessioner", "Publiceret", "Banestørrelse", "Kategori", "Kilde", "Format",
+const LIB_RESERVED = ["ID", "Navn", "Fokus", "Sessioner", "Publiceret", "Banestørrelse", "Kategori", "Kilde", "Format", "Kampnærhed",
   "Antal spillere min", "Antal spillere max", "Varighed min", "Varighed max"];
 /* The link in "Mere" is built from the drill's ID */
 const DBU_EXERCISE_URL = "https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=";
@@ -1690,6 +1692,8 @@ function drillChips(d, full) {
       rangeText(d["Varighed min"], d["Varighed max"], "min"),
       bane ? "Bane: " + bane : ""
     ].filter(Boolean).map(t => chip("", t)));
+  const kamp = cleanVal(d["Kampnærhed"]), lv = (kamp.match(/^[1-5]/) || [""])[0];
+  if (lv) grey.push(`<span class="dchip kamp" title="Kampnærhed: ${esc(kamp)}">Kampnærhed ${lv}/5</span>`);
 
   if (full) {
     splitVals(d, "Temaer").concat(splitVals(d, "Undertemaer"))
@@ -1856,7 +1860,10 @@ function factChips(d) {
       rangeText(d["Varighed min"], d["Varighed max"], "min"),
       bane ? "Bane: " + bane : ""
     ].filter(Boolean));
-  return facts.length ? `<div class="dchips">${facts.map(t => `<span class="dchip">${esc(t)}</span>`).join("")}</div>` : "";
+  const chips = facts.map(t => `<span class="dchip">${esc(t)}</span>`);
+  const kamp = cleanVal(d["Kampnærhed"]), lv = (kamp.match(/^[1-5]/) || [""])[0];
+  if (lv) chips.push(`<span class="dchip kamp" title="Kampnærhed: ${esc(kamp)}">Kampnærhed ${lv}/5</span>`);
+  return chips.length ? `<div class="dchips">${chips.join("")}</div>` : "";
 }
 
 /* First page: diagram on top, then the facts, then the main focus tags */
@@ -1913,6 +1920,7 @@ function tagsSection(d) {
                row("Undertema", "sub", splitVals(d, "Undertemaer")) +
                row("Fokus", "focus", focusTags(d)) +
                row("Format", "cat", splitVals(d, "Format")) +
+               row("Kampnærhed", "sub", rawVals(d, "Kampnærhed")) +
                row("Kilde", "sub", splitVals(d, "Kilde"));
   return html ? `<section class="v-sec"><h3>Tags</h3>${html}</section>` : "";
 }
