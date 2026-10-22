@@ -554,7 +554,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 21. okt. 2026 (f)</p>
+<p class="build" id="build">App-version 22. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -683,6 +683,7 @@ function firstRender() {
     renderSessions(LATEST);
     openSessionFromUrl();
     openDrillFromUrl();
+    trackOpen();
     if (isAuthed()) loadLibrary(null, true);   // only when already logged in: loads the drills in the background
   } catch (err) {
     clearLoading();
@@ -2119,7 +2120,24 @@ function openSessionFromUrl() {
   if (i !== -1) openSession(i);
 }
 
+/* ---- Usage statistics (tab "Statistik" in the sheet). Nothing that identifies a person or a phone is sent:
+   the phone only says whether it is the first time it opens the app today. ---- */
+function track() {
+  const args = Array.prototype.slice.call(arguments);
+  try { api("track", args).catch(function () { /* statistics are not important enough to bother anyone */ }); } catch (e) { /* ignore */ }
+}
+
+function trackOpen() {
+  let first = true;
+  try {
+    first = localStorage.getItem("oevSeenDay") !== todayIso();
+    localStorage.setItem("oevSeenDay", todayIso());
+  } catch (e) { /* no storage: counted as a new phone */ }
+  track("open", first);
+}
+
 function openViewer(title, pages, opener, onBack, drill) {
+  if (drill) track("drill", cleanVal(drill["ID"]), cleanVal(drill["Navn"]));
   V.opener = opener;
   V.drill = drill || null;        // set for drills: shows the copy-link button
   document.getElementById("v-copy").classList.toggle("view-hidden", !V.drill || !isAuthed());
