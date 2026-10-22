@@ -505,6 +505,8 @@
       font: inherit; font-size: 24px; line-height: 1; cursor: pointer;
     }
     .g-count { min-width: 52px; color: #555555; font-size: 14px; text-align: center; }
+    .video-part + .video-part { margin-top: 14px; }
+    .video-part-label { margin-bottom: 6px; color: #555555; font-size: 13px; font-weight: 600; }
     .v-inner .dchips { margin-top: 0; }
     .v-diagram + .dchips, .dchips + .dchips { margin-top: 6px; }
     .tag-row + .tag-row { margin-top: 12px; }
@@ -577,7 +579,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 24. okt. 2026</p>
+<p class="build" id="build">App-version 25. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1694,6 +1696,14 @@ function diagramHtml(raw, d) {
     `<button type="button" class="g-btn g-next" aria-label="Næste billede">›</button></div></div>`;
 }
 
+/* The Video cell can hold several videos, one link per line (an FA session in parts): shown one after another */
+function videoHtml(raw) {
+  const urls = String(raw || "").split(/\s*\n\s*/).filter(Boolean);
+  if (urls.length < 2) return libMedia("video", urls[0] || "");
+  return urls.map((u, i) => `<div class="video-part"><div class="video-part-label">Del ${i + 1} af ${urls.length}</div>` +
+    libMedia("video", u) + `</div>`).join("");
+}
+
 function galleryStep(g, step) {
   const slides = Array.from(g.querySelectorAll(".g-slide"));
   if (!slides.length) return;
@@ -1759,7 +1769,7 @@ function libBody(def, d) {
     return items.length > 1 ? "<ul>" + items.map(i => `<li>${esc(i)}</li>`).join("") + "</ul>" : `<p>${esc(items[0] || "")}</p>`;
   }
   if (def.type === "image") return diagramHtml(val, d);
-  if (def.type === "video") return libMedia(def.type, val);
+  if (def.type === "video") return videoHtml(val);
   if (def.type === "link") {
     const label = (val === d["Link"] && d["__linktext"] && d["__linktext"] !== val) ? d["__linktext"] : "Åbn link til øvelsen hos DBU";
     let note = "";
