@@ -495,6 +495,16 @@
     }
     .ph-label strong { display: block; margin-bottom: 2px; color: #333333; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
     .v-diagram img.media { width: 100%; max-height: 60vh; }
+    /* Several pictures (FA sessions): one at a time, with arrows and the picture's own text */
+    .g-slide { display: none; margin: 0; }
+    .g-slide.on, .g-single { display: block; }
+    .g-slide figcaption, .g-single figcaption { margin-top: 8px; color: #444444; font-size: 14px; line-height: 1.45; }
+    .g-nav { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 8px; }
+    .g-btn {
+      width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--red-tint); color: var(--red);
+      font: inherit; font-size: 24px; line-height: 1; cursor: pointer;
+    }
+    .g-count { min-width: 52px; color: #555555; font-size: 14px; text-align: center; }
     .v-inner .dchips { margin-top: 0; }
     .v-diagram + .dchips, .dchips + .dchips { margin-top: 6px; }
     .tag-row + .tag-row { margin-top: 12px; }
@@ -567,7 +577,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 23. okt. 2026</p>
+<p class="build" id="build">App-version 24. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -620,12 +630,14 @@ const FLAG_GB = '<svg viewBox="0 0 60 30" width="22" height="16" aria-hidden="tr
 
 /* ===================== Drills in two languages =====================
    A drill with columns like "Beskrivelse (DA)" has a Danish translation next to the original (English) text.
-   LANG decides which one is shown; the flag switch on such drills changes it for all of them at once.
+   LANG decides which one is shown: the original English unless the user picks Danish with the flag switch
+   on such a drill (that changes it for all of them at once).
    The original is kept in d.__en, so switching back and forth never loses anything. */
-const LANG_COLS = ["Navn", "Beskrivelse", "Læringsmål", "Fokuspunkter", "Variationer", "Noter", "Materialer", "Konkurrence", "Felt"];
+const LANG_COLS = ["Navn", "Beskrivelse", "Læringsmål", "Fokuspunkter", "Variationer", "Noter", "Materialer", "Konkurrence", "Felt",
+  "Billedtekster"];
 const DA = c => c + " (DA)";
-let LANG = "da";
-try { if (localStorage.getItem("oevLang") === "en") LANG = "en"; } catch (e) { /* default Danish */ }
+let LANG = "en";
+try { if (localStorage.getItem("oevLang") === "da") LANG = "da"; } catch (e) { /* default: the original English */ }
 
 const hasDa = d => !!d && LANG_COLS.some(c => cleanVal(d[DA(c)]));
 
@@ -979,7 +991,7 @@ const LIB_SECTIONS = [
   { col: "Link",         title: "Læs mere",          type: "link"  }
 ];
 /* Columns used elsewhere on the card, or never shown */
-const LIB_RESERVED = ["ID", "Navn", "Fokus", "Sessioner", "Publiceret", "Banestørrelse", "Kategori", "Kilde", "Format", "Kampnærhed",
+const LIB_RESERVED = ["ID", "Navn", "Billedtekster", "Fokus", "Sessioner", "Publiceret", "Banestørrelse", "Kategori", "Kilde", "Format", "Kampnærhed",
   "Antal spillere min", "Antal spillere max", "Varighed min", "Varighed max"];
 /* The link in "Mere" is built from the drill's ID */
 const DBU_EXERCISE_URL = "https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=";
@@ -1666,6 +1678,36 @@ function libMedia(type, raw) {
   return `<a href="${esc(u)}" target="_blank" rel="noopener">Åbn video</a>`;
 }
 
+/* The Diagram cell can hold several pictures, one link per line (FA sessions). They are shown one at a time
+   with arrows, like on the FA site, each with its line from "Billedtekster". The arrows are buttons, so a swipe
+   on the picture still turns the viewer's page. */
+function diagramHtml(raw, d) {
+  const urls = String(raw || "").split(/\s*\n\s*/).map(safeUrl).filter(Boolean);
+  if (!urls.length) return "";
+  const caps = String((d && d["Billedtekster"]) || "").split("\n");
+  const cap = i => cleanVal(caps[i]) ? `<figcaption>${esc(caps[i].trim())}</figcaption>` : "";
+  if (urls.length === 1) return cap(0) ? `<figure class="g-single">${libMedia("image", urls[0])}${cap(0)}</figure>` : libMedia("image", urls[0]);
+  return `<div class="gallery">` +
+    urls.map((u, i) => `<figure class="g-slide${i ? "" : " on"}">${libMedia("image", u)}${cap(i)}</figure>`).join("") +
+    `<div class="g-nav"><button type="button" class="g-btn g-prev" aria-label="Forrige billede">‹</button>` +
+    `<span class="g-count">1 / ${urls.length}</span>` +
+    `<button type="button" class="g-btn g-next" aria-label="Næste billede">›</button></div></div>`;
+}
+
+function galleryStep(g, step) {
+  const slides = Array.from(g.querySelectorAll(".g-slide"));
+  if (!slides.length) return;
+  const i = (Math.max(0, slides.findIndex(s => s.classList.contains("on"))) + step + slides.length) % slides.length;
+  slides.forEach((s, j) => s.classList.toggle("on", j === i));
+  g.querySelector(".g-count").textContent = (i + 1) + " / " + slides.length;
+  g.querySelector(".g-nav").hidden = slides.length < 2;
+}
+
+document.addEventListener("click", function (e) {
+  const b = e.target.closest(".g-btn");
+  if (b) galleryStep(b.closest(".gallery"), b.classList.contains("g-next") ? 1 : -1);
+});
+
 function libLink(url, text) {
   const u = safeUrl(url);
   return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${escLines(text || u)}</a>` : "";
@@ -1716,7 +1758,8 @@ function libBody(def, d) {
     const items = String(val).split(/[;\n]+/).map(x => x.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
     return items.length > 1 ? "<ul>" + items.map(i => `<li>${esc(i)}</li>`).join("") + "</ul>" : `<p>${esc(items[0] || "")}</p>`;
   }
-  if (def.type === "video" || def.type === "image") return libMedia(def.type, val);
+  if (def.type === "image") return diagramHtml(val, d);
+  if (def.type === "video") return libMedia(def.type, val);
   if (def.type === "link") {
     const label = (val === d["Link"] && d["__linktext"] && d["__linktext"] !== val) ? d["__linktext"] : "Åbn link til øvelsen hos DBU";
     let note = "";
@@ -1962,6 +2005,13 @@ function videoPlaceholder(d) {
 
 /* An image that can't be loaded is swapped for the placeholder */
 function brokenDiagram(img) {
+  const slide = img.closest(".g-slide");       // one picture of several: only that one goes
+  if (slide && slide.parentNode.querySelectorAll(".g-slide").length > 1) {
+    const g = slide.parentNode;
+    slide.remove();
+    galleryStep(g, 0);
+    return;
+  }
   const box = img.closest(".v-diagram");
   if (box) box.innerHTML = diagramPlaceholder(V.drill);
 }
