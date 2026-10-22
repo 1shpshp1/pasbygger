@@ -443,6 +443,18 @@
     }
     .copybtn:hover { background: var(--red-tint); border-color: var(--red); }
     #v-copy, #v-share { flex: none; margin-left: auto; }
+    /* Danish/English switch on translated drills */
+    .langbtn {
+      flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 4px 6px; border: 1px solid #d6d6d6;
+      border-radius: 99px; background: #ffffff; cursor: pointer;
+    }
+    .langbtn .flag { display: inline-flex; padding: 2px; border-radius: 4px; opacity: 0.35; }
+    .langbtn .flag.on { opacity: 1; box-shadow: 0 0 0 2px var(--red); }
+    .langbtn svg { display: block; border-radius: 2px; }
+    @media (max-width: 480px) {                  /* room for the title when the flags are in the top bar */
+      .v-top:has(#v-lang .langbtn) #v-copy .lbl { display: none; }
+      .v-top:has(#v-lang .langbtn) #v-copy { padding: 7px 9px; }
+    }
 
     /* Favourite star (on the card, in the viewer) and the "Favoritter" switch above the list */
     .favbtn {
@@ -555,7 +567,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 22. okt. 2026 (b)</p>
+<p class="build" id="build">App-version 23. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -564,6 +576,7 @@
     <button type="button" class="copybtn view-hidden" id="v-share" aria-label="Kopiér link til træningen"><span class="lbl">Kopiér link</span></button>
     <button type="button" class="copybtn view-hidden" id="v-copy" aria-label="Kopiér link til øvelsen"><span class="lbl">Kopiér link</span></button>
     <button type="button" class="favbtn view-hidden" id="v-fav" aria-pressed="false" aria-label="Favorit"></button>
+    <span id="v-lang"></span>
   </div>
   <div class="v-tabs" id="v-tabs" role="tablist" aria-label="Øvelsens dele"></div>
   <div class="v-pages" id="v-pages"></div>
@@ -602,6 +615,57 @@ window.addEventListener("error", function (e) {
 /* The chain-link icon used on every "Kopiér link" button */
 const LINK_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 const STAR_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l2.85 5.78 6.38.93-4.62 4.5 1.09 6.35L12 17.36l-5.7 3 1.09-6.35-4.62-4.5 6.38-.93z"/></svg>';
+const FLAG_DK = '<svg viewBox="0 0 37 28" width="22" height="16" aria-hidden="true"><rect width="37" height="28" fill="#c8102e"/><rect x="12" width="4" height="28" fill="#fff"/><rect y="12" width="37" height="4" fill="#fff"/></svg>';
+const FLAG_GB = '<svg viewBox="0 0 60 30" width="22" height="16" aria-hidden="true"><path d="M0 0h60v30H0z" fill="#012169"/><path d="M0 0l60 30M60 0L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30M60 0L0 30" stroke="#c8102e" stroke-width="2"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#c8102e" stroke-width="6"/></svg>';
+
+/* ===================== Drills in two languages =====================
+   A drill with columns like "Beskrivelse (DA)" has a Danish translation next to the original (English) text.
+   LANG decides which one is shown; the flag switch on such drills changes it for all of them at once.
+   The original is kept in d.__en, so switching back and forth never loses anything. */
+const LANG_COLS = ["Navn", "Beskrivelse", "Læringsmål", "Fokuspunkter", "Variationer", "Noter", "Materialer", "Konkurrence", "Felt"];
+const DA = c => c + " (DA)";
+let LANG = "da";
+try { if (localStorage.getItem("oevLang") === "en") LANG = "en"; } catch (e) { /* default Danish */ }
+
+const hasDa = d => !!d && LANG_COLS.some(c => cleanVal(d[DA(c)]));
+
+function applyLang(d) {
+  if (!hasDa(d)) return d;
+  if (!d.__en) { d.__en = {}; LANG_COLS.forEach(c => { d.__en[c] = d[c] || ""; }); }
+  LANG_COLS.forEach(c => { d[c] = LANG === "da" && cleanVal(d[DA(c)]) ? d[DA(c)] : d.__en[c]; });
+  d.__text = null;                           // the search text is made again (it covers both languages)
+  return d;
+}
+
+function langSwitch(d, id) {
+  if (!hasDa(d)) return "";
+  const label = LANG === "da" ? "Vis på engelsk (originalsprog)" : "Vis på dansk (oversat)";
+  return `<button type="button" class="langbtn"${id ? ` id="${id}"` : ""} aria-label="${label}" title="${label}">` +
+    `<span class="flag${LANG === "da" ? " on" : ""}">${FLAG_DK}</span><span class="flag${LANG === "en" ? " on" : ""}">${FLAG_GB}</span></button>`;
+}
+
+function setLang(l) {
+  LANG = l;
+  try { localStorage.setItem("oevLang", l); } catch (e) { /* not remembered */ }
+  if (LIB) LIB.drills.forEach(applyLang);
+  Object.keys(SESSION_DRILLS).forEach(k => applyLang(SESSION_DRILLS[k]));
+  if (!document.getElementById("viewer").classList.contains("view-hidden") && V.drill && hasDa(V.drill)) {
+    const page = V.idx;                       // the open drill is drawn again on the same page
+    openViewer(V.drill["Navn"], drillPages(V.drill), V.opener, V.onBack, V.drill);
+    goPage(page);
+  }
+  if (LIB) {
+    const y = window.scrollY;
+    renderLibrary();
+    window.scrollTo(0, y);
+  }
+  showToast(l === "da" ? "Oversatte øvelser vises på dansk." : "Oversatte øvelser vises på engelsk (original).");
+}
+
+document.addEventListener("click", function (e) {
+  if (!e.target.closest(".langbtn")) return;
+  setLang(LANG === "da" ? "en" : "da");
+});
 
 /* ===================== Favourites =====================
    Kept on this phone only (localStorage), so each coach has their own. A drill is known by its ID,
@@ -925,7 +989,8 @@ function exerciseLink(d) {
 }
 
 /* Note shown under a link, by website */
-const LINK_NOTES = { "mit.dbu.dk": "Kræver login hos DBU", "fck.better-coaching.dk": "Kræver login hos FCK" };
+const LINK_NOTES = { "mit.dbu.dk": "Kræver login hos DBU", "fck.better-coaching.dk": "Kræver login hos FCK",
+                     "learn.englandfootball.com": "På engelsk. Her finder du også sessionen som PDF." };
 
 /* "6–12 spillere", "Min. 6 spillere", "Op til 12 spillere" */
 function rangeText(a, b, unit) {
@@ -1167,7 +1232,7 @@ function focusTags(d) {
 function sectionsFor(headers) {
   const known = new Set([].concat(
     LIB_SECTIONS.map(x => x.col), LIB_FILTERS.map(x => x.col), LIB_RESERVED));
-  const extra = headers.filter(h => h && !known.has(h)).map(h => ({ col: h, title: h, type: "text" }));
+  const extra = headers.filter(h => h && !known.has(h) && !/ \(DA\)$/.test(h)).map(h => ({ col: h, title: h, type: "text" }));
   return LIB_SECTIONS.concat(extra);
 }
 let MINI = { sections: LIB_SECTIONS };            // used when a single drill is opened without the library
@@ -1205,6 +1270,7 @@ function saveLibrary(res) {
 /* Turns the server's answer into LIB and shows it (filters and search the coach has chosen stay) */
 function useLibrary(res) {
   const drills = res.drills;              // the server already shows each drill only once
+  drills.forEach(applyLang);
   setAliases(res.aliases);
 
   buildCanon(drills);
@@ -1275,7 +1341,8 @@ function libMatches(d, skipCol) {
   if (FAV_ONLY && !isFav(d)) return false;
   if (LIB_QUERY) {
     if (d.__text == null)                     // the drill's text for the search, made once per drill
-      d.__text = Object.keys(d).filter(k => k.indexOf("__") !== 0 && k !== "Sessioner").map(k => d[k]).join(" ").toLowerCase();
+      d.__text = Object.keys(d).filter(k => k.indexOf("__") !== 0 && k !== "Sessioner").map(k => d[k])
+        .concat(d.__en ? Object.values(d.__en) : []).join(" ").toLowerCase();
     if (!d.__text.includes(LIB_QUERY)) return false;
   }
   return LIB_FILTERS.every(function (f) {
@@ -1734,6 +1801,7 @@ function drillCard(d, i) {
         <button type="button" class="favbtn" data-i="${i}" aria-pressed="${isFav(d)}"
                 aria-label="${isFav(d) ? "Fjern fra favoritter" : "Gem som favorit"}: ${esc(d["Navn"])}"
                 title="${isFav(d) ? "Fjern fra favoritter" : "Gem som favorit"}">${STAR_ICON}</button>
+        ${langSwitch(d)}
         ${sourceBadge(d)}
       </div>
     </div>`;
@@ -1986,14 +2054,14 @@ function loadSessionDrills(ids, cb) {
       const cbs = SESSION_PENDING[id] || [];
       delete SESSION_PENDING[id];
       const d = res && res.drills.find(x => cleanVal(x["ID"]) === id);
-      if (d) SESSION_DRILLS[id] = d;
+      if (d) SESSION_DRILLS[id] = applyLang(d);
       cbs.forEach(f => f(d || null));
     });
   };
   api("getSessionDrills", [ids]).then(function (res) {
       if (res && !LIB) {                                  // the same tidy-up of tags as in the library
         setAliases(res.aliases);
-        res.drills.forEach(d => { SESSION_DRILLS[cleanVal(d["ID"])] = d; });
+        res.drills.forEach(d => { SESSION_DRILLS[cleanVal(d["ID"])] = applyLang(d); });
         buildCanon(Object.values(SESSION_DRILLS));
         MINI = { sections: sectionsFor(res.headers) };
       }
@@ -2151,6 +2219,7 @@ function openViewer(title, pages, opener, onBack, drill) {
   document.getElementById("v-copy").classList.toggle("view-hidden", !V.drill || !isAuthed());
   const fav = document.getElementById("v-fav");
   fav.classList.toggle("view-hidden", !V.drill);
+  document.getElementById("v-lang").innerHTML = langSwitch(V.drill, "");
   if (V.drill) setFavButton(fav, isFav(V.drill), V.drill["Navn"]);
   V.session = -1;                 // openSession sets it afterwards, which shows the share button
   document.getElementById("v-share").classList.add("view-hidden");
