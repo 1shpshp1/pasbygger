@@ -431,7 +431,13 @@
     }
     .lib-note:empty { display: none; }
 
-    .card-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eeeeee; }
+    .card-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eeeeee;
+      container: cardact / inline-size; }
+    /* With the flag switch there is not always room for "Kopiér link" on one line: then only the link icon */
+    @container cardact (max-width: 305px) {
+      .card-actions:has(.langbtn) .copybtn .lbl { display: none; }
+      .card-actions:has(.langbtn) .copybtn { padding: 7px 10px; }
+    }
     .src-badge {
       margin-left: auto; padding: 3px 8px; border: 1px solid #d6d6d6; border-radius: 6px;
       color: #666666; font-size: 12px; font-weight: bold; letter-spacing: 0.04em;
@@ -439,7 +445,7 @@
     .copybtn {
       display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid #d6d6d6;
       border-radius: 99px; background: #ffffff; color: var(--red); font: inherit; font-size: 14px;
-      font-weight: bold; cursor: pointer;
+      font-weight: bold; white-space: nowrap; cursor: pointer;
     }
     .copybtn:hover { background: var(--red-tint); border-color: var(--red); }
     #v-copy, #v-share { flex: none; margin-left: auto; }
@@ -579,7 +585,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 25. okt. 2026</p>
+<p class="build" id="build">App-version 26. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -628,12 +634,13 @@ window.addEventListener("error", function (e) {
 const LINK_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 const STAR_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l2.85 5.78 6.38.93-4.62 4.5 1.09 6.35L12 17.36l-5.7 3 1.09-6.35-4.62-4.5 6.38-.93z"/></svg>';
 const FLAG_DK = '<svg viewBox="0 0 37 28" width="22" height="16" aria-hidden="true"><rect width="37" height="28" fill="#c8102e"/><rect x="12" width="4" height="28" fill="#fff"/><rect y="12" width="37" height="4" fill="#fff"/></svg>';
+const FLAG_NO = '<svg viewBox="0 0 22 16" width="22" height="16" aria-hidden="true"><rect width="22" height="16" fill="#ba0c2f"/><rect x="6" width="4" height="16" fill="#fff"/><rect y="6" width="22" height="4" fill="#fff"/><rect x="7" width="2" height="16" fill="#00205b"/><rect y="7" width="22" height="2" fill="#00205b"/></svg>';
 const FLAG_GB = '<svg viewBox="0 0 60 30" width="22" height="16" aria-hidden="true"><path d="M0 0h60v30H0z" fill="#012169"/><path d="M0 0l60 30M60 0L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30M60 0L0 30" stroke="#c8102e" stroke-width="2"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#c8102e" stroke-width="6"/></svg>';
 
 /* ===================== Drills in two languages =====================
-   A drill with columns like "Beskrivelse (DA)" has a Danish translation next to the original (English) text.
-   LANG decides which one is shown: the original English unless the user picks Danish with the flag switch
-   on such a drill (that changes it for all of them at once).
+   A drill with columns like "Beskrivelse (DA)" has a Danish translation next to the original text: English
+   (FA) or Norwegian (NFF). LANG decides which one is shown: the original ("en") unless the user picks Danish
+   ("da") with the flag switch on such a drill (that changes it for all of them at once).
    The original is kept in d.__en, so switching back and forth never loses anything. */
 const LANG_COLS = ["Navn", "Beskrivelse", "Læringsmål", "Fokuspunkter", "Variationer", "Noter", "Materialer", "Konkurrence", "Felt",
   "Billedtekster"];
@@ -651,11 +658,15 @@ function applyLang(d) {
   return d;
 }
 
+/* The original language of a translated drill: Norwegian for the NFF exercises, otherwise English */
+const isNorwegian = d => cleanVal(d["Kilde"]) === "NFF" || /^NFF-/.test(String(d["ID"] || ""));
+
 function langSwitch(d, id) {
   if (!hasDa(d)) return "";
-  const label = LANG === "da" ? "Vis på engelsk (originalsprog)" : "Vis på dansk (oversat)";
+  const no = isNorwegian(d);
+  const label = LANG === "da" ? (no ? "Vis på norsk (originalsprog)" : "Vis på engelsk (originalsprog)") : "Vis på dansk (oversat)";
   return `<button type="button" class="langbtn"${id ? ` id="${id}"` : ""} aria-label="${label}" title="${label}">` +
-    `<span class="flag${LANG === "da" ? " on" : ""}">${FLAG_DK}</span><span class="flag${LANG === "en" ? " on" : ""}">${FLAG_GB}</span></button>`;
+    `<span class="flag${LANG === "da" ? " on" : ""}">${FLAG_DK}</span><span class="flag${LANG === "en" ? " on" : ""}">${no ? FLAG_NO : FLAG_GB}</span></button>`;
 }
 
 function setLang(l) {
@@ -673,7 +684,7 @@ function setLang(l) {
     renderLibrary();
     window.scrollTo(0, y);
   }
-  showToast(l === "da" ? "Oversatte øvelser vises på dansk." : "Oversatte øvelser vises på engelsk (original).");
+  showToast(l === "da" ? "Oversatte øvelser vises på dansk." : "Oversatte øvelser vises på originalsproget (engelsk/norsk).");
 }
 
 document.addEventListener("click", function (e) {
