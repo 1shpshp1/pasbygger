@@ -430,6 +430,13 @@
       background: #ffffff; color: #444444; font-size: 14px;
     }
     .lib-note:empty { display: none; }
+    /* "Henter nyeste øvelser …": shown when the server is slow, above the drills */
+    .lib-sync {
+      display: flex; align-items: center; gap: 10px; margin: 10px 0 0; padding: 8px 12px; border-radius: 8px;
+      background: #fff8d6; color: #5a4a00; font-size: 14px;
+    }
+    .lib-sync:empty { display: none; }
+    .lib-sync .spinner { width: 18px; height: 18px; border-width: 3px; flex: none; }
 
     .card-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eeeeee;
       container: cardact / inline-size; }
@@ -555,7 +562,7 @@
 <div id="sessions">
   <div class="loading" role="status">
     <div class="spinner" aria-hidden="true"></div>
-    <span>Henter træninger…</span>
+    <span>Indlæser Pasbygger…</span>
   </div>
 </div>
 
@@ -567,6 +574,7 @@
   </details>
   <div class="lib-note" id="lib-note"></div>
   <div class="lib-status" id="lib-status" aria-live="polite"></div>
+  <div class="lib-sync" id="lib-sync" role="status" aria-live="polite"></div>
   <div id="drill-grid"><div class="lib-loading"><div class="spinner" aria-hidden="true"></div><span>Indlæser øvelser…</span></div></div>
 </div>
 
@@ -648,7 +656,7 @@ const DA = c => c + " (DA)";
 let LANG = "en";
 try { if (localStorage.getItem("oevLang") === "da") LANG = "da"; } catch (e) { /* default: the original English */ }
 
-const hasDa = d => !!d && LANG_COLS.some(c => cleanVal(d[DA(c)]));
+const hasDa = d => !!d && (!!d.__da || LANG_COLS.some(c => cleanVal(d[DA(c)])));   // __da: the server says it has a translation
 
 function applyLang(d) {
   if (!hasDa(d)) return d;
@@ -1073,7 +1081,7 @@ function wipeLibrary() {
   AUTH.token = ""; AUTH.until = 0;
   saveAuth();
   LIB = null; LIB_LIST = []; LIB_LOADING = false;
-  ["drill-grid", "lib-filters", "lib-status"].forEach(id => { document.getElementById(id).innerHTML = ""; });
+  ["drill-grid", "lib-filters", "lib-status", "lib-sync"].forEach(id => { document.getElementById(id).innerHTML = ""; });
   setLibNote("");
 }
 
@@ -1275,21 +1283,72 @@ function showLibLoading() {
     '<div class="lib-loading" role="status"><div class="spinner" aria-hidden="true"></div><span>Indlæser øvelser…</span></div>';
 }
 
-/* The last library the server sent is kept on this phone (key LIB_SAVE_KEY), so the Øvelser tab
-   can show it at once after login, while the app asks the server in the background whether anything
-   has changed. It is only shown with a valid login. */
-const LIB_SAVE_KEY = "oevLib";
+/* The last library the server sent is kept on this phone, so the Øvelser tab can show it at once
+   after login, while the app asks the server in the background whether anything has changed. It is only
+   shown with a valid login. It is kept in IndexedDB (the browser's database), which has room for the whole
+   library; localStorage, used before, is too small for it on many phones. The Danish texts are kept next
+   to it ('libda'), so they also show at once. */
+const LIB_DB = "pasbygger", LIB_STORE = "saved";
+let IDB = null;
+try { localStorage.removeItem("oevLib"); } catch (e) { /* the old copy (too big for localStorage): space for the rest */ }
 
-function readSavedLibrary() {
-  try {
-    const s = JSON.parse(localStorage.getItem(LIB_SAVE_KEY) || "null");
-    return s && s.version && s.res && Array.isArray(s.res.drills) ? s : null;
-  } catch (e) { return null; }
+function idb() {
+  if (!IDB) {
+    IDB = new Promise(function (ok, fail) {
+      if (!window.indexedDB) { fail(new Error("no IndexedDB")); return; }
+      const req = indexedDB.open(LIB_DB, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(LIB_STORE); };
+      req.onsuccess = function () { ok(req.result); };
+      req.onerror = req.onblocked = function () { fail(req.error || new Error("blocked")); };
+    });
+    IDB.catch(function () { /* no database: the app works without the saved copy */ });
+  }
+  return IDB;
 }
 
-function saveLibrary(res) {
-  try { localStorage.setItem(LIB_SAVE_KEY, JSON.stringify({ version: res.version, res: res })); }
-  catch (e) { try { localStorage.removeItem(LIB_SAVE_KEY); } catch (e2) { /* storage not available */ } }
+/* Read a saved value (null if there is none, or the phone takes more than 3 seconds to answer) */
+function idbGet(key) {
+  const read = idb().then(db => new Promise(function (ok) {
+    const r = db.transaction(LIB_STORE).objectStore(LIB_STORE).get(key);
+    r.onsuccess = function () { ok(r.result == null ? null : r.result); };
+    r.onerror = function () { ok(null); };
+  })).catch(() => null);
+  return Promise.race([read, new Promise(ok => setTimeout(() => ok(null), 3000))]);
+}
+
+function idbSet(key, value) {
+  return idb().then(db => new Promise(function (ok) {
+    const tx = db.transaction(LIB_STORE, "readwrite");
+    tx.objectStore(LIB_STORE).put(value, key);
+    tx.oncomplete = function () { ok(true); };
+    tx.onerror = tx.onabort = function () { ok(false); };
+  })).catch(() => false);
+}
+
+/* Saved as text, made at once: the drills are changed on the page afterwards (language, filters) */
+function readSaved(key, check) {
+  return idbGet(key).then(function (text) {
+    try { const s = JSON.parse(text || "null"); return s && check(s) ? s : null; } catch (e) { return null; }
+  });
+}
+const readSavedLibrary = () => readSaved("lib", s => s.version && s.res && Array.isArray(s.res.drills));
+const readSavedDanish = () => readSaved("libda", s => s.version && s.da);
+function saveLibrary(res) { idbSet("lib", JSON.stringify({ version: res.version, res: res })); }
+function saveDanish(d) { idbSet("libda", JSON.stringify(d)); }
+
+/* The Danish texts ({ version, da: { drill ID: { "Navn (DA)": ... } } }), fetched after the drills */
+let LIB_DA = null;
+const daKey = d => String(d["ID"] || d["Navn"] || "").trim();
+
+/* Puts the Danish texts into the drills and shows them where Danish is chosen */
+function mergeDanish(drills) {
+  if (!LIB_DA || !drills) return;
+  drills.forEach(function (d) {
+    const t = LIB_DA.da[daKey(d)];
+    if (!t) return;
+    Object.assign(d, t);
+    applyLang(d);                             // also makes the search text again (it covers both languages)
+  });
 }
 
 /* Turns the server's answer into LIB and shows it (filters and search the coach has chosen stay) */
@@ -1322,31 +1381,68 @@ function useLibrary(res) {
   if (PRESET != null) applyPreset(); else renderLibrary();
 }
 
+function libCall(action, args) { return api(action, args); }   // the server, as a promise
+
+/* Shown above the drills while the server is slow: the saved copy stays usable meanwhile */
+let SYNC_TIMER = null, SYNC_SLOW_TIMER = null;
+function setSyncNote(text, spin) {
+  const el = document.getElementById("lib-sync");
+  el.innerHTML = text ? (spin ? '<div class="spinner" aria-hidden="true"></div>' : "") + `<span>${esc(text)}</span>` : "";
+}
+function syncStarted() {
+  clearTimeout(SYNC_TIMER); clearTimeout(SYNC_SLOW_TIMER);
+  SYNC_TIMER = setTimeout(function () {                         // after 4 seconds: say what is going on
+    if (LIB) setSyncNote("Henter nyeste øvelser … Du kan bruge den gemte udgave imens.", true);
+  }, 4000);
+  SYNC_SLOW_TIMER = setTimeout(function () {                    // nothing saved yet and still waiting
+    const wait = document.querySelector("#drill-grid .lib-loading span");
+    if (!LIB && wait) wait.textContent = "Serveren svarer langsomt i dag. Øvelserne kommer, så snart den svarer …";
+  }, 8000);
+}
+function syncEnded(failed) {
+  clearTimeout(SYNC_TIMER); clearTimeout(SYNC_SLOW_TIMER);
+  if (failed && LIB) {
+    setSyncNote("Kunne ikke hente nyeste øvelser lige nu. Du ser den gemte udgave.");
+    SYNC_TIMER = setTimeout(() => setSyncNote(""), 8000);
+  } else setSyncNote("");
+}
+
 function loadLibrary(cb, silent) {
   if (cb) LIB_WAIT.push(cb);
   if (LIB_LOADING) return;
   LIB_LOADING = true;
-  let version = LIB ? LIB.version : "";
-  if (!LIB) {
-    const saved = readSavedLibrary();
-    if (saved) {                                       // show the saved copy now; waiting callers can go on
-      useLibrary(saved.res);
-      version = saved.version;
+  if (LIB) { fetchLibrary(LIB.version, silent); return; }
+  showLibLoading();
+  Promise.all([readSavedLibrary(), readSavedDanish()]).then(function (saved) {
+    if (!LIB && saved[0] && isAuthed()) {             // show the saved copy now; waiting callers can go on
+      useLibrary(saved[0].res);
+      if (saved[1]) { LIB_DA = saved[1]; mergeDanish(LIB.drills); if (LANG === "da") renderLibrary(); }
       LIB_WAIT.splice(0).forEach(f => f());
-    } else showLibLoading();
-  }
+    }
+    fetchLibrary(LIB ? LIB.version : "", silent);
+  });
+}
+
+function fetchLibrary(version, silent) {
+  syncStarted();
 
   function gotLibrary(res) {
+    syncEnded(false);
     if (!res.unchanged) {                              // something changed (or nothing was saved): show the new one
       saveLibrary(res);
       useLibrary(res);
+      mergeDanish(LIB.drills);                         // the Danish texts we have (updated just below if they changed)
+      if (LANG === "da" && LIB_DA) renderLibrary();
     }
     libDone();
+    fetchDanish(res.daVersion);
   }
 
   function failedLibrary(err) {
+    syncEnded(true);
     if (/LOGIN/.test(String(err && err.message))) {      // the login is no longer valid on the server
       const waiting = LIB_WAIT.splice(0);
+      setSyncNote("");
       wipeLibrary();
       if (silent && !waiting.length) return;
       requireLogin(function () { loadLibrary(function () { waiting.forEach(f => f()); }); },
@@ -1358,7 +1454,20 @@ function loadLibrary(cb, silent) {
     libDone();
   }
 
-  api("getDrills", [AUTH.token, version]).then(gotLibrary, failedLibrary);
+  libCall("getDrills", [AUTH.token, version]).then(gotLibrary, failedLibrary);
+}
+
+/* The Danish texts, only when they have changed since the copy on this phone */
+function fetchDanish(daVersion) {
+  if (!daVersion || (LIB_DA && LIB_DA.version === daVersion) || !AUTH.token) return;
+  libCall("getDrillsDa", [AUTH.token, LIB_DA ? LIB_DA.version : ""]).then(function (res) {
+    if (!res || res.unchanged || !res.da) return;
+    LIB_DA = { version: res.version, da: res.da };
+    saveDanish(LIB_DA);
+    if (!LIB) return;
+    mergeDanish(LIB.drills);
+    if (LANG === "da") renderLibrary();
+  }, function () { /* no Danish texts this time: the drills show in the original language */ });
 }
 
 /* Does a drill match the search and the selected tags (ignoring one filter group, for counting)? */
@@ -1792,7 +1901,8 @@ function libBody(def, d) {
     return libLink(val, label) + (note ? `<p class="link-note">${esc(note)}</p>` : "");
   }
   if (def.type === "notes") {
-    return (d["__noter"] || []).map(p => libLink(p.url, p.text) || `<span>${escLines(p.text)}</span>`).join(" ");
+    const parts = d["__noter"] || [{ text: String(val), url: "" }];   // a note without links comes as plain text only
+    return parts.map(p => libLink(p.url, p.text) || `<span>${escLines(p.text)}</span>`).join(" ");
   }
   return `<p>${escLines(val)}</p>`;
 }
