@@ -2381,8 +2381,11 @@ function openSession(index) {
    bands in it share a level, so a group simply "has" a level: from the highest Fra to the lowest Til.
    The groups are found by trying many small changes (move one player, or swap two) and keeping the
    better ones, scored on: no band breaks (by far the most important), even sizes, few pairs who played
-   together lately, and about as many players changing group since last time as the slider asks for. */
-const GROUP_WEIGHTS = { band: 1000, size: 30, pair: 4, change: 40 };
+   together lately, and about as many players changing group since last time as the slider asks for.
+   Who moves: those who have stayed in the same group the most trainings in a row, so everyone takes a turn. */
+const GROUP_WEIGHTS = { band: 1000, size: 30, pair: 4, change: 40, stay: 36 };
+/* stay: staying put after a run of r trainings costs stay × (1 − 0.75^r): more for every training, but always
+   below the cost of one extra move, so it decides WHO moves, never how many */
 const GROUP_HISTORY = 12;          // saved trainings looked back at
 const GROUP_FADE = 0.75;           // a pairing counts less for every training since
 
@@ -2424,7 +2427,27 @@ function pairHistory(earlier) {
   return w;
 }
 
-/* opts: { players, k, prev: [[names]] or null, history: pairHistory(...), change: 0..1, seed }
+/* How many trainings in a row each player has been in the same group as last time ({ name: count }).
+   A training a player missed is skipped; a different group ends the run. */
+function stayRuns(earlier) {
+  const runs = {};
+  if (!earlier.length) return runs;
+  const groupIn = groups => { const of = {}; groups.forEach((g, gi) => g.forEach(n => { of[n] = gi; })); return of; };
+  const last = groupIn(earlier[0]);
+  const maps = earlier.slice(0, GROUP_HISTORY).map(groupIn);
+  Object.keys(last).forEach(function (name) {
+    let n = 0;
+    for (const of of maps) {
+      if (of[name] == null) continue;
+      if (of[name] !== last[name]) break;
+      n++;
+    }
+    runs[name] = n;
+  });
+  return runs;
+}
+
+/* opts: { players, k, prev: [[names]] or null, history: pairHistory(...), stay: stayRuns(...), change: 0..1, seed }
    Returns { groups: [[player]], moved, target, conflicts } */
 function makeGroups(opts) {
   const P = opts.players, n = P.length, k = Math.max(1, Math.min(opts.k, n || 1));
@@ -2448,6 +2471,8 @@ function makeGroups(opts) {
   const placedBefore = prevOf.filter(x => x >= 0).length;
   const useChange = placedBefore > 0 && opts.change < 1;
   const target = Math.round((opts.change || 0) * placedBefore);
+  const stay = new Float64Array(n);            // the cost of staying put, for the players who have stayed longest
+  if (useChange && target > 0) P.forEach((p, i) => { stay[i] = W.stay * (1 - Math.pow(0.75, (opts.stay || {})[p.name] || 0)); });
 
   // Start: last time's groups; everyone else by level into the group with room that fits them best
   const mid = p => isFinite(p.lo + p.hi) ? (p.lo + p.hi) / 2 : isFinite(p.lo) ? p.lo : isFinite(p.hi) ? p.hi : 1e9;
@@ -2475,7 +2500,7 @@ function makeGroups(opts) {
     let c = 0, moved = 0;
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) if (a[i] === a[j]) c += pair[i][j];
-      if (prevOf[i] >= 0 && a[i] !== prevOf[i]) moved++;
+      if (prevOf[i] >= 0) { if (a[i] !== prevOf[i]) moved++; else c += stay[i]; }
     }
     for (let g = 0; g < k; g++) c += W.size * (size[g] - even) * (size[g] - even);
     if (useChange) c += W.change * (moved - target) * (moved - target);
@@ -2658,7 +2683,7 @@ function makeNewGroups() {
   const earlier = earlierGroups();
   const res = makeGroups({
     players: players.map(searchBand), k: groupCount(players.length), prev: earlier.length ? earlier[0].groups : null,
-    history: pairHistory(earlier.map(e => e.groups)), change: GRP.change / 100,
+    history: pairHistory(earlier.map(e => e.groups)), stay: stayRuns(earlier.map(e => e.groups)), change: GRP.change / 100,
     seed: hashText(GRP.key + "|" + GRP.nonce++)
   });
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
