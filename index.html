@@ -637,7 +637,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 27. okt. 2026</p>
+<p class="build" id="build">App-version 27. okt. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2377,7 +2377,7 @@ function openSession(index) {
 
 /* ---- The grouping itself (no screen code here) ----
    Players: { name, lo, hi } – the level band (a player without a level has lo = -Infinity, hi = Infinity).
-   Two players may share a group only if their bands overlap. If every pair in a group overlaps, all the
+   Two players may share a group only if their bands meet (the screen code below makes touching bands not meet). If every pair in a group overlaps, all the
    bands in it share a level, so a group simply "has" a level: from the highest Fra to the lowest Til.
    The groups are found by trying many small changes (move one player, or swap two) and keeping the
    better ones, scored on: no band breaks (by far the most important), even sizes, few pairs who played
@@ -2585,16 +2585,25 @@ function bandText(lo, hi) {
 }
 
 /* Two ways to decide who may share a group (switched on the screen; the bands in the sheet stay as they are):
-   "band" – the bands must overlap; "max" – the players' max levels (Til) may differ by at most GRP.maxDiff.
+   "band" – the bands must overlap, and touching is not enough (2–3 and 3–4 may not mix, 2–3 and 1–3 may);
+   "max" – the players' max levels (Til) may differ by at most GRP.maxDiff.
+   For "band" the search gets each band made a hair smaller, so bands that only touch no longer meet; a player
+   with a single level (e.g. 3) counts as half a level to each side, so 3 still meets 3, 2–3, 3–4 and 2–4.
    For "max" the search gets the band [max, max + difference]: two of those overlap exactly when the max
    levels are close enough, so the same search works for both. */
 const byMax = () => GRP.rule === "max";
+const HAIR = 1e-6;
+function strictBand(p) {
+  if (!isFinite(p.lo) || !isFinite(p.hi)) return p;      // no level: fits everywhere
+  return p.lo === p.hi ? { name: p.name, lo: p.lo - 0.5 + HAIR, hi: p.hi + 0.5 - HAIR }
+                       : { name: p.name, lo: p.lo + HAIR, hi: p.hi - HAIR };
+}
 function grpMeet(a, b) {
-  if (!byMax()) return bandsMeet(a, b);
+  if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
   return !isFinite(a.hi) || !isFinite(b.hi) || Math.abs(a.hi - b.hi) <= GRP.maxDiff;
 }
 function searchBand(p) {
-  if (!byMax()) return p;
+  if (!byMax()) return strictBand(p);
   return isFinite(p.hi) ? { name: p.name, lo: p.hi, hi: p.hi + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
 }
 const ruleNote = (a) => byMax() ? "maks " + bandText(a.hi, a.hi) : bandText(a.lo, a.hi);
