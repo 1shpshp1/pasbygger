@@ -637,7 +637,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 27. okt. 2026 (4)</p>
+<p class="build" id="build">App-version 27. okt. 2026 (5)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2602,12 +2602,15 @@ function bandText(lo, hi) {
 
 /* Two ways to decide who may share a group (switched on the screen; the bands in the sheet stay as they are):
    "band" – the bands must overlap, and touching is not enough (2–3 and 3–4 may not mix, 2–3 and 1–3 may);
-   "max" – the players' top levels (Fra: 1 is the best level) may differ by at most GRP.maxDiff.
+   "max" – the players' top levels (Fra: 1 is the best level) may differ by at most GRP.maxDiff;
+   "chaos" – anyone may be with anyone (every player is sent to the search without a level).
    For "band" the search gets each band made a hair smaller, so bands that only touch no longer meet; a player
    with a single level (e.g. 3) counts as half a level to each side, so 3 still meets 3, 2–3, 3–4 and 2–4.
    For "max" the search gets the band [top, top + difference]: two of those overlap exactly when the top
    levels are close enough, so the same search works for both. */
 const byMax = () => GRP.rule === "max";
+const byChaos = () => GRP.rule === "chaos";     // "Kaos": a random split, level and earlier groups don't count
+const NO_LEVEL = name => ({ name: name, lo: -Infinity, hi: Infinity });
 const HAIR = 1e-6;
 function strictBand(p) {
   if (!isFinite(p.lo) || !isFinite(p.hi)) return p;      // no level: fits everywhere
@@ -2615,17 +2618,19 @@ function strictBand(p) {
                        : { name: p.name, lo: p.lo + HAIR, hi: p.hi - HAIR };
 }
 function grpMeet(a, b) {
+  if (byChaos()) return true;
   if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
   return !isFinite(a.lo) || !isFinite(b.lo) || Math.abs(a.lo - b.lo) <= GRP.maxDiff;
 }
 function searchBand(p) {
+  if (byChaos()) return NO_LEVEL(p.name);
   if (!byMax()) return strictBand(p);
   return isFinite(p.lo) ? { name: p.name, lo: p.lo, hi: p.lo + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
 }
 const ruleNote = (a) => byMax() ? "max " + bandText(a.lo, a.lo) : bandText(a.lo, a.hi);
 /* The text after the size on a group card: the shared level, or the range of max levels */
 function groupLevelText(g) {
-  if (!g.length) return "";
+  if (!g.length || byChaos()) return "";
   if (byMax()) {
     const m = g.map(p => p.lo).filter(isFinite);
     return m.length ? "max " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
@@ -2722,10 +2727,11 @@ function shownGroups() {
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
-  const earlier = earlierGroups();
+  const earlier = byChaos() ? [] : earlierGroups();   // Kaos: nothing from earlier trainings counts
   const res = makeGroups({
     players: players.map(searchBand), k: groupCount(players.length), prev: earlier.length ? earlier[0].groups : null,
-    history: pairHistory(shownGroups().concat(earlier.map(e => e.groups))), stay: stayRuns(earlier.map(e => e.groups)), change: GRP.change / 100,
+    history: byChaos() ? {} : pairHistory(shownGroups().concat(earlier.map(e => e.groups))), stay: stayRuns(earlier.map(e => e.groups)),
+    change: byChaos() ? 1 : GRP.change / 100,
     seed: hashText(GRP.key + "|" + GRP.nonce++)
   });
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
@@ -2758,8 +2764,9 @@ function renderGroups() {
       <div class="grp-row" style="margin-top:0">
         <span class="grp-hint">Del efter</span>
         <div class="grp-mode" role="group" aria-label="Del efter">
-          <button type="button" data-rule="band" aria-pressed="${!byMax()}">Bånd</button>
+          <button type="button" data-rule="band" aria-pressed="${GRP.rule === "band"}">Bånd</button>
           <button type="button" data-rule="max" aria-pressed="${byMax()}">Max-niveau</button>
+          <button type="button" data-rule="chaos" aria-pressed="${byChaos()}">Kaos</button>
         </div>
       </div>
       ${byMax() ? `<div class="grp-row">
@@ -2769,7 +2776,7 @@ function renderGroups() {
         </div>
       </div>` : ""}
       <div class="grp-row">
-        <div class="grp-mode" role="group" aria-label="Del efter">
+        <div class="grp-mode" role="group" aria-label="Gruppestørrelse">
           <button type="button" data-mode="count" aria-pressed="${GRP.mode === "count"}">Antal grupper</button>
           <button type="button" data-mode="size" aria-pressed="${GRP.mode === "size"}">Spillere pr. gruppe</button>
         </div>
@@ -2780,11 +2787,12 @@ function renderGroups() {
         </span>
         <span class="grp-hint">${sizeText(n, k)}</span>
       </div>
-      <label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
+      ${byChaos() ? `<p class="grp-hint grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
+      : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
         <span class="grp-ends" aria-hidden="true"><span>Behold</span><span>Bland</span></span>
         <span class="grp-hint">${changeText(prev, players, k)}</span>
-      </label>
+      </label>`}
       <div class="grp-row"><button type="button" class="login-go" data-act="make">${GRP.groups ? "Lav nye grupper" : "Lav grupper"}</button></div>
     </section>`;
 
@@ -2797,7 +2805,7 @@ function renderGroups() {
       const levelTxt = clash.length ? "niveau passer ikke" : groupLevelText(g);
       const selHere = GRP.sel && g.indexOf(GRP.sel) !== -1;
       const chips = g.map(function (p) {
-        const moved = prev && was[p.name] != null && was[p.name] !== gi;
+        const moved = !byChaos() && prev && was[p.name] != null && was[p.name] !== gi;
         return `<button type="button" class="grp-p${moved ? " moved" : ""}" data-p="${esc(p.name)}" aria-pressed="${GRP.sel === p}"` +
           `${moved ? ` title="Ny gruppe siden sidst"` : ""}>${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`;
       }).join("");
@@ -2808,7 +2816,7 @@ function renderGroups() {
         ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i max-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
-      <p class="grp-legend">${prev ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
+      <p class="grp-legend">${prev && !byChaos() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
         <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>`;
   }
