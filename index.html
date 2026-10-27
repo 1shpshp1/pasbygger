@@ -637,7 +637,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 27. okt. 2026 (2)</p>
+<p class="build" id="build">App-version 27. okt. 2026 (4)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2383,7 +2383,7 @@ function openSession(index) {
    better ones, scored on: no band breaks (by far the most important), even sizes, few pairs who played
    together lately, and about as many players changing group since last time as the slider asks for.
    Who moves: those who have stayed in the same group the most trainings in a row, so everyone takes a turn. */
-const GROUP_WEIGHTS = { band: 1000, size: 30, pair: 4, change: 40, stay: 36 };
+const GROUP_WEIGHTS = { band: 1e6, size: 30, pair: 4, change: 40, stay: 36 };   // band: far above everything else, so the level rule always wins
 /* stay: staying put after a run of r trainings costs stay × (1 − 0.75^r): more for every training, but always
    below the cost of one extra move, so it decides WHO moves, never how many */
 const GROUP_HISTORY = 12;          // saved trainings looked back at
@@ -2474,11 +2474,11 @@ function makeGroups(opts) {
   const stay = new Float64Array(n);            // the cost of staying put, for the players who have stayed longest
   if (useChange && target > 0) P.forEach((p, i) => { stay[i] = W.stay * (1 - Math.pow(0.75, (opts.stay || {})[p.name] || 0)); });
 
-  // Start: last time's groups; everyone else by level into the group with room that fits them best
+  // Two kinds of start: last time's groups (with everyone else by level into the group that fits them best),
+  // and a random mix that keeps the level rule (the narrowest bands placed first, in random order)
   const mid = p => isFinite(p.lo + p.hi) ? (p.lo + p.hi) / 2 : isFinite(p.lo) ? p.lo : isFinite(p.hi) ? p.hi : 1e9;
-  const a = new Int32Array(n).fill(-1);
-  const size = new Int32Array(k);
-  if (placedBefore) {
+  let a, size;
+  function startFromLast() {
     for (let i = 0; i < n; i++) if (prevOf[i] >= 0) { a[i] = prevOf[i]; size[a[i]]++; }
     const rest = [...Array(n).keys()].filter(i => a[i] < 0).sort((x, y) => mid(P[x]) - mid(P[y]));
     rest.forEach(function (i) {
@@ -2490,9 +2490,10 @@ function makeGroups(opts) {
       }
       a[i] = best; size[best]++;
     });
-  } else {                                     // nothing saved before: a random mix that keeps the level rule
+  }
+  function startRandom() {
     const width = p => isFinite(p.hi - p.lo) ? p.hi - p.lo : 1e9;
-    const key = P.map(p => width(p) + rand() * 2);  // the narrowest bands are placed first, in random order
+    const key = P.map(p => width(p) + rand() * 2);
     const cap = Math.ceil(n / k);
     const lev = Array.from({ length: k }, () => ({ lo: -Infinity, hi: Infinity }));
     [...Array(n).keys()].sort((x, y) => key[x] - key[y]).forEach(function (i) {
@@ -2520,29 +2521,44 @@ function makeGroups(opts) {
   }
 
   // Many small changes; a worse one is sometimes kept early on, so the search doesn't get stuck
-  let now = cost(), best = now, bestA = a.slice();
-  const steps = n < 2 || k < 2 ? 0 : 4000 + 800 * n;
-  let temp = 40;
-  const cool = Math.pow(0.05 / temp, 1 / Math.max(1, steps));
-  for (let s = 0; s < steps; s++, temp *= cool) {
-    const i = Math.floor(rand() * n);
-    const from = a[i];
-    let j = -1, to;
-    if (rand() < 0.5) {                        // swap with a player in another group
-      j = Math.floor(rand() * n);
-      if (a[j] === from) continue;
-      to = a[j]; a[i] = to; a[j] = from;
-    } else {                                   // move to another group
-      to = Math.floor(rand() * (k - 1)); if (to >= from) to++;
-      a[i] = to; size[from]--; size[to]++;
+  function search() {
+    let now = cost(), best = now, bestA = a.slice();
+    const steps = n < 2 || k < 2 ? 0 : 4000 + 800 * n;
+    let temp = 40;
+    const cool = Math.pow(0.05 / temp, 1 / Math.max(1, steps));
+    for (let s = 0; s < steps; s++, temp *= cool) {
+      const i = Math.floor(rand() * n);
+      const from = a[i];
+      let j = -1, to;
+      if (rand() < 0.5) {                        // swap with a player in another group
+        j = Math.floor(rand() * n);
+        if (a[j] === from) continue;
+        to = a[j]; a[i] = to; a[j] = from;
+      } else {                                   // move to another group
+        to = Math.floor(rand() * (k - 1)); if (to >= from) to++;
+        a[i] = to; size[from]--; size[to]++;
+      }
+      const next = cost();
+      if (next <= now || rand() < Math.exp((now - next) / temp)) {
+        now = next;
+        if (now < best) { best = now; bestA = a.slice(); }
+      } else if (j >= 0) { a[j] = to; a[i] = from; }
+      else { a[i] = from; size[from]++; size[to]--; }
     }
-    const next = cost();
-    if (next <= now || rand() < Math.exp((now - next) / temp)) {
-      now = next;
-      if (now < best) { best = now; bestA = a.slice(); }
-    } else if (j >= 0) { a[j] = to; a[i] = from; }
-    else { a[i] = from; size[from]++; size[to]--; }
+    return { cost: best, a: bestA };
   }
+
+  // Search from both starts and keep the best: last time's groups usually win, but when they can't be
+  // turned into groups that keep the level rule, the fresh start finds a way
+  const starts = placedBefore ? [startFromLast, startRandom] : [startRandom, startRandom];
+  let found = null;
+  starts.forEach(function (start) {
+    a = new Int32Array(n).fill(-1); size = new Int32Array(k);
+    start();
+    const r = search();
+    if (!found || r.cost < found.cost) found = r;
+  });
+  const bestA = found.a;
 
   const groups = Array.from({ length: k }, () => []);
   P.forEach((p, i) => groups[bestA[i]].push(p));
@@ -2586,10 +2602,10 @@ function bandText(lo, hi) {
 
 /* Two ways to decide who may share a group (switched on the screen; the bands in the sheet stay as they are):
    "band" – the bands must overlap, and touching is not enough (2–3 and 3–4 may not mix, 2–3 and 1–3 may);
-   "max" – the players' max levels (Til) may differ by at most GRP.maxDiff.
+   "max" – the players' top levels (Fra: 1 is the best level) may differ by at most GRP.maxDiff.
    For "band" the search gets each band made a hair smaller, so bands that only touch no longer meet; a player
    with a single level (e.g. 3) counts as half a level to each side, so 3 still meets 3, 2–3, 3–4 and 2–4.
-   For "max" the search gets the band [max, max + difference]: two of those overlap exactly when the max
+   For "max" the search gets the band [top, top + difference]: two of those overlap exactly when the top
    levels are close enough, so the same search works for both. */
 const byMax = () => GRP.rule === "max";
 const HAIR = 1e-6;
@@ -2600,19 +2616,19 @@ function strictBand(p) {
 }
 function grpMeet(a, b) {
   if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
-  return !isFinite(a.hi) || !isFinite(b.hi) || Math.abs(a.hi - b.hi) <= GRP.maxDiff;
+  return !isFinite(a.lo) || !isFinite(b.lo) || Math.abs(a.lo - b.lo) <= GRP.maxDiff;
 }
 function searchBand(p) {
   if (!byMax()) return strictBand(p);
-  return isFinite(p.hi) ? { name: p.name, lo: p.hi, hi: p.hi + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
+  return isFinite(p.lo) ? { name: p.name, lo: p.lo, hi: p.lo + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
 }
-const ruleNote = (a) => byMax() ? "maks " + bandText(a.hi, a.hi) : bandText(a.lo, a.hi);
+const ruleNote = (a) => byMax() ? "max " + bandText(a.lo, a.lo) : bandText(a.lo, a.hi);
 /* The text after the size on a group card: the shared level, or the range of max levels */
 function groupLevelText(g) {
   if (!g.length) return "";
   if (byMax()) {
-    const m = g.map(p => p.hi).filter(isFinite);
-    return m.length ? "maks " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
+    const m = g.map(p => p.lo).filter(isFinite);
+    return m.length ? "max " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
   }
   const lev = groupLevel(g);
   return "niveau " + bandText(lev.lo, lev.hi);
@@ -2715,7 +2731,7 @@ function makeNewGroups() {
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
   GRP.bad = res.conflicts > 0;
   GRP.msg = res.conflicts
-    ? (byMax() ? "Maks-niveauerne" : "Niveauerne") + " kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
+    ? (byMax() ? "Max-niveauerne" : "Niveauerne") + " kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
     : res.target != null ? `${res.moved} ${res.moved === 1 ? "spiller" : "spillere"} skiftede gruppe siden sidst.` : "";
   renderGroups();
 }
@@ -2743,12 +2759,12 @@ function renderGroups() {
         <span class="grp-hint">Del efter</span>
         <div class="grp-mode" role="group" aria-label="Del efter">
           <button type="button" data-rule="band" aria-pressed="${!byMax()}">Bånd</button>
-          <button type="button" data-rule="max" aria-pressed="${byMax()}">Maks-niveau</button>
+          <button type="button" data-rule="max" aria-pressed="${byMax()}">Max-niveau</button>
         </div>
       </div>
       ${byMax() ? `<div class="grp-row">
-        <span class="grp-hint">Forskel i maks-niveau højst</span>
-        <div class="grp-mode" role="group" aria-label="Forskel i maks-niveau højst">
+        <span class="grp-hint">Forskel i max-niveau højst</span>
+        <div class="grp-mode" role="group" aria-label="Forskel i max-niveau højst">
           ${[0, 1, 2].map(d => `<button type="button" data-diff="${d}" aria-pressed="${GRP.maxDiff === d}">${d}</button>`).join("")}
         </div>
       </div>` : ""}
@@ -2789,7 +2805,7 @@ function renderGroups() {
         <div class="grp-head"><strong>Gruppe ${gi + 1}</strong><small>${g.length} ${g.length === 1 ? "spiller" : "spillere"}${levelTxt ? " · " + levelTxt : ""}</small></div>
         <div class="grp-players">${chips || '<span class="grp-hint">Ingen spillere</span>'}</div>
         ${GRP.sel && !selHere ? `<button type="button" class="clearbtn grp-here" data-to="${gi}">Flyt ${esc(GRP.sel.name)} hertil</button>` : ""}
-        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i maks-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
+        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i max-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
       <p class="grp-legend">${prev ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
