@@ -2490,9 +2490,21 @@ function makeGroups(opts) {
       }
       a[i] = best; size[best]++;
     });
-  } else {                                     // first time: sorted by level and cut into even groups
-    const order = [...Array(n).keys()].sort((x, y) => mid(P[x]) - mid(P[y]) || rand() - 0.5);
-    order.forEach((i, r) => { a[i] = Math.floor(r * k / n); size[a[i]]++; });
+  } else {                                     // nothing saved before: a random mix that keeps the level rule
+    const width = p => isFinite(p.hi - p.lo) ? p.hi - p.lo : 1e9;
+    const key = P.map(p => width(p) + rand() * 2);  // the narrowest bands are placed first, in random order
+    const cap = Math.ceil(n / k);
+    const lev = Array.from({ length: k }, () => ({ lo: -Infinity, hi: Infinity }));
+    [...Array(n).keys()].sort((x, y) => key[x] - key[y]).forEach(function (i) {
+      let best = 0, bestScore = Infinity;
+      for (let g = 0; g < k; g++) {
+        const fits = Math.max(lev[g].lo, P[i].lo) <= Math.min(lev[g].hi, P[i].hi);
+        const score = (fits ? 0 : 1000) + (size[g] >= cap ? 100 : 0) + size[g] + rand();
+        if (score < bestScore) { bestScore = score; best = g; }
+      }
+      a[i] = best; size[best]++;
+      lev[best] = { lo: Math.max(lev[best].lo, P[i].lo), hi: Math.min(lev[best].hi, P[i].hi) };
+    });
   }
 
   const even = n / k;
@@ -2534,7 +2546,7 @@ function makeGroups(opts) {
 
   const groups = Array.from({ length: k }, () => []);
   P.forEach((p, i) => groups[bestA[i]].push(p));
-  groups.forEach(g => g.sort((x, y) => mid(x) - mid(y) || x.name.localeCompare(y.name, "da")));
+  groups.forEach(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));   // by name, so a group doesn't look sorted by level
   let moved = 0;
   for (let i = 0; i < n; i++) if (prevOf[i] >= 0 && bestA[i] !== prevOf[i]) moved++;
   return { groups: groups, moved: moved, target: useChange ? target : null, conflicts: groups.filter(g => groupLevel(g).lo > groupLevel(g).hi).length };
@@ -2669,12 +2681,17 @@ function lastGroupOf(prev) {
 }
 
 function changeText(prev, players, k) {
-  if (!prev) return "Ingen gemte grupper før denne træning – første gang deles efter niveau.";
+  if (!prev) return "Ingen gemte grupper før denne træning – spillerne blandes tilfældigt inden for niveauerne.";
   if (GRP.change >= 100) return "Bland mest muligt (flest nye makkere).";
   const of = lastGroupOf(prev);
   const m = players.filter(p => of[p.name] != null && of[p.name] < k).length;
   const t = Math.round(GRP.change / 100 * m);
   return `Ca. ${t} af ${m} spillere skifter gruppe (sidst: ${esc(danishDate(prev.key, prev.key))}).`;
+}
+
+/* The groups on the screen now: "Lav nye grupper" avoids their pairs too, so pressing it again gives a new mix */
+function shownGroups() {
+  return GRP.groups && GRP.groups.some(g => g.length > 1) ? [GRP.groups.map(g => g.map(p => p.name))] : [];
 }
 
 function makeNewGroups() {
@@ -2683,7 +2700,7 @@ function makeNewGroups() {
   const earlier = earlierGroups();
   const res = makeGroups({
     players: players.map(searchBand), k: groupCount(players.length), prev: earlier.length ? earlier[0].groups : null,
-    history: pairHistory(earlier.map(e => e.groups)), stay: stayRuns(earlier.map(e => e.groups)), change: GRP.change / 100,
+    history: pairHistory(shownGroups().concat(earlier.map(e => e.groups))), stay: stayRuns(earlier.map(e => e.groups)), change: GRP.change / 100,
     seed: hashText(GRP.key + "|" + GRP.nonce++)
   });
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
