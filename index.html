@@ -526,6 +526,50 @@
     .tag-label { margin-bottom: 4px; color: #777777; font-size: 13px; font-weight: bold; }
     .v-sec .dchips { margin-top: 0; }
 
+    /* ---------- Training groups (only with the groups code) ---------- */
+    .grp-sec { margin: 0 0 18px; padding: 14px; border: 1px solid #e3e3e3; border-radius: 12px; background: #fafafa; }
+    .grp-sec > summary { cursor: pointer; font-weight: bold; color: var(--red); }
+    .grp-sec[open] > summary { margin-bottom: 10px; }
+    .grp-who { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; }
+    .grp-who label { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+    .grp-who input { width: 20px; height: 20px; accent-color: var(--red); }
+    .grp-band { color: #777777; font-size: 13px; white-space: nowrap; }
+    .grp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 10px; }
+    .grp-mode { display: inline-flex; border: 1px solid var(--red); border-radius: 99px; overflow: hidden; }
+    .grp-mode button { padding: 7px 12px; border: 0; background: #ffffff; color: var(--red); font: inherit; font-size: 14px; cursor: pointer; }
+    .grp-mode button[aria-pressed="true"] { background: var(--red); color: #ffffff; font-weight: bold; }
+    .grp-step { display: inline-flex; align-items: center; gap: 6px; }
+    .grp-step button {
+      width: 36px; height: 36px; border: 1px solid var(--red); border-radius: 50%;
+      background: #ffffff; color: var(--red); font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
+    }
+    .grp-step output { min-width: 2ch; font-size: 20px; font-weight: bold; text-align: center; }
+    .grp-hint { color: #555555; font-size: 14px; }
+    .grp-slide { display: block; margin-top: 14px; }
+    .grp-slide > span:first-child { display: block; font-size: 14px; font-weight: bold; }
+    .grp-slide > .grp-hint { display: block; }
+    .grp-slide input { width: 100%; max-width: 360px; accent-color: var(--red); }
+    .grp-ends { display: flex; justify-content: space-between; max-width: 360px; color: #777777; font-size: 12px; }
+    .grp-msg { margin: 0 0 12px; color: #555555; font-size: 14px; }
+    .grp-msg.bad { color: #b00020; font-weight: bold; }
+    .grp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .grp-card { padding: 12px; border: 1px solid #e3e3e3; border-top: 4px solid var(--red); border-radius: 10px; background: #ffffff; }
+    .grp-card.bad { border-color: #b00020; background: #fff5f6; }
+    .grp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; margin-bottom: 8px; }
+    .grp-head small { color: #555555; font-size: 13px; }
+    .grp-players { display: flex; flex-wrap: wrap; gap: 6px; }
+    .grp-p {
+      display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 10px; border: 1px solid #d6d6d6;
+      border-radius: 99px; background: #ffffff; color: inherit; font: inherit; font-size: 15px; cursor: pointer;
+    }
+    .grp-p.moved { border-color: var(--red); background: var(--red-tint); }
+    .grp-p[aria-pressed="true"] { border-color: var(--red); background: var(--red); color: #ffffff; }
+    .grp-p[aria-pressed="true"] .grp-band { color: #ffffff; }
+    .grp-here { margin-top: 8px; }
+    .grp-warn { margin: 8px 0 0; color: #b00020; font-size: 14px; }
+    .grp-save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 16px; }
+    .grp-legend { margin: 10px 0 0; color: #777777; font-size: 13px; }
+
     /* ---------- Login box ---------- */
     .login {
       position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
@@ -593,7 +637,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 26. okt. 2026</p>
+<p class="build" id="build">App-version 27. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1056,7 +1100,8 @@ function setAliases(list) {
 }
 
 /* ===================== Login for the "Øvelser" tab (valid for 30 minutes) ===================== */
-const AUTH = { token: "", until: 0 };
+const AUTH = { token: "", until: 0, groups: false };   // groups: logged in with the groups code
+let GRP = null;                  // the open "Grupper" screen (see Training groups below)
 let AUTH_TIMER = null;
 const isAuthed = () => !!AUTH.token && Date.now() < AUTH.until;
 
@@ -1078,7 +1123,7 @@ function scheduleExpiry() {
 /* Remove the login and every drill from the page */
 function wipeLibrary() {
   clearTimeout(AUTH_TIMER);
-  AUTH.token = ""; AUTH.until = 0;
+  AUTH.token = ""; AUTH.until = 0; AUTH.groups = false; GRP = null;
   saveAuth();
   LIB = null; LIB_LIST = []; LIB_LOADING = false;
   ["drill-grid", "lib-filters", "lib-status", "lib-sync"].forEach(id => { document.getElementById(id).innerHTML = ""; });
@@ -1096,7 +1141,7 @@ function expire() {
 (function restoreAuth() {                     // opening the app again within the 30 minutes keeps the login
   try {
     const a = JSON.parse(localStorage.getItem("oevAuth") || sessionStorage.getItem("oevAuth") || "null");
-    if (a && a.token && Date.now() < a.until) { AUTH.token = a.token; AUTH.until = a.until; scheduleExpiry(); }
+    if (a && a.token && Date.now() < a.until) { AUTH.token = a.token; AUTH.until = a.until; AUTH.groups = !!a.groups; scheduleExpiry(); }
     else localStorage.removeItem("oevAuth");   // expired: tidy up
   } catch (e) { /* ignore */ }
 })();
@@ -1145,6 +1190,7 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
       }
       AUTH.token = res.token;
       AUTH.until = Date.now() + res.seconds * 1000;
+      AUTH.groups = !!res.groups;
       saveAuth(); scheduleExpiry();
       const cb = LOGIN_CB; LOGIN_CB = null;
       closeLogin();
@@ -2311,6 +2357,7 @@ function sessionPages(s, index) {
       s.notes.map(p => libLink(p.url, p.text) || `<span>${escLines(p.text)}</span>`).join(" ") + `</section>`;
   }
   html += items.length ? `<div class="v-plan">${rows}</div>` : "<p>Intet planlagt.</p>";
+  if (canGroup() && sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper</button>`;
   return [{ title: s.focus || danishDate(s.iso, s.date), html: html }];
 }
 
@@ -2326,6 +2373,481 @@ function openSession(index) {
       `<span class="v-datebadge" aria-hidden="true">${esc(short)}</span><span class="v-sr">${esc(danishDate(s.iso, s.date))}</span>`;
   }
   document.getElementById("v-share").classList.toggle("view-hidden", !s.iso);   // a link needs a date
+}
+
+/* ---- The grouping itself (no screen code here) ----
+   Players: { name, lo, hi } – the level band (a player without a level has lo = -Infinity, hi = Infinity).
+   Two players may share a group only if their bands overlap. If every pair in a group overlaps, all the
+   bands in it share a level, so a group simply "has" a level: from the highest Fra to the lowest Til.
+   The groups are found by trying many small changes (move one player, or swap two) and keeping the
+   better ones, scored on: no band breaks (by far the most important), even sizes, few pairs who played
+   together lately, and about as many players changing group since last time as the slider asks for. */
+const GROUP_WEIGHTS = { band: 1000, size: 30, pair: 4, change: 40 };
+const GROUP_HISTORY = 12;          // saved trainings looked back at
+const GROUP_FADE = 0.75;           // a pairing counts less for every training since
+
+function seededRandom(seed) {      // the same seed gives the same groups, so "Lav grupper" is repeatable
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashText(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+const bandsMeet = (a, b) => a.lo <= b.hi && b.lo <= a.hi;
+const pairKey = (a, b) => a < b ? a + "\n" + b : b + "\n" + a;
+
+/* The level a group shares ({ lo, hi }); lo > hi means some bands in it don't meet */
+function groupLevel(players) {
+  let lo = -Infinity, hi = Infinity;
+  players.forEach(p => { lo = Math.max(lo, p.lo); hi = Math.min(hi, p.hi); });
+  return { lo: lo, hi: hi };
+}
+
+/* How often each pair played together lately: { pairKey: weight }, newest training weighs 1 */
+function pairHistory(earlier) {
+  const w = {};
+  earlier.slice(0, GROUP_HISTORY).forEach(function (groups, age) {
+    const f = Math.pow(GROUP_FADE, age);
+    groups.forEach(g => g.forEach((a, i) => g.slice(i + 1).forEach(b => {
+      const k = pairKey(a, b); w[k] = (w[k] || 0) + f;
+    })));
+  });
+  return w;
+}
+
+/* opts: { players, k, prev: [[names]] or null, history: pairHistory(...), change: 0..1, seed }
+   Returns { groups: [[player]], moved, target, conflicts } */
+function makeGroups(opts) {
+  const P = opts.players, n = P.length, k = Math.max(1, Math.min(opts.k, n || 1));
+  const rand = seededRandom(opts.seed || 1);
+  const W = GROUP_WEIGHTS;
+
+  // Pair scores, worked out once: band break and recent pairings
+  const pair = [];
+  for (let i = 0; i < n; i++) {
+    pair.push(new Float64Array(n));
+    for (let j = 0; j < n; j++) if (i !== j)
+      pair[i][j] = (bandsMeet(P[i], P[j]) ? 0 : W.band) + W.pair * (opts.history[pairKey(P[i].name, P[j].name)] || 0);
+  }
+
+  // Last time's group of each player (only groups that still exist with this number of groups)
+  const prevOf = new Int32Array(n).fill(-1);
+  if (opts.prev) opts.prev.forEach((g, gi) => g.forEach(name => {
+    const i = P.findIndex(p => p.name === name);
+    if (i !== -1 && gi < k) prevOf[i] = gi;
+  }));
+  const placedBefore = prevOf.filter(x => x >= 0).length;
+  const useChange = placedBefore > 0 && opts.change < 1;
+  const target = Math.round((opts.change || 0) * placedBefore);
+
+  // Start: last time's groups; everyone else by level into the group with room that fits them best
+  const mid = p => isFinite(p.lo + p.hi) ? (p.lo + p.hi) / 2 : isFinite(p.lo) ? p.lo : isFinite(p.hi) ? p.hi : 1e9;
+  const a = new Int32Array(n).fill(-1);
+  const size = new Int32Array(k);
+  if (placedBefore) {
+    for (let i = 0; i < n; i++) if (prevOf[i] >= 0) { a[i] = prevOf[i]; size[a[i]]++; }
+    const rest = [...Array(n).keys()].filter(i => a[i] < 0).sort((x, y) => mid(P[x]) - mid(P[y]));
+    rest.forEach(function (i) {
+      let best = 0, bestCost = Infinity;
+      for (let g = 0; g < k; g++) {
+        let c = size[g] * W.size;
+        for (let j = 0; j < n; j++) if (a[j] === g) c += pair[i][j];
+        if (c < bestCost) { bestCost = c; best = g; }
+      }
+      a[i] = best; size[best]++;
+    });
+  } else {                                     // first time: sorted by level and cut into even groups
+    const order = [...Array(n).keys()].sort((x, y) => mid(P[x]) - mid(P[y]) || rand() - 0.5);
+    order.forEach((i, r) => { a[i] = Math.floor(r * k / n); size[a[i]]++; });
+  }
+
+  const even = n / k;
+  function cost() {
+    let c = 0, moved = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) if (a[i] === a[j]) c += pair[i][j];
+      if (prevOf[i] >= 0 && a[i] !== prevOf[i]) moved++;
+    }
+    for (let g = 0; g < k; g++) c += W.size * (size[g] - even) * (size[g] - even);
+    if (useChange) c += W.change * (moved - target) * (moved - target);
+    return c;
+  }
+
+  // Many small changes; a worse one is sometimes kept early on, so the search doesn't get stuck
+  let now = cost(), best = now, bestA = a.slice();
+  const steps = n < 2 || k < 2 ? 0 : 4000 + 800 * n;
+  let temp = 40;
+  const cool = Math.pow(0.05 / temp, 1 / Math.max(1, steps));
+  for (let s = 0; s < steps; s++, temp *= cool) {
+    const i = Math.floor(rand() * n);
+    const from = a[i];
+    let j = -1, to;
+    if (rand() < 0.5) {                        // swap with a player in another group
+      j = Math.floor(rand() * n);
+      if (a[j] === from) continue;
+      to = a[j]; a[i] = to; a[j] = from;
+    } else {                                   // move to another group
+      to = Math.floor(rand() * (k - 1)); if (to >= from) to++;
+      a[i] = to; size[from]--; size[to]++;
+    }
+    const next = cost();
+    if (next <= now || rand() < Math.exp((now - next) / temp)) {
+      now = next;
+      if (now < best) { best = now; bestA = a.slice(); }
+    } else if (j >= 0) { a[j] = to; a[i] = from; }
+    else { a[i] = from; size[from]++; size[to]--; }
+  }
+
+  const groups = Array.from({ length: k }, () => []);
+  P.forEach((p, i) => groups[bestA[i]].push(p));
+  groups.forEach(g => g.sort((x, y) => mid(x) - mid(y) || x.name.localeCompare(y.name, "da")));
+  let moved = 0;
+  for (let i = 0; i < n; i++) if (prevOf[i] >= 0 && bestA[i] !== prevOf[i]) moved++;
+  return { groups: groups, moved: moved, target: useChange ? target : null, conflicts: groups.filter(g => groupLevel(g).lo > groupLevel(g).hi).length };
+}
+
+/* ===================== Training groups (test: only with the groups code) =====================
+   The "Grupper" button in a training opens this screen: tick who is there, choose the number of groups
+   (or players per group) and how much should change since last time, then "Lav grupper". A player can
+   be moved by tapping them and then "Flyt hertil" (or another player, to swap). "Gem grupper" saves them
+   in the tab "Grupper", and the next trainings use them to vary the groups. Nothing about the players
+   is kept on the phone: it is fetched from the sheet each time the screen opens. */
+const canGroup = () => isAuthed() && !!AUTH.groups;
+const GRP_SETTINGS_KEY = "oevGrpSettings";      // only the settings (number of groups, slider) are remembered
+
+function grpSettings() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(GRP_SETTINGS_KEY) || "null"); } catch (e) { /* ignore */ }
+  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1 }, s || {});
+}
+function saveGrpSettings() {
+  try {
+    localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
+                                                      rule: GRP.rule, maxDiff: GRP.maxDiff }));
+  } catch (e) { /* ignore */ }
+}
+
+const sessionKey = s => String((s && (s.iso || s.date)) || "").trim();
+
+/* "2", "2–3" or "?" (no level) */
+function bandText(lo, hi) {
+  const f = x => String(x).replace(".", ",");
+  if (!isFinite(lo) && !isFinite(hi)) return "?";
+  if (!isFinite(lo)) return "–" + f(hi);
+  if (!isFinite(hi)) return f(lo) + "–";
+  return lo === hi ? f(lo) : f(lo) + "–" + f(hi);
+}
+
+/* Two ways to decide who may share a group (switched on the screen; the bands in the sheet stay as they are):
+   "band" – the bands must overlap; "max" – the players' max levels (Til) may differ by at most GRP.maxDiff.
+   For "max" the search gets the band [max, max + difference]: two of those overlap exactly when the max
+   levels are close enough, so the same search works for both. */
+const byMax = () => GRP.rule === "max";
+function grpMeet(a, b) {
+  if (!byMax()) return bandsMeet(a, b);
+  return !isFinite(a.hi) || !isFinite(b.hi) || Math.abs(a.hi - b.hi) <= GRP.maxDiff;
+}
+function searchBand(p) {
+  if (!byMax()) return p;
+  return isFinite(p.hi) ? { name: p.name, lo: p.hi, hi: p.hi + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
+}
+const ruleNote = (a) => byMax() ? "maks " + bandText(a.hi, a.hi) : bandText(a.lo, a.hi);
+/* The text after the size on a group card: the shared level, or the range of max levels */
+function groupLevelText(g) {
+  if (!g.length) return "";
+  if (byMax()) {
+    const m = g.map(p => p.hi).filter(isFinite);
+    return m.length ? "maks " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
+  }
+  const lev = groupLevel(g);
+  return "niveau " + bandText(lev.lo, lev.hi);
+}
+
+function openGroups(index) {
+  const s = SESSIONS[index];
+  if (!s || !canGroup()) return;
+  const set = grpSettings();
+  GRP = Object.assign(set, { index: index, key: sessionKey(s), data: null, byName: {}, present: new Set(),
+                             groups: null, saved: "", dirty: false, sel: null, nonce: 0, msg: "", bad: false });
+  openViewer(danishDate(s.iso, s.date), [{ title: "Grupper", html: '<div id="grp" class="grp"><p>Henter spillere …</p></div>' }],
+             document.getElementById("sheader-" + index), function () { openSession(index); });
+  const box = document.getElementById("grp");
+  box.addEventListener("click", grpClick);
+  box.addEventListener("input", grpInput);
+  loadGroupData();
+}
+
+function loadGroupData() {
+  const want = GRP;
+  libCall("getGroupData", [AUTH.token]).then(function (data) {
+    if (GRP !== want) return;                           // the screen was closed or opened for another training
+    GRP.data = data;
+    data.players.forEach(function (p) {
+      GRP.byName[p.name] = { name: p.name, lo: p.lo == null ? -Infinity : p.lo, hi: p.hi == null ? Infinity : p.hi };
+    });
+    const mine = data.history[GRP.key];
+    if (mine) {                                         // already saved for this training: show those groups
+      GRP.groups = mine.groups.map(g => g.map(grpPlayer));
+      GRP.groups.forEach(g => g.forEach(p => GRP.present.add(p.name)));
+      GRP.saved = mine.saved;
+    } else data.players.forEach(p => GRP.present.add(p.name));
+    renderGroups();
+  }, function (err) {
+    if (GRP !== want) return;
+    const box = document.getElementById("grp");
+    if (/LOGIN/.test(String(err && err.message))) {
+      box.innerHTML = "<p>Login er udløbet.</p>";
+      requireLogin(function () { if (canGroup()) openGroups(want.index); });
+    } else box.innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
+  });
+}
+
+/* A player by name; a name that is no longer in the tab "Spillere" fits anywhere */
+const grpPlayer = name => GRP.byName[name] || (GRP.byName[name] = { name: name, lo: -Infinity, hi: Infinity });
+
+/* Earlier trainings' groups, newest first */
+function earlierGroups() {
+  const h = GRP.data.history;
+  return Object.keys(h).filter(k => k < GRP.key).sort().reverse().map(k => ({ key: k, groups: h[k].groups }));
+}
+
+function presentPlayers() {
+  return GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => grpPlayer(p.name));
+}
+
+/* Number of groups for n players with the chosen setting */
+function groupCount(n) {
+  const k = GRP.mode === "count" ? GRP.count : Math.round(n / GRP.size);
+  return Math.max(1, Math.min(k, Math.max(1, n)));
+}
+
+function sizeText(n, k) {
+  if (!n) return "";
+  const a = Math.floor(n / k), b = Math.ceil(n / k);
+  return `${k} ${k === 1 ? "gruppe" : "grupper"} á ${a === b ? a : a + "–" + b} spillere`;
+}
+
+/* Who was in which group last time ({ name: group number }), for the marks and the slider text */
+function lastGroupOf(prev) {
+  const of = {};
+  if (prev) prev.groups.forEach((g, gi) => g.forEach(name => { of[name] = gi; }));
+  return of;
+}
+
+function changeText(prev, players, k) {
+  if (!prev) return "Ingen gemte grupper før denne træning – første gang deles efter niveau.";
+  if (GRP.change >= 100) return "Bland mest muligt (flest nye makkere).";
+  const of = lastGroupOf(prev);
+  const m = players.filter(p => of[p.name] != null && of[p.name] < k).length;
+  const t = Math.round(GRP.change / 100 * m);
+  return `Ca. ${t} af ${m} spillere skifter gruppe (sidst: ${esc(danishDate(prev.key, prev.key))}).`;
+}
+
+function makeNewGroups() {
+  const players = presentPlayers();
+  if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
+  const earlier = earlierGroups();
+  const res = makeGroups({
+    players: players.map(searchBand), k: groupCount(players.length), prev: earlier.length ? earlier[0].groups : null,
+    history: pairHistory(earlier.map(e => e.groups)), change: GRP.change / 100,
+    seed: hashText(GRP.key + "|" + GRP.nonce++)
+  });
+  GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
+  GRP.bad = res.conflicts > 0;
+  GRP.msg = res.conflicts
+    ? (byMax() ? "Maks-niveauerne" : "Niveauerne") + " kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
+    : res.target != null ? `${res.moved} ${res.moved === 1 ? "spiller" : "spillere"} skiftede gruppe siden sidst.` : "";
+  renderGroups();
+}
+
+function renderGroups() {
+  const box = document.getElementById("grp");
+  if (!box || !GRP || !GRP.data) return;
+  const all = GRP.data.players;
+  const players = presentPlayers();
+  const n = players.length, k = groupCount(n);
+  const prev = earlierGroups()[0] || null;
+  const was = lastGroupOf(prev);
+
+  const who = all.map((p, i) => `<label><input type="checkbox" data-who="${i}"${GRP.present.has(p.name) ? " checked" : ""}>` +
+    `<span>${esc(p.name)} <span class="grp-band">${bandText(grpPlayer(p.name).lo, grpPlayer(p.name).hi)}</span></span></label>`).join("");
+
+  let html = `<p class="grp-msg">Test – kun synlig for dig.</p>
+    <details class="grp-sec"${GRP.groups ? "" : " open"}><summary>Hvem er med? ${n} af ${all.length}</summary>
+      ${all.length ? `<div class="grp-who">${who}</div>
+      <div class="grp-row"><button type="button" class="clearbtn" data-act="all">Alle</button><button type="button" class="clearbtn" data-act="none">Ingen</button></div>`
+      : `<p>Fanen "Spillere" er tom. Skriv spillerne ind (Navn, Fra, Til) og åbn Grupper igen.</p>`}
+    </details>
+    <section class="grp-sec">
+      <div class="grp-row" style="margin-top:0">
+        <span class="grp-hint">Del efter</span>
+        <div class="grp-mode" role="group" aria-label="Del efter">
+          <button type="button" data-rule="band" aria-pressed="${!byMax()}">Bånd</button>
+          <button type="button" data-rule="max" aria-pressed="${byMax()}">Maks-niveau</button>
+        </div>
+      </div>
+      ${byMax() ? `<div class="grp-row">
+        <span class="grp-hint">Forskel i maks-niveau højst</span>
+        <div class="grp-mode" role="group" aria-label="Forskel i maks-niveau højst">
+          ${[0, 1, 2].map(d => `<button type="button" data-diff="${d}" aria-pressed="${GRP.maxDiff === d}">${d}</button>`).join("")}
+        </div>
+      </div>` : ""}
+      <div class="grp-row">
+        <div class="grp-mode" role="group" aria-label="Del efter">
+          <button type="button" data-mode="count" aria-pressed="${GRP.mode === "count"}">Antal grupper</button>
+          <button type="button" data-mode="size" aria-pressed="${GRP.mode === "size"}">Spillere pr. gruppe</button>
+        </div>
+        <span class="grp-step">
+          <button type="button" data-act="minus" aria-label="Færre">−</button>
+          <output aria-live="polite">${GRP.mode === "count" ? GRP.count : GRP.size}</output>
+          <button type="button" data-act="plus" aria-label="Flere">+</button>
+        </span>
+        <span class="grp-hint">${sizeText(n, k)}</span>
+      </div>
+      <label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
+        <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
+        <span class="grp-ends" aria-hidden="true"><span>Behold</span><span>Bland</span></span>
+        <span class="grp-hint">${changeText(prev, players, k)}</span>
+      </label>
+      <div class="grp-row"><button type="button" class="login-go" data-act="make">${GRP.groups ? "Lav nye grupper" : "Lav grupper"}</button></div>
+    </section>`;
+
+  if (GRP.msg) html += `<p class="grp-msg${GRP.bad ? " bad" : ""}" role="status">${esc(GRP.msg)}</p>`;
+
+  if (GRP.groups) {
+    html += `<div class="grp-list">` + GRP.groups.map(function (g, gi) {
+      const clash = [];
+      g.forEach((a, i) => g.slice(i + 1).forEach(b => { if (!grpMeet(a, b)) clash.push(`${a.name} (${ruleNote(a)}) og ${b.name} (${ruleNote(b)})`); }));
+      const levelTxt = clash.length ? "niveau passer ikke" : groupLevelText(g);
+      const selHere = GRP.sel && g.indexOf(GRP.sel) !== -1;
+      const chips = g.map(function (p) {
+        const moved = prev && was[p.name] != null && was[p.name] !== gi;
+        return `<button type="button" class="grp-p${moved ? " moved" : ""}" data-p="${esc(p.name)}" aria-pressed="${GRP.sel === p}"` +
+          `${moved ? ` title="Ny gruppe siden sidst"` : ""}>${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`;
+      }).join("");
+      return `<div class="grp-card${clash.length ? " bad" : ""}">
+        <div class="grp-head"><strong>Gruppe ${gi + 1}</strong><small>${g.length} ${g.length === 1 ? "spiller" : "spillere"}${levelTxt ? " · " + levelTxt : ""}</small></div>
+        <div class="grp-players">${chips || '<span class="grp-hint">Ingen spillere</span>'}</div>
+        ${GRP.sel && !selHere ? `<button type="button" class="clearbtn grp-here" data-to="${gi}">Flyt ${esc(GRP.sel.name)} hertil</button>` : ""}
+        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i maks-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
+      </div>`;
+    }).join("") + `</div>
+      <p class="grp-legend">${prev ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
+      <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
+        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>`;
+  }
+  box.innerHTML = html;
+}
+
+/* A player ticked on after the groups were made goes into the smallest group their level fits */
+function addToGroups(p) {
+  let best = -1;
+  GRP.groups.forEach(function (g, gi) {
+    const fits = g.every(q => grpMeet(p, q));
+    const score = (fits ? 0 : 1000) + g.length;
+    if (best === -1 || score < best.score) best = { gi: gi, score: score };
+  });
+  if (best !== -1) GRP.groups[best.gi].push(p);
+}
+
+function grpInput(e) {
+  const t = e.target;
+  if (t.dataset.act === "change") {
+    GRP.change = +t.value; saveGrpSettings();
+    const label = t.closest(".grp-slide");                     // update the texts only: re-drawing would stop the drag
+    const players = presentPlayers();
+    label.firstElementChild.textContent = "Ændring fra sidst: " + (GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %");
+    label.lastElementChild.innerHTML = changeText(earlierGroups()[0] || null, players, groupCount(players.length));
+    return;
+  }
+  if (t.dataset.who != null) {
+    const p = grpPlayer(GRP.data.players[+t.dataset.who].name);
+    if (t.checked) { GRP.present.add(p.name); if (GRP.groups) addToGroups(p); }
+    else {
+      GRP.present.delete(p.name);
+      if (GRP.groups) GRP.groups = GRP.groups.map(g => g.filter(q => q !== p));
+      if (GRP.sel === p) GRP.sel = null;
+    }
+    if (GRP.groups) GRP.dirty = true;
+    renderGroups();
+    const box = document.querySelector("#grp details");
+    if (box) box.open = true;                                  // keep the list open while ticking
+  }
+}
+
+function grpClick(e) {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const act = b.dataset.act;
+  if (act === "all" || act === "none") {
+    GRP.present = new Set(act === "all" ? GRP.data.players.map(p => p.name) : []);
+    if (GRP.groups) {
+      GRP.groups = GRP.groups.map(g => g.filter(p => GRP.present.has(p.name)));
+      presentPlayers().forEach(p => { if (!GRP.groups.some(g => g.indexOf(p) !== -1)) addToGroups(p); });
+      GRP.dirty = true;
+    }
+    GRP.sel = null;
+    renderGroups();
+    document.querySelector("#grp details").open = true;
+  } else if (b.dataset.rule) {                                 // a new rule: the cards' warnings follow at once
+    GRP.rule = b.dataset.rule; GRP.msg = ""; GRP.bad = false; saveGrpSettings(); renderGroups();
+  } else if (b.dataset.diff != null) {
+    GRP.maxDiff = +b.dataset.diff; GRP.msg = ""; GRP.bad = false; saveGrpSettings(); renderGroups();
+  } else if (b.dataset.mode) {
+    GRP.mode = b.dataset.mode; saveGrpSettings(); renderGroups();
+  } else if (act === "minus" || act === "plus") {
+    const d = act === "plus" ? 1 : -1;
+    if (GRP.mode === "count") GRP.count = Math.max(1, Math.min(20, GRP.count + d));
+    else GRP.size = Math.max(2, Math.min(30, GRP.size + d));
+    saveGrpSettings(); renderGroups();
+  } else if (act === "make") {
+    makeNewGroups();
+  } else if (act === "save") {
+    saveGroupsNow(b);
+  } else if (b.dataset.p != null) {                            // tap a player: select, or swap with the selected one
+    const p = GRP.byName[b.dataset.p];
+    const gOf = q => GRP.groups.findIndex(g => g.indexOf(q) !== -1);
+    if (GRP.sel === p) GRP.sel = null;
+    else if (GRP.sel && gOf(GRP.sel) !== gOf(p)) {
+      const ga = GRP.groups[gOf(GRP.sel)], gb = GRP.groups[gOf(p)];
+      ga[ga.indexOf(GRP.sel)] = p; gb[gb.indexOf(p)] = GRP.sel;
+      GRP.sel = null; GRP.dirty = true; GRP.msg = "";
+    } else GRP.sel = p;
+    renderGroups();
+  } else if (b.dataset.to != null) {                           // "Flyt hertil"
+    const from = GRP.groups.find(g => g.indexOf(GRP.sel) !== -1);
+    from.splice(from.indexOf(GRP.sel), 1);
+    GRP.groups[+b.dataset.to].push(GRP.sel);
+    GRP.sel = null; GRP.dirty = true; GRP.msg = "";
+    renderGroups();
+  }
+}
+
+function saveGroupsNow(btn) {
+  const want = GRP;
+  const names = GRP.groups.filter(g => g.length).map(g => g.map(p => p.name));
+  btn.disabled = true; btn.textContent = "Gemmer…";
+  libCall("saveGroups", [AUTH.token, GRP.key, names]).then(function (res) {
+    want.data.history[want.key] = { saved: res.saved, groups: names };
+    want.groups = names.map(g => g.map(grpPlayer));
+    want.saved = res.saved; want.dirty = false; want.msg = ""; want.bad = false;
+    if (GRP === want) renderGroups();
+  }, function (err) {
+    if (GRP !== want) return;
+    btn.disabled = false; btn.textContent = "Gem grupper";
+    if (/LOGIN/.test(String(err && err.message))) {
+      requireLogin(function () { if (canGroup() && GRP === want) saveGroupsNow(document.querySelector('#grp [data-act="save"]')); });
+    } else { GRP.msg = "Kunne ikke gemme: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
+  });
 }
 
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
