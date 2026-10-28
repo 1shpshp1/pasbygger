@@ -674,7 +674,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. okt. 2026</p>
+<p class="build" id="build">App-version 28. okt. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1139,7 +1139,7 @@ function setAliases(list) {
 /* ===================== Login for the "Øvelser" tab (valid for 30 minutes) ===================== */
 const AUTH = { token: "", until: 0 };
 let GRP = null;                  // the open "Grupper" screen (see Training groups below)
-let GRP_CACHE = null, GRP_FETCH = null;   // the players and saved groups (in memory only), and a fetch under way
+let GRP_CACHE = null, GRP_FETCH = null;   // the players and saved groups (also stored on the phone), and a fetch under way
 let AUTH_TIMER = null;
 const isAuthed = () => !!AUTH.token && Date.now() < AUTH.until;
 
@@ -1158,12 +1158,22 @@ function scheduleExpiry() {
   if (AUTH.token) AUTH_TIMER = setTimeout(expire, Math.max(0, AUTH.until - Date.now()) + 50);
 }
 
+/* libCall only carries calls that need the login: an answer means the server has just renewed it for another
+   30 minutes, so the phone renews it too (a minute short, to stay on the safe side) */
+function keepLoggedIn(res) {
+  if (AUTH.token) {
+    AUTH.until = Math.max(AUTH.until, Date.now() + (AUTH.span || 30 * 60 * 1000) - 60 * 1000);
+    saveAuth(); scheduleExpiry();
+  }
+  return res;
+}
+
 /* Remove the login and every drill from the page */
 function wipeLibrary() {
   clearTimeout(AUTH_TIMER);
-  AUTH.token = ""; AUTH.until = 0; GRP = null;
-  GRP_CACHE = null;                                       // the players belong to the login
-  if (!document.getElementById("groups").classList.contains("view-hidden")) showView("sessions");
+  AUTH.token = ""; AUTH.until = 0;
+  GRP_CACHE = null;                                       // the players belong to the login. An open group screen stays
+                                                          // usable: ticking and making groups need no server; saving asks for the code
   saveAuth();
   LIB = null; LIB_LIST = []; LIB_LOADING = false;
   ["drill-grid", "lib-filters", "lib-status", "lib-sync"].forEach(id => { document.getElementById(id).innerHTML = ""; });
@@ -1230,6 +1240,7 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
       }
       AUTH.token = res.token;
       AUTH.until = Date.now() + res.seconds * 1000;
+      AUTH.span = res.seconds * 1000;
       prefetchGroups();
       saveAuth(); scheduleExpiry();
       const cb = LOGIN_CB; LOGIN_CB = null;
@@ -1468,7 +1479,7 @@ function useLibrary(res) {
   if (PRESET != null) applyPreset(); else renderLibrary();
 }
 
-function libCall(action, args) { return api(action, args); }   // the server, as a promise
+function libCall(action, args) { return api(action, args).then(keepLoggedIn); }   // the server, as a promise
 
 /* Shown above the drills while the server is slow: the saved copy stays usable meanwhile */
 let SYNC_TIMER = null, SYNC_SLOW_TIMER = null;
@@ -2682,22 +2693,42 @@ function makeGroups(opts) {
    number of groups (or players per group) and how much should change since last time, then "Lav grupper".
    A player can be moved by tapping them and then "Flyt hertil" (or another player, to swap). "Gem grupper"
    saves them in the tab "Grupper", and the next trainings use them to vary the groups.
-   Speed: the players are fetched when a training is opened (before "Grupper" is pressed) and kept in memory
-   while the app is open, so the screen shows at once; a newer copy is fetched quietly each time.
-   Nothing about the players is stored on the phone. */
+   Speed: the players and saved groups are stored on the phone (like the drills, key "grp"), so the screen
+   shows at once – also right after the app is opened. The copy is only read and shown when someone is logged in,
+   and a newer one is fetched quietly each time (usually the server only answers "unchanged"). */
 function canGroup() { return isAuthed(); }
 
 /* Fetches the players and saved groups; the server only sends them again if they have changed.
    Several callers at once share one request. */
 function fetchGroupData() {
   if (GRP_FETCH) return GRP_FETCH;
-  GRP_FETCH = libCall("getGroupData", [AUTH.token, GRP_CACHE ? GRP_CACHE.version : ""]).then(function (res) {
+  GRP_FETCH = readStoredGroups().then(function () {     // the stored copy's version: then "unchanged" is enough
+    return libCall("getGroupData", [AUTH.token, GRP_CACHE ? GRP_CACHE.version : ""]);
+  }).then(function (res) {
     GRP_FETCH = null;
-    if (!res.unchanged || !GRP_CACHE) GRP_CACHE = { version: res.version, data: { players: res.players, history: res.history } };
+    if (!res.unchanged || !GRP_CACHE) {
+      GRP_CACHE = { version: res.version, data: { players: res.players, history: res.history } };
+      storeGroups();
+    }
     GRP_CACHE.at = Date.now();
     return GRP_CACHE;
   }, function (err) { GRP_FETCH = null; throw err; });
   return GRP_FETCH;
+}
+
+/* The copy stored on the phone, into memory (once; only when logged in). at: 0 = not checked with the server yet */
+let GRP_STORED = null;
+function readStoredGroups() {
+  if (GRP_CACHE || !isAuthed()) return Promise.resolve(GRP_CACHE);
+  if (!GRP_STORED) GRP_STORED = readSaved("grp", s => s.version && s.data && Array.isArray(s.data.players)).then(function (s) {
+    GRP_STORED = null;
+    if (s && !GRP_CACHE && isAuthed()) GRP_CACHE = { version: s.version, data: s.data, at: 0 };
+    return GRP_CACHE;
+  });
+  return GRP_STORED;
+}
+function storeGroups() {
+  if (GRP_CACHE) idbSet("grp", JSON.stringify({ version: GRP_CACHE.version, data: GRP_CACHE.data }));
 }
 
 /* Fetch ahead (when a training is opened, after a login, when the app opens), unless it was just done */
@@ -2821,19 +2852,27 @@ function keyLabel(key) {
    what is shown only while nothing has been ticked, made or moved yet */
 function loadGroupData() {
   const want = GRP;
-  if (GRP_CACHE) useGroupData(GRP_CACHE.data);
+  readStoredGroups().then(function (c) {                // at once from the copy we have (memory or the phone)
+    if (GRP === want && c && !GRP.data) useGroupData(c.data);
+  });
   fetchGroupData().then(function (c) {
     if (GRP !== want || GRP.data === c.data) return;   // closed, or nothing new
     if (!GRP.touched) useGroupData(c.data);
   }, function (err) {
     if (GRP !== want) return;
     const box = want.box;
-    if (GRP.data && !/LOGIN/.test(String(err && err.message))) return;   // no connection: keep what is shown
+    if (GRP.data) return;               // players already on the screen: keep working (saving asks for the code if needed)
     if (/LOGIN/.test(String(err && err.message))) {
       box.innerHTML = "<p>Login er udløbet.</p>";
       requireLogin(function () { if (canGroup()) want.reopen(); });
     } else box.innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
   });
+}
+
+/* Someone is working in Grupper and the login has under 10 minutes left: ask the server for the players
+   (usually just "unchanged"), which renews the login, so it doesn't run out in the middle of a training */
+function renewWhileWorking() {
+  if (isAuthed() && AUTH.until - Date.now() < 10 * 60 * 1000) fetchGroupData().catch(function () { /* saving asks for the code */ });
 }
 
 function useGroupData(data) {
@@ -3056,6 +3095,7 @@ function addToGroups(p) {
 function grpInput(e) {
   if (!GRP || e.currentTarget !== GRP.box) return;              // a box from an earlier opening
   GRP.touched = true;                                           // a newer copy of the players won't replace the screen now
+  renewWhileWorking();
   const t = e.target;
   if (t.dataset.act === "change") {
     GRP.change = +t.value; saveGrpSettings();
@@ -3085,6 +3125,7 @@ function grpClick(e) {
   const b = e.target.closest("button");
   if (!b) return;
   GRP.touched = true;
+  renewWhileWorking();
   GRP.askMake = false;                // the "replace the groups?" question goes away whatever is pressed next
   const act = b.dataset.act;
   if (act === "all" || act === "none") {
@@ -3139,19 +3180,32 @@ function grpClick(e) {
 
 function saveGroupsNow(btn) {
   const want = GRP;
+  if (!isAuthed()) { askCodeThenSave(want); return; }
   const names = GRP.groups.filter(g => g.length).map(g => g.map(p => p.name));
   btn.disabled = true; btn.textContent = "Gemmer…";
   libCall("saveGroups", [AUTH.token, GRP.key, names]).then(function (res) {
     want.data.history[want.key] = { saved: res.saved, groups: names };
     want.groups = names.map(g => g.map(grpPlayer));
     want.saved = res.saved; want.dirty = false; want.msg = ""; want.bad = false;
+    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();   // the phone's copy has the new groups too
     if (GRP === want) renderGroups();
   }, function (err) {
     if (GRP !== want) return;
     btn.disabled = false; btn.textContent = "Gem grupper";
-    if (/LOGIN/.test(String(err && err.message))) {
-      requireLogin(function () { if (canGroup() && GRP === want) saveGroupsNow(GRP.box.querySelector('[data-act="save"]')); });
-    } else { GRP.msg = "Kunne ikke gemme: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
+    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want);
+    else { GRP.msg = "Kunne ikke gemme: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
+  });
+}
+
+/* The login has run out: the groups stay on the screen, the code is asked for, and then they are saved */
+function askCodeThenSave(want) {
+  if (AUTH.token && !isAuthed()) { AUTH.token = ""; AUTH.until = 0; saveAuth(); }   // the old login is no use to the server
+  requireLogin(function () {
+    if (GRP === want) saveGroupsNow(GRP.box.querySelector('[data-act="save"]'));
+  }, function () {
+    if (GRP !== want) return;
+    GRP.msg = "Ikke gemt endnu: log ind med koden, og tryk på \u201cGem grupper\u201d igen."; GRP.bad = true;
+    renderGroups();
   });
 }
 
