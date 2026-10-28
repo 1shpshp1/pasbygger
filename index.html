@@ -221,6 +221,10 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.12); cursor: pointer;
     }
     .navbtn[aria-current="page"] { background: var(--red); color: #ffffff; }
+    @media (max-width: 379px) {            /* small phones: three tabs in one row */
+      .nav { flex-wrap: wrap; gap: 6px; }
+      .navbtn { padding: 9px 13px; }
+    }
 
     #lib-search {
       width: 100%; max-width: 480px;
@@ -536,7 +540,11 @@
     .grp-band { color: #777777; font-size: 15px; white-space: nowrap; }
     .grp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 10px; }
     .grp-mode { display: inline-flex; border: 1px solid var(--red); border-radius: 99px; overflow: hidden; }
-    .grp-mode button { padding: 7px 12px; border: 0; background: #ffffff; color: var(--red); font: inherit; font-size: 14px; cursor: pointer; }
+    .grp-mode button {
+      padding: 7px 10px; border: 0; background: #ffffff; color: var(--red);
+      font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
+    }
+    @media (max-width: 359px) { .grp-mode { flex-wrap: wrap; border-radius: 14px; } }   /* the smallest phones: two rows */
     .grp-mode button[aria-pressed="true"] { background: var(--red); color: #ffffff; font-weight: bold; }
     .grp-step { display: inline-flex; align-items: center; gap: 6px; }
     .grp-step button {
@@ -552,6 +560,18 @@
     .grp-ends { display: flex; justify-content: space-between; max-width: 360px; color: #777777; font-size: 12px; }
     .grp-msg { margin: 0 0 12px; color: #555555; font-size: 14px; }
     .grp-msg.bad { color: #b00020; font-weight: bold; }
+    /* inside a training the viewer's text size (17px) would win: these keep the group screen's own sizes */
+    .grp .grp-hint { font-size: 14px; line-height: 1.4; }
+    .grp .grp-explain { font-size: 13px; line-height: 1.45; color: #666666; }
+    .grp .grp-band { font-size: 15px; }
+    .grp .grp-ends span { font-size: 12px; }
+    .grp .grp-slide > span:first-child { font-size: 14px; }
+    .grp .grp-msg, .grp .grp-warn, .grp .grp-mixline { font-size: 14px; }
+    .grp .grp-legend { font-size: 13px; }
+    .grp .grp-head small { font-size: 13px; }
+    .grp .grp-none, .grp .grp-ask { font-size: 15px; }
+    .grp .grp-who label > span { font-size: 19px; }
+    .grp-label { flex-basis: 100%; }
     .grp-ask { margin-top: 10px; padding: 10px 12px; border: 1px solid #e3b7c0; border-radius: 10px; background: #fff7f8; font-size: 15px; }
     .grp-ask .grp-row { margin-top: 8px; }
     .grp-none { margin: 0 0 14px; padding: 10px 14px; border-radius: 10px; background: var(--red-tint); color: #333333; }
@@ -642,8 +662,7 @@
 
 <div id="login" class="login view-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
   <form class="login-box" id="login-form" autocomplete="off">
-    <h2 id="login-title">Øvelser</h2>
-    <p>Skriv koden for at se øvelserne.</p>
+    <h2 id="login-title">Indtast kode</h2>
     <input type="password" id="login-pw" name="kode" aria-label="Kode" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
     <p class="login-err" id="login-err" role="alert"></p>
     <div class="login-actions">
@@ -655,7 +674,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 27. okt. 2026 (9)</p>
+<p class="build" id="build">App-version 28. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2406,10 +2425,11 @@ function openSession(index) {
    better ones, scored on: no band breaks (by far the most important), even sizes, few pairs who played
    together lately, and about as many players changing group since last time as the slider asks for.
    Who moves: those who have stayed in the same group the most trainings in a row, so everyone takes a turn. */
-const GROUP_WEIGHTS = { band: 1e6, size: 6000, pair: 4, change: 4000, stay: 36, mix: 2000 };   // band: far above everything else, so the level rule always wins
+const GROUP_WEIGHTS = { band: 1e6, size: 6000, pair: 4, change: 4000, stay: 36, mix: 2000, even: 1e5 };   // band: far above everything else, so the level rule always wins
 /* change: one move more or less than the slider asks for – high, so the slider is kept; the next two only decide WHO moves.
    stay: staying put after a run of r trainings costs stay × (1 − 0.75^r): more for every training.
-   mix: how far a player's skill mix is from 25 % better / 50 % the same / 25 % weaker (an ambition, see skillMix). */
+   mix: how far a player's skill mix is from 25 % more / 50 % equally / 25 % less experienced teammates (an ambition, see skillMix).
+   even: "Lige hold" – how far each group's average level is from the average of everyone (only with opts.strength). */
 const GROUP_HISTORY = 12;          // saved trainings looked back at
 const GROUP_FADE = 0.75;           // a pairing counts less for every training since
 
@@ -2492,7 +2512,8 @@ function stayRuns(earlier) {
 }
 
 /* opts: { players, k, prev: [[names]] or null, history: pairHistory(...), stay: stayRuns(...), change: 0..1, seed,
-           skill: { name: number } and mix: skillMix(...) – both left out for no skill-mix ambition (Kaos) }
+           skill: { name: number } and mix: skillMix(...) – both left out for no skill-mix ambition (Kaos),
+           strength: { name: number } – for "Lige hold": groups with as equal an average level as possible }
    Returns { groups: [[player]], moved, target, conflicts } */
 function makeGroups(opts) {
   const P = opts.players, n = P.length, k = Math.max(1, Math.min(opts.k, n || 1));
@@ -2520,7 +2541,13 @@ function makeGroups(opts) {
   const useMix = !!opts.skill;
   const skill = P.map(p => useMix && isFinite((opts.skill || {})[p.name]) ? opts.skill[p.name] : NaN);
   const had = P.map(p => (opts.mix || {})[p.name] || [0, 0, 0, 0]);
-  const cnt = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];   // better, same, weaker now
+  const cnt = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];   // more, equally, less experienced now
+  // "Lige hold": each player's level (a player without one counts as the average of everyone)
+  const useEven = !!opts.strength;
+  const known = useEven ? P.map(p => opts.strength[p.name]).filter(v => typeof v === "number" && isFinite(v)) : [];
+  const meanLevel = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
+  const level = P.map(p => { const v = useEven ? opts.strength[p.name] : NaN; return typeof v === "number" && isFinite(v) ? v : meanLevel; });
+  const sum = new Float64Array(k);
   const stay = new Float64Array(n);            // the cost of staying put, for the players who have stayed longest
   if (useChange && target > 0) P.forEach((p, i) => { stay[i] = W.stay * (1 - Math.pow(0.75, (opts.stay || {})[p.name] || 0)); });
 
@@ -2572,6 +2599,11 @@ function makeGroups(opts) {
       if (prevOf[i] >= 0) { if (a[i] !== prevOf[i]) moved++; else c += stay[i]; }
     }
     for (let g = 0; g < k; g++) c += W.size * (size[g] - even) * (size[g] - even);
+    if (useEven) {
+      sum.fill(0);
+      for (let i = 0; i < n; i++) sum[a[i]] += level[i];
+      for (let g = 0; g < k; g++) if (size[g]) { const d = sum[g] / size[g] - meanLevel; c += W.even * size[g] * d * d; }
+    }
     if (useChange) c += W.change * (moved - target) * (moved - target);
     if (useMix) for (let i = 0; i < n; i++) {
       const tot = cnt[0][i] + cnt[1][i] + cnt[2][i];
@@ -2710,6 +2742,8 @@ function bandText(lo, hi) {
    levels are close enough, so the same search works for both. */
 const byMax = () => GRP.rule === "max";
 const byChaos = () => GRP.rule === "chaos";     // "Kaos": a random split, level and earlier groups don't count
+const byEven = () => GRP.rule === "even";       // "Lige hold": groups of equal strength; bands and the slider don't count
+const freeRule = () => byChaos() || byEven();   // anyone may be with anyone
 const NO_LEVEL = name => ({ name: name, lo: -Infinity, hi: Infinity });
 const HAIR = 1e-6;
 function strictBand(p) {
@@ -2718,12 +2752,12 @@ function strictBand(p) {
                        : { name: p.name, lo: p.lo + HAIR, hi: p.hi - HAIR };
 }
 function grpMeet(a, b) {
-  if (byChaos()) return true;
+  if (freeRule()) return true;
   if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
   return !isFinite(a.lo) || !isFinite(b.lo) || Math.abs(a.lo - b.lo) <= GRP.maxDiff;
 }
 function searchBand(p) {
-  if (byChaos()) return NO_LEVEL(p.name);
+  if (freeRule()) return NO_LEVEL(p.name);
   if (!byMax()) return strictBand(p);
   return isFinite(p.lo) ? { name: p.name, lo: p.lo, hi: p.lo + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
 }
@@ -2731,6 +2765,7 @@ const ruleNote = (a) => byMax() ? "max " + bandText(a.lo, a.lo) : bandText(a.lo,
 /* The text after the size on a group card: the shared level, or the range of max levels */
 function groupLevelText(g) {
   if (!g.length || byChaos()) return "";
+  if (byEven()) { const a = groupAverage(g); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); }
   if (byMax()) {
     const m = g.map(p => p.lo).filter(isFinite);
     return m.length ? "max " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
@@ -2870,7 +2905,7 @@ function grpSkill() {
 
 /* The mix the present players have had (the saved trainings + the groups on the screen), on average */
 function mixLine(players) {
-  if (byChaos() || !GRP.groups) return "";
+  if (freeRule() || !GRP.groups) return "";
   const skill = grpSkill();
   const now = GRP.groups.map(g => g.map(p => p.name));
   const mix = skillMix([now].concat(earlierGroups().map(e => e.groups)), skill);
@@ -2878,26 +2913,42 @@ function mixLine(players) {
   players.forEach(p => { const m = mix[p.name]; if (m && m[3]) { for (let r = 0; r < 3; r++) sum[r] += m[r] / m[3]; n++; } });
   if (!n) return "";
   const pct = r => Math.round(100 * sum[r] / n) + " %";
-  return `Niveau-mix over tid (gennemsnit, med disse grupper): ${pct(0)} bedre · ${pct(1)} samme niveau · ${pct(2)} svagere. Målet er 25 / 50 / 25.`;
+  return `Niveau-mix over tid (gennemsnit, med disse grupper): ${pct(0)} med mere øvede · ${pct(1)} samme niveau · ${pct(2)} med mindre øvede. Målet er 25 / 50 / 25.`;
 }
 
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
-  const earlier = byChaos() ? [] : earlierGroups();   // Kaos: nothing from earlier trainings counts
+  // Kaos: nothing from earlier trainings counts. Lige hold: only the earlier pairs (so the teams vary).
+  const earlier = byChaos() ? [] : earlierGroups(), free = freeRule();
   const res = makeGroups({
-    players: players.map(searchBand), k: groupCount(players.length), prev: earlier.length ? earlier[0].groups : null,
-    history: byChaos() ? {} : pairHistory(shownGroups().concat(earlier.map(e => e.groups))), stay: stayRuns(earlier.map(e => e.groups)),
-    change: byChaos() ? 1 : GRP.change / 100,
+    players: players.map(searchBand), k: groupCount(players.length), prev: !free && earlier.length ? earlier[0].groups : null,
+    history: byChaos() ? {} : pairHistory(shownGroups().concat(earlier.map(e => e.groups))), stay: free ? {} : stayRuns(earlier.map(e => e.groups)),
+    change: free ? 1 : GRP.change / 100,
     seed: hashText(GRP.key + "|" + GRP.nonce++),
-    skill: byChaos() ? null : grpSkill(), mix: byChaos() ? null : skillMix(earlier.map(e => e.groups), grpSkill())
+    skill: free ? null : grpSkill(), mix: free ? null : skillMix(earlier.map(e => e.groups), grpSkill()),
+    strength: byEven() ? grpSkill() : null
   });
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
   GRP.bad = res.conflicts > 0;
   GRP.msg = res.conflicts
     ? (byMax() ? "Max-niveauerne" : "Niveauerne") + " kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
-    : res.target != null ? `${res.moved} ${res.moved === 1 ? "spiller" : "spillere"} skiftede gruppe siden sidst.` : "";
+    : res.target != null ? `${res.moved} ${res.moved === 1 ? "spiller" : "spillere"} skiftede gruppe siden sidst.`
+    : byEven() ? evenText() : "";
   renderGroups();
+}
+
+/* "Lige hold": a group's average level (Fra; players without a level left out), and the gap between the groups */
+function groupAverage(g) {
+  const v = g.map(p => p.lo).filter(isFinite);
+  return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null;
+}
+function evenText() {
+  const av = GRP.groups.map(groupAverage).filter(a => a != null);
+  if (av.length < 2) return "";
+  const gap = Math.max.apply(null, av) - Math.min.apply(null, av);
+  return gap < 0.005 ? "Holdene har præcis samme gennemsnitlige niveau."
+    : `Forskel mellem holdenes gennemsnitlige niveau: ${gap.toFixed(2).replace(".", ",")}.`;
 }
 
 function renderGroups() {
@@ -2910,7 +2961,7 @@ function renderGroups() {
   const was = lastGroupOf(prev);
 
   const who = all.map((p, i) => `<label><input type="checkbox" data-who="${i}"${GRP.present.has(p.name) ? " checked" : ""}>` +
-    `<span>${esc(p.name)} <span class="grp-band">${bandText(grpPlayer(p.name).lo, grpPlayer(p.name).hi)}</span></span></label>`).join("");
+    `<span>${esc(p.name)}</span></label>`).join("");
 
   const none = GRP.groups ? "" : /\sfri$/.test(GRP.key)
     ? "Der er ikke lavet grupper til denne dato endnu."
@@ -2923,11 +2974,12 @@ function renderGroups() {
     </details>
     <section class="grp-sec">
       <div class="grp-row" style="margin-top:0">
-        <span class="grp-hint">Del efter</span>
+        <span class="grp-hint grp-label">Del efter</span>
         <div class="grp-mode" role="group" aria-label="Del efter">
           <button type="button" data-rule="band" aria-pressed="${GRP.rule === "band"}">Bånd</button>
           <button type="button" data-rule="max" aria-pressed="${byMax()}">Max-niveau</button>
           <button type="button" data-rule="chaos" aria-pressed="${byChaos()}">Kaos</button>
+          <button type="button" data-rule="even" aria-pressed="${byEven()}">Lige hold</button>
         </div>
       </div>
       ${byMax() ? `<div class="grp-row">
@@ -2948,11 +3000,12 @@ function renderGroups() {
         </span>
         <span class="grp-hint">${sizeText(n, k)}</span>
       </div>
-      ${byChaos() ? `<p class="grp-hint grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
+      ${byChaos() ? `<p class="grp-hint grp-explain grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
+      : byEven() ? `<p class="grp-hint grp-explain grp-slide">Lige hold: holdene får så ens gennemsnitligt niveau som muligt, og de mest og mindst øvede kan være på samme hold. Båndene tæller ikke med, men de samme makkere som sidst undgås.</p>`
       : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
         <span class="grp-ends" aria-hidden="true"><span>Behold</span><span>Bland</span></span>
-        <span class="grp-hint">${changeText(prev, players, k)}</span>
+        <span class="grp-hint grp-explain">${changeText(prev, players, k)}</span>
       </label>`}
       <div class="grp-row"><button type="button" class="login-go" data-act="make">${GRP.groups ? "Lav nye grupper" : "Lav grupper"}</button></div>
       ${GRP.askMake ? `<div class="grp-ask" role="alert">⚠ Nye grupper erstatter dem, der vises nu${GRP.dirty ? " – og de er ikke gemt" :
@@ -2970,7 +3023,7 @@ function renderGroups() {
       const levelTxt = clash.length ? "niveau passer ikke" : groupLevelText(g);
       const selHere = GRP.sel && g.indexOf(GRP.sel) !== -1;
       const chips = g.map(function (p) {
-        const moved = !byChaos() && prev && was[p.name] != null && was[p.name] !== gi;
+        const moved = !freeRule() && prev && was[p.name] != null && was[p.name] !== gi;
         return `<button type="button" class="grp-p${moved ? " moved" : ""}" data-p="${esc(p.name)}" aria-pressed="${GRP.sel === p}"` +
           `${moved ? ` title="Ny gruppe siden sidst"` : ""}>${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`;
       }).join("");
@@ -2981,7 +3034,7 @@ function renderGroups() {
         ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i max-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
-      <p class="grp-legend">${prev && !byChaos() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
+      <p class="grp-legend">${prev && !freeRule() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       ${mixLine(players) ? `<p class="grp-mixline">${mixLine(players)}</p>` : ""}
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
         <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>`;
