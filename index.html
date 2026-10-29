@@ -592,6 +592,16 @@
     .grp-warn { margin: 8px 0 0; color: #b00020; font-size: 14px; }
     .grp-save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 16px; }
     .grp-legend { margin: 10px 0 0; color: #777777; font-size: 13px; }
+    /* "Kampe til sidst" */
+    .grp-matches { margin-top: 22px; }
+    .grp-matches h3 { margin: 0 0 4px; }
+    .grp-matches .grp-card { margin-top: 12px; }
+    .grp-teams { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    @media (min-width: 640px) { .grp-teams { grid-template-columns: 1fr auto 1fr; align-items: start; } }
+    .grp-team { padding: 8px; border: 1px solid #eeeeee; border-radius: 8px; background: #fcfcfc; }
+    .grp-teamhead { margin-bottom: 6px; font-weight: bold; }
+    .grp .grp-teamhead small { margin-left: 6px; color: #555555; font-size: 13px; font-weight: normal; }
+    .grp .grp-vs { align-self: center; color: #777777; font-size: 13px; text-align: center; }
     .grp-mixline { margin: 12px 0 0; color: #555555; font-size: 14px; }
     /* the Grupper tab (groups without a training) */
     .grp-page { padding: 18px; border-radius: 12px; background: #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -674,7 +684,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. okt. 2026 (3)</p>
+<p class="build" id="build">App-version 29. okt. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2688,6 +2698,69 @@ function makeGroups(opts) {
   return { groups: groups, moved: moved, target: useChange ? target : null, conflicts: groups.filter(g => groupLevel(g).lo > groupLevel(g).hi).length };
 }
 
+/* ---- "Kampe": matches at the end of a training ----
+   The groups are ranked by their average level (a lower number is more experienced) and paired: the two
+   most experienced groups make one match, the next two the next match, and so on (with an odd number of
+   groups the last one is split on its own). Each match's players are split into two teams of equal size
+   (±1) whose average levels are as equal as possible; when several splits are equally good, the one that
+   mixes the two groups best is chosen, and among those one at random (so "Lav nye kampe" gives another).
+   level(p): a player's level, or null (counted as the average of everyone). Returns
+   [{ groups: [group numbers], teams: [[players], [players]], avg: [a, b] }], most experienced match first. */
+function makeMatches(groups, level, seed) {
+  const rand = seededRandom(seed || 1);
+  const known = [].concat.apply([], groups).map(level).filter(v => v != null && isFinite(v));
+  const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
+  const lv = p => { const v = level(p); return v != null && isFinite(v) ? v : mean; };
+  const avg = g => g.length ? g.reduce((x, p) => x + lv(p), 0) / g.length : mean;
+  const ranked = groups.map((g, i) => ({ g: g, i: i, a: avg(g) })).filter(o => o.g.length)
+    .sort((x, y) => x.a - y.a || x.i - y.i);
+  const out = [];
+  for (let r = 0; r < ranked.length; r += 2) {
+    const pair = ranked.slice(r, r + 2);
+    const split = splitEven(pair.map(o => o.g), lv, rand);
+    if (split) out.push({ groups: pair.map(o => o.i + 1), teams: split, avg: split.map(avg) });
+  }
+  return out;
+}
+
+/* Two teams of equal size (±1) from the players of one or two groups: as equal average levels as possible,
+   then as mixed as possible. Many random starts, each improved by swapping players until no swap helps. */
+function splitEven(pool, lv, rand) {
+  const ps = [].concat.apply([], pool);
+  const n = ps.length;
+  if (n < 2) return null;
+  const home = new Map();
+  pool.forEach((g, gi) => g.forEach(p => home.set(p, gi)));
+  const bigger = Math.ceil(n / 2);
+  function cost(t) {
+    const sum = [0, 0], cnt = [0, 0], fromFirst = [0, 0];
+    t.forEach((team, i) => { sum[team] += lv(ps[i]); cnt[team]++; if (home.get(ps[i]) === 0) fromFirst[team]++; });
+    const gap = sum[0] / cnt[0] - sum[1] / cnt[1];
+    // mixing: each team should have about its share of the first group's players
+    const share = pool.length > 1 ? fromFirst[0] - pool[0].length * cnt[0] / n : 0;
+    return 1000 * gap * gap + 0.01 * share * share;
+  }
+  let best = null, bestCost = Infinity, ties = 0;
+  for (let start = 0; start < 40; start++) {
+    const order = ps.map((p, i) => i).sort(() => rand() - 0.5);
+    const t = new Array(n);
+    order.forEach((i, r) => { t[i] = r < bigger ? 0 : 1; });
+    let c = cost(t), better = true;
+    while (better) {                         // swap a player from each team while that helps
+      better = false;
+      for (let i = 0; i < n && !better; i++) for (let j = 0; j < n && !better; j++) {
+        if (t[i] !== 0 || t[j] !== 1) continue;
+        t[i] = 1; t[j] = 0;
+        const d = cost(t);
+        if (d < c - 1e-9) { c = d; better = true; } else { t[i] = 0; t[j] = 1; }
+      }
+    }
+    if (c < bestCost - 1e-9) { bestCost = c; best = t.slice(); ties = 1; }
+    else if (Math.abs(c - bestCost) <= 1e-9 && rand() < 1 / ++ties) best = t.slice();   // an equally good one, at random
+  }
+  return [0, 1].map(team => ps.filter((p, i) => best[i] === team));
+}
+
 /* ===================== Training groups (for everyone logged in) =====================
    The "Grupper" button in a training, and the Grupper tab, open this screen: tick who is there, choose the
    number of groups (or players per group) and how much should change since last time, then "Lav grupper".
@@ -2707,7 +2780,7 @@ function fetchGroupData() {
   }).then(function (res) {
     GRP_FETCH = null;
     if (!res.unchanged || !GRP_CACHE) {
-      GRP_CACHE = { version: res.version, data: { players: res.players, history: res.history } };
+      GRP_CACHE = { version: res.version, data: { players: res.players, history: res.history, signups: res.signups || {} } };
       storeGroups();
     }
     GRP_CACHE.at = Date.now();
@@ -2876,7 +2949,7 @@ function renewWhileWorking() {
 }
 
 function useGroupData(data) {
-  Object.assign(GRP, { data: data, byName: {}, present: new Set(), groups: null, saved: "" });
+  Object.assign(GRP, { data: data, byName: {}, present: new Set(), groups: null, saved: "", fromSignups: "" });
   data.players.forEach(function (p) {
     GRP.byName[p.name] = { name: p.name, lo: p.lo == null ? -Infinity : p.lo, hi: p.hi == null ? Infinity : p.hi };
   });
@@ -2885,8 +2958,22 @@ function useGroupData(data) {
     GRP.groups = mine.groups.map(g => g.map(grpPlayer));
     GRP.groups.forEach(g => g.forEach(p => GRP.present.add(p.name)));
     GRP.saved = mine.saved;
-  } else data.players.forEach(p => GRP.present.add(p.name));
+  } else {
+    const su = (data.signups || {})[GRP.key];
+    if (su) {                                           // no groups yet, but the signups were saved: start from those
+      su.names.forEach(name => { if (GRP.byName[name]) GRP.present.add(name); });
+      GRP.fromSignups = su.saved;
+    } else data.players.forEach(p => GRP.present.add(p.name));
+  }
   renderGroups();
+}
+
+/* "Gem tilmeldte": the ticks saved for this training (only a starting point; groups saved later take over) */
+function signupStatus() {
+  const su = (GRP.data.signups || {})[GRP.key];
+  if (!su) return "";
+  const same = su.names.filter(n => GRP.byName[n]).length === GRP.present.size && su.names.every(n => !GRP.byName[n] || GRP.present.has(n));
+  return same ? "Tilmeldte gemt " + su.saved : "Ændret siden de tilmeldte blev gemt";
 }
 
 /* A player by name; a name that is no longer in the tab "Spillere" fits anywhere */
@@ -2990,6 +3077,56 @@ function evenText() {
     : `Forskel mellem holdenes gennemsnitlige niveau: ${gap.toFixed(2).replace(".", ",")}.`;
 }
 
+/* ---- "Kampe til sidst": the groups paired by level, each pair split into two equally strong teams ----
+   Not saved: the matches are made from the groups on the screen, and disappear if those groups change. */
+const groupsSignature = () => JSON.stringify((GRP.groups || []).map(g => g.map(p => p.name)));
+const fraOf = p => isFinite(p.lo) ? p.lo : null;
+
+function makeMatchesNow() {
+  GRP.matches = makeMatches(GRP.groups, fraOf, hashText(GRP.key + "|kampe|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1)));
+  GRP.matchesFor = groupsSignature();
+  GRP.matchSel = null;
+  renderGroups();
+}
+
+function matchesHtml() {
+  if (!GRP.groups || GRP.groups.filter(g => g.length).length < 1) return "";
+  if (GRP.matches && GRP.matchesFor !== groupsSignature()) GRP.matches = null;   // the groups have changed since
+  const ms = GRP.matches || [];
+  const kind = i => ms.length < 2 ? "" : i === 0 ? "mere øvede" : i === ms.length - 1 ? "mindre øvede" : "mellem";
+  const avgText = team => { const a = groupAverage(team); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); };
+  const cards = ms.map(function (m, mi) {
+    const teams = m.teams.map(function (team, ti) {
+      const chips = team.map((p, pi) => `<button type="button" class="grp-p" data-mp="${mi}:${ti}:${pi}" aria-pressed="${GRP.matchSel === mi + ":" + ti + ":" + pi}">` +
+        `${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`).join("");
+      return `<div class="grp-team"><div class="grp-teamhead">Hold ${String.fromCharCode(65 + 2 * mi + ti)}<small>${team.length} spillere · ${avgText(team)}</small></div>
+        <div class="grp-players">${chips}</div></div>`;
+    });
+    const from = m.groups.length > 1 ? `gruppe ${m.groups[0]} og ${m.groups[1]}` : `gruppe ${m.groups[0]}`;
+    return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${kind(mi) ? kind(mi) + " · " : ""}${from}</small></div>
+      <div class="grp-teams">${teams[0]}<div class="grp-vs" aria-hidden="true">mod</div>${teams[1]}</div></div>`;
+  }).join("");
+  return `<section class="grp-sec grp-matches"><h3>Kampe til sidst</h3>
+    <p class="grp-hint grp-explain">Grupperne parres efter niveau: de mere øvede grupper spiller mod hinanden, og de mindre øvede mod hinanden. Spillerne i hver kamp blandes til to lige stærke hold.</p>
+    <div class="grp-row"><button type="button" class="login-go" data-act="matches">${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
+    ${cards}
+    ${ms.length ? `<p class="grp-legend">Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>` : ""}
+  </section>`;
+}
+
+/* Tap a player in a match: select; tap one on the other team of the same match: swap them */
+function matchTap(code) {
+  const sel = GRP.matchSel;
+  if (sel === code) { GRP.matchSel = null; renderGroups(); return; }
+  const [m1, t1, p1] = (sel || "").split(":").map(Number), [m2, t2, p2] = code.split(":").map(Number);
+  if (sel && m1 === m2 && t1 !== t2) {
+    const teams = GRP.matches[m2].teams, x = teams[t1][p1];
+    teams[t1][p1] = teams[t2][p2]; teams[t2][p2] = x;
+    GRP.matchSel = null;
+  } else GRP.matchSel = code;
+  renderGroups();
+}
+
 function renderGroups() {
   const box = GRP && GRP.box;
   if (!box || !box.isConnected || !GRP.data) return;
@@ -3005,10 +3142,15 @@ function renderGroups() {
   const none = GRP.groups ? "" : /\sfri$/.test(GRP.key)
     ? "Der er ikke lavet grupper til denne dato endnu."
     : "Der er ikke lavet grupper til denne træning endnu.";
-  let html = (none ? `<p class="grp-none" role="status">${none} Sæt flueben ved dem, der er med, og tryk på "Lav grupper".</p>` : "") +
+  const start = GRP.fromSignups
+    ? `Flueben er sat ved de ${n} tilmeldte (gemt ${esc(GRP.fromSignups)}). Ret dem, hvis nogen mangler eller er kommet til, og tryk på "Lav grupper".`
+    : `Sæt flueben ved dem, der er med, og tryk på "Lav grupper".`;
+  let html = (none ? `<p class="grp-none" role="status">${none} ${start}</p>` : "") +
     `<details class="grp-sec"${GRP.groups ? "" : " open"}><summary>Hvem er med? ${n} af ${all.length}</summary>
       ${all.length ? `<div class="grp-who">${who}</div>
-      <div class="grp-row"><button type="button" class="clearbtn" data-act="all">Alle</button><button type="button" class="clearbtn" data-act="none">Ingen</button></div>`
+      <div class="grp-row"><button type="button" class="clearbtn" data-act="all">Alle</button><button type="button" class="clearbtn" data-act="none">Ingen</button>
+        <button type="button" class="clearbtn" data-act="signups">Gem tilmeldte</button>
+        <span class="grp-hint" role="status">${esc(signupStatus())}</span></div>`
       : `<p>Fanen "Spillere" er tom. Skriv spillerne ind (Navn, Fra, Til) og åbn Grupper igen.</p>`}
     </details>
     <section class="grp-sec">
@@ -3076,7 +3218,8 @@ function renderGroups() {
       <p class="grp-legend">${prev && !freeRule() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       ${mixLine(players) ? `<p class="grp-mixline">${mixLine(players)}</p>` : ""}
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
-        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>`;
+        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>` +
+      matchesHtml();
   }
   box.innerHTML = html;
 }
@@ -3159,6 +3302,12 @@ function grpClick(e) {
     renderGroups();
   } else if (act === "save") {
     saveGroupsNow(b);
+  } else if (act === "signups") {
+    saveSignupsNow(b);
+  } else if (act === "matches") {
+    makeMatchesNow();
+  } else if (b.dataset.mp != null) {
+    matchTap(b.dataset.mp);
   } else if (b.dataset.p != null) {                            // tap a player: select, or swap with the selected one
     const p = GRP.byName[b.dataset.p];
     const gOf = q => GRP.groups.findIndex(g => g.indexOf(q) !== -1);
@@ -3198,14 +3347,37 @@ function saveGroupsNow(btn) {
 }
 
 /* The login has run out: the groups stay on the screen, the code is asked for, and then they are saved */
-function askCodeThenSave(want) {
+function askCodeThenSave(want, signups) {
   if (AUTH.token && !isAuthed()) { AUTH.token = ""; AUTH.until = 0; saveAuth(); }   // the old login is no use to the server
   requireLogin(function () {
-    if (GRP === want) saveGroupsNow(GRP.box.querySelector('[data-act="save"]'));
+    if (GRP !== want) return;
+    if (signups) saveSignupsNow(GRP.box.querySelector('[data-act="signups"]'));
+    else saveGroupsNow(GRP.box.querySelector('[data-act="save"]'));
   }, function () {
     if (GRP !== want) return;
-    GRP.msg = "Ikke gemt endnu: log ind med koden, og tryk på \u201cGem grupper\u201d igen."; GRP.bad = true;
+    GRP.msg = "Ikke gemt endnu: log ind med koden, og tryk på \u201c" + (signups ? "Gem tilmeldte" : "Gem grupper") + "\u201d igen.";
+    GRP.bad = true;
     renderGroups();
+  });
+}
+
+/* Saves the ticks as this training's signups (in the tab "Tilmeldte"), so any phone can start from them */
+function saveSignupsNow(btn) {
+  const want = GRP;
+  if (!isAuthed()) { askCodeThenSave(want, true); return; }
+  const names = GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => p.name);
+  btn.disabled = true; btn.textContent = "Gemmer…";
+  libCall("saveSignups", [AUTH.token, GRP.key, names]).then(function (res) {
+    want.data.signups = want.data.signups || {};
+    want.data.signups[want.key] = { saved: res.saved, names: names };
+    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
+    want.msg = ""; want.bad = false;
+    if (GRP === want) renderGroups();
+  }, function (err) {
+    if (GRP !== want) return;
+    btn.disabled = false; btn.textContent = "Gem tilmeldte";
+    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, true);
+    else { GRP.msg = "Kunne ikke gemme de tilmeldte: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
   });
 }
 
