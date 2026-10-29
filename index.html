@@ -596,6 +596,10 @@
     .grp-matches { margin-top: 22px; }
     .grp-matches h3 { margin: 0 0 4px; }
     .grp-matches .grp-card { margin-top: 12px; }
+    .grp-pairs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px 6px; align-items: center; }
+    .grp-pairs .grp-p { width: 100%; justify-content: space-between; text-align: left; }
+    .grp-pname { min-width: 0; overflow-wrap: anywhere; }
+    .grp .grp-none-p { color: #888888; font-size: 13px; font-style: italic; text-align: center; }
     .grp-teams { display: grid; grid-template-columns: 1fr; gap: 6px; }
     @media (min-width: 640px) { .grp-teams { grid-template-columns: 1fr auto 1fr; align-items: start; } }
     .grp-team { padding: 8px; border: 1px solid #eeeeee; border-radius: 8px; background: #fcfcfc; }
@@ -684,7 +688,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 29. okt. 2026</p>
+<p class="build" id="build">App-version 29. okt. 2026 (4)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2699,13 +2703,16 @@ function makeGroups(opts) {
 }
 
 /* ---- "Kampe": matches at the end of a training ----
-   The groups are ranked by their average level (a lower number is more experienced) and paired: the two
-   most experienced groups make one match, the next two the next match, and so on (with an odd number of
-   groups the last one is split on its own). Each match's players are split into two teams of equal size
-   (±1) whose average levels are as equal as possible; when several splits are equally good, the one that
-   mixes the two groups best is chosen, and among those one at random (so "Lav nye kampe" gives another).
+   The groups are ranked by their average level (a lower number is more experienced). With an even number of
+   groups they are paired: the two most experienced groups make one match, the next two the next match.
+   With an odd number of groups (3, 5, …) all players are lined up group by group (each group by level) and
+   cut into (groups + 1) / 2 matches, so 3 groups give 2 matches: the middle group's more experienced players
+   join the top match and the rest the bottom one. Each match should have an even number of players where
+   possible, so everyone gets an opposite number.
+   Each match is split into two teams player for player (see pairedSplit).
    level(p): a player's level, or null (counted as the average of everyone). Returns
-   [{ groups: [group numbers], teams: [[players], [players]], avg: [a, b] }], most experienced match first. */
+   [{ groups: [group numbers], teams: [[players], [players]], avg: [a, b] }], most experienced match first;
+   team A's player i is matched with team B's player i. */
 function makeMatches(groups, level, seed) {
   const rand = seededRandom(seed || 1);
   const known = [].concat.apply([], groups).map(level).filter(v => v != null && isFinite(v));
@@ -2714,51 +2721,148 @@ function makeMatches(groups, level, seed) {
   const avg = g => g.length ? g.reduce((x, p) => x + lv(p), 0) / g.length : mean;
   const ranked = groups.map((g, i) => ({ g: g, i: i, a: avg(g) })).filter(o => o.g.length)
     .sort((x, y) => x.a - y.a || x.i - y.i);
-  const out = [];
-  for (let r = 0; r < ranked.length; r += 2) {
-    const pair = ranked.slice(r, r + 2);
-    const split = splitEven(pair.map(o => o.g), lv, rand);
-    if (split) out.push({ groups: pair.map(o => o.i + 1), teams: split, avg: split.map(avg) });
+  const home = new Map();
+  ranked.forEach(o => o.g.forEach(p => home.set(p, o.i + 1)));
+
+  let pools = [];
+  if (ranked.length % 2 === 0) {
+    for (let r = 0; r < ranked.length; r += 2) pools.push([].concat(ranked[r].g, ranked[r + 1].g));
+  } else if (ranked.length === 1) {
+    pools = [ranked[0].g.slice()];
+  } else {
+    const line = [].concat.apply([], ranked.map(o => byLevel(o.g, lv, rand)));
+    let at = 0;
+    poolSizes(line.length, (ranked.length + 1) / 2).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
   }
-  return out;
+  const top = known.length ? Math.max.apply(null, known) : 1;           // experience points: top + 1 − level
+  return pools.map(function (players) {
+    const teams = players.length % 2 && players.length <= 15 ? unevenSplit(players, lv, home, rand, p => top + 1 - lv(p))
+                                                             : pairedSplit(players, lv, home, rand);
+    const from = [];
+    players.forEach(p => { if (from.indexOf(home.get(p)) === -1) from.push(home.get(p)); });
+    return teams && { groups: from, teams: teams, avg: teams.map(avg) };
+  }).filter(Boolean);
 }
 
-/* Two teams of equal size (±1) from the players of one or two groups: as equal average levels as possible,
-   then as mixed as possible. Many random starts, each improved by swapping players until no swap helps. */
-function splitEven(pool, lv, rand) {
-  const ps = [].concat.apply([], pool);
-  const n = ps.length;
-  if (n < 2) return null;
-  const home = new Map();
-  pool.forEach((g, gi) => g.forEach(p => home.set(p, gi)));
-  const bigger = Math.ceil(n / 2);
-  function cost(t) {
-    const sum = [0, 0], cnt = [0, 0], fromFirst = [0, 0];
-    t.forEach((team, i) => { sum[team] += lv(ps[i]); cnt[team]++; if (home.get(ps[i]) === 0) fromFirst[team]++; });
-    const gap = sum[0] / cnt[0] - sum[1] / cnt[1];
-    // mixing: each team should have about its share of the first group's players
-    const share = pool.length > 1 ? fromFirst[0] - pool[0].length * cnt[0] / n : 0;
-    return 1000 * gap * gap + 0.01 * share * share;
-  }
+/* One team has a player fewer (odd number of players): the pairs may be a little less close if that makes
+   the teams' total experience clearly more equal, since the team with one player fewer needs a little more
+   experience to make up for it. Every split into m + 1 and m players is tried (up to 15 players), scored
+   pairs + ODD_TOTAL_WEIGHT × total gap, where pairs is the sum of level differences between opposite numbers
+   (both teams by level; the extra player is the one that leaves the closest pairs) and the total gap is the
+   difference in experience points. Then mixing of the groups, then at random among equals. */
+const ODD_TOTAL_WEIGHT = 0.75;
+function unevenSplit(players, lv, home, rand, points) {
+  const n = players.length, big = (n + 1) / 2, firstGroup = home.get(players[0]);
   let best = null, bestCost = Infinity, ties = 0;
-  for (let start = 0; start < 40; start++) {
-    const order = ps.map((p, i) => i).sort(() => rand() - 0.5);
-    const t = new Array(n);
-    order.forEach((i, r) => { t[i] = r < bigger ? 0 : 1; });
-    let c = cost(t), better = true;
-    while (better) {                         // swap a player from each team while that helps
-      better = false;
-      for (let i = 0; i < n && !better; i++) for (let j = 0; j < n && !better; j++) {
-        if (t[i] !== 0 || t[j] !== 1) continue;
-        t[i] = 1; t[j] = 0;
-        const d = cost(t);
-        if (d < c - 1e-9) { c = d; better = true; } else { t[i] = 0; t[j] = 1; }
-      }
+  for (let mask = 0; mask < (1 << n); mask++) {
+    let c = 0;
+    for (let i = 0; i < n; i++) if (mask >> i & 1) c++;
+    if (c !== big) continue;
+    const A = [], B = [];
+    players.forEach((p, i) => (mask >> i & 1 ? A : B).push(p));
+    const a = byLevel(A, lv, rand), b = byLevel(B, lv, rand);
+    let pairs = Infinity, skip = 0;
+    for (let k = 0; k < a.length; k++) {
+      let g = 0;
+      a.filter((p, j) => j !== k).forEach((p, j) => { g += Math.abs(lv(p) - lv(b[j])); });
+      if (g < pairs) { pairs = g; skip = k; }
     }
-    if (c < bestCost - 1e-9) { bestCost = c; best = t.slice(); ties = 1; }
-    else if (Math.abs(c - bestCost) <= 1e-9 && rand() < 1 / ++ties) best = t.slice();   // an equally good one, at random
+    const total = Math.abs(a.reduce((x, p) => x + points(p), 0) - b.reduce((x, p) => x + points(p), 0));
+    const share = [a, b].reduce((x, t) => x + Math.abs(t.filter(p => home.get(p) === firstGroup).length - t.length / 2), 0);
+    const cost = pairs + ODD_TOTAL_WEIGHT * total + 0.001 * share;
+    const teams = [a.filter((p, j) => j !== skip).concat([a[skip]]), b];   // opposite numbers in line, the extra player last
+    if (cost < bestCost - 1e-9) { bestCost = cost; best = teams; ties = 1; }
+    else if (Math.abs(cost - bestCost) <= 1e-9 && rand() < 1 / ++ties) best = teams;
   }
-  return [0, 1].map(team => ps.filter((p, i) => best[i] === team));
+  return best;
+}
+
+/* Players by level (most experienced first); equal levels in random order */
+function byLevel(players, lv, rand) {
+  return players.map(p => ({ p: p, v: lv(p), r: rand() })).sort((x, y) => x.v - y.v || x.r - y.r).map(o => o.p);
+}
+
+/* n players into m matches: even sizes first (everyone gets an opposite number), the odd one last */
+function poolSizes(n, m) {
+  const sizes = new Array(m).fill(2 * Math.floor(n / (2 * m)));
+  let rest = n - sizes.reduce((x, y) => x + y, 0);
+  for (let i = 0; rest >= 2; i = (i + 1) % m) { sizes[i] += 2; rest -= 2; }
+  if (rest) sizes[m - 1]++;
+  return sizes;
+}
+
+/* Two teams from one match's players, in this order of importance:
+   1. player for player: ranked by level, the players are paired with their nearest equal and each pair is
+      split between the teams (with an odd number, the player whose absence leaves the closest pairs plays
+      without an opposite number);
+   2. the teams' average levels as equal as possible;
+   3. both teams with players from each group;
+   4. among splits that are equally good, one at random (so "Lav nye kampe" gives another). */
+function pairedSplit(players, lv, home, rand) {
+  if (players.length < 2) return null;
+  let line = byLevel(players, lv, rand), spare = null;
+  if (line.length % 2) {                                 // who plays without an opposite number
+    let best = Infinity, picks = [];
+    for (let i = 0; i < line.length; i += 2) {
+      const rest = line.filter((p, j) => j !== i);
+      let gap = 0;
+      for (let j = 0; j < rest.length; j += 2) gap += Math.abs(lv(rest[j]) - lv(rest[j + 1]));
+      if (gap < best - 1e-9) { best = gap; picks = [i]; } else if (Math.abs(gap - best) <= 1e-9) picks.push(i);
+    }
+    const i = picks[Math.floor(rand() * picks.length)];
+    spare = line[i]; line = line.filter((p, j) => j !== i);
+  }
+  const pairs = [];
+  for (let j = 0; j < line.length; j += 2) pairs.push([line[j], line[j + 1]]);
+
+  const firstGroup = home.get(players[0]);
+  function build(bits, spareSide) {
+    const t = [[], []];
+    pairs.forEach((pr, j) => { const b = (bits >> j) & 1; t[0].push(pr[b]); t[1].push(pr[1 - b]); });
+    if (spare) t[spareSide].push(spare);
+    return t;
+  }
+  function cost(t) {
+    const mean = team => team.reduce((x, p) => x + lv(p), 0) / team.length;
+    const gap = mean(t[0]) - mean(t[1]);
+    // mixing: how far each team is from holding half of the first group's players
+    const share = t.reduce((x, team) => { const n = team.filter(p => home.get(p) === firstGroup).length; return x + Math.abs(n - team.length / 2); }, 0);
+    return 1000 * gap * gap + 0.01 * share;
+  }
+  // every way to turn the pairs (up to 2^12), or one at a time for very big matches
+  let best = null, bestCost = Infinity, ties = 0;
+  const consider = t => {
+    const c = cost(t);
+    if (c < bestCost - 1e-9) { bestCost = c; best = t; ties = 1; }
+    else if (Math.abs(c - bestCost) <= 1e-9 && rand() < 1 / ++ties) best = t;
+  };
+  if (pairs.length <= 12) {
+    for (let bits = 0; bits < (1 << pairs.length); bits++) for (let side = 0; side < (spare ? 2 : 1); side++) consider(build(bits, side));
+  } else {
+    let bits = 0;
+    for (let j = 0; j < pairs.length; j++) {
+      const a = build(bits, 0), b = build(bits | (1 << j), 0);
+      if (cost(b) < cost(a) || (cost(b) === cost(a) && rand() < 0.5)) bits |= 1 << j;
+    }
+    for (let side = 0; side < (spare ? 2 : 1); side++) consider(build(bits, side));
+  }
+  return best;
+}
+
+/* ---- "Max-niveau": sorted by level ----
+   The players ranked by their best level (Fra: the lowest number in the band, the most experienced first)
+   and cut into k groups of even size, so group 1 holds the most experienced. Players with the same level come
+   in random order (seed), so pressing again gives a new mix within each level without breaking the order.
+   A player without a level is put in at a random place. level(p): a number, or null. */
+function sortedGroups(players, k, level, seed) {
+  const rand = seededRandom(seed || 1);
+  const order = players.filter(p => level(p) != null).map(p => ({ p: p, key: level(p), r: rand() }))
+    .sort((x, y) => x.key - y.key || x.r - y.r).map(o => o.p);
+  players.filter(p => level(p) == null).forEach(p => order.splice(Math.floor(rand() * (order.length + 1)), 0, p));
+  k = Math.max(1, Math.min(k, order.length || 1));
+  const groups = Array.from({ length: k }, () => []);
+  order.forEach((p, r) => groups[Math.floor(r * k / order.length)].push(p));
+  return groups;
 }
 
 /* ===================== Training groups (for everyone logged in) =====================
@@ -2838,7 +2942,8 @@ function bandText(lo, hi) {
 
 /* Two ways to decide who may share a group (switched on the screen; the bands in the sheet stay as they are):
    "band" – the bands must overlap, and touching is not enough (2–3 and 3–4 may not mix, 2–3 and 1–3 may);
-   "max" – the players' top levels (Fra: 1 is the best level) may differ by at most GRP.maxDiff;
+   "max" – sorted by the players' best level (Fra: 1 is the best), group 1 the most experienced (see sortedGroups);
+           a group whose levels differ by more than GRP.maxDiff is shown red;
    "chaos" – anyone may be with anyone (every player is sent to the search without a level).
    For "band" the search gets each band made a hair smaller, so bands that only touch no longer meet; a player
    with a single level (e.g. 3) counts as half a level to each side, so 3 still meets 3, 2–3, 3–4 and 2–4.
@@ -2848,6 +2953,7 @@ const byMax = () => GRP.rule === "max";
 const byChaos = () => GRP.rule === "chaos";     // "Kaos": a random split, level and earlier groups don't count
 const byEven = () => GRP.rule === "even";       // "Lige hold": groups of equal strength; bands and the slider don't count
 const freeRule = () => byChaos() || byEven();   // anyone may be with anyone
+const noSlider = () => freeRule() || byMax();   // Max-niveau sorts by level, so the slider and earlier groups don't apply
 const NO_LEVEL = name => ({ name: name, lo: -Infinity, hi: Infinity });
 const HAIR = 1e-6;
 function strictBand(p) {
@@ -3031,7 +3137,7 @@ function grpSkill() {
 
 /* The mix the present players have had (the saved trainings + the groups on the screen), on average */
 function mixLine(players) {
-  if (freeRule() || !GRP.groups) return "";
+  if (noSlider() || !GRP.groups) return "";
   const skill = grpSkill();
   const now = GRP.groups.map(g => g.map(p => p.name));
   const mix = skillMix([now].concat(earlierGroups().map(e => e.groups)), skill);
@@ -3045,6 +3151,17 @@ function mixLine(players) {
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
+  if (byMax()) {                        // Max-niveau: sorted by the best level (Fra), group 1 the most experienced
+    GRP.groups = sortedGroups(players, groupCount(players.length), p => isFinite(p.lo) ? p.lo : null,
+                              hashText(GRP.key + "|" + GRP.nonce++))
+      .map(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));
+    GRP.sel = null; GRP.dirty = true;
+    const red = GRP.groups.filter(g => g.some((a, i) => g.slice(i + 1).some(b => !grpMeet(a, b)))).length;
+    GRP.bad = red > 0;
+    GRP.msg = red ? `Max-niveauet spænder mere end ${GRP.maxDiff} i de røde grupper. Vælg flere grupper eller en større forskel.` : "";
+    renderGroups();
+    return;
+  }
   // Kaos: nothing from earlier trainings counts. Lige hold: only the earlier pairs (so the teams vary).
   const earlier = byChaos() ? [] : earlierGroups(), free = freeRule();
   const res = makeGroups({
@@ -3095,22 +3212,24 @@ function matchesHtml() {
   const ms = GRP.matches || [];
   const kind = i => ms.length < 2 ? "" : i === 0 ? "mere øvede" : i === ms.length - 1 ? "mindre øvede" : "mellem";
   const avgText = team => { const a = groupAverage(team); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); };
+  // each match as rows of opposite numbers: team A's player i faces team B's player i
+  const chip = (p, mi, ti, pi) => p ? `<button type="button" class="grp-p" data-mp="${mi}:${ti}:${pi}" aria-pressed="${GRP.matchSel === mi + ":" + ti + ":" + pi}">` +
+    `<span class="grp-pname">${esc(p.name)}</span> <span class="grp-band">${bandText(p.lo, p.lo)}</span></button>` : `<span class="grp-none-p">ingen modspiller</span>`;
+  const groupList = g => g.length === 1 ? "gruppe " + g[0] : "gruppe " + g.slice(0, -1).join(", ") + " og " + g[g.length - 1];
   const cards = ms.map(function (m, mi) {
-    const teams = m.teams.map(function (team, ti) {
-      const chips = team.map((p, pi) => `<button type="button" class="grp-p" data-mp="${mi}:${ti}:${pi}" aria-pressed="${GRP.matchSel === mi + ":" + ti + ":" + pi}">` +
-        `${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`).join("");
-      return `<div class="grp-team"><div class="grp-teamhead">Hold ${String.fromCharCode(65 + 2 * mi + ti)}<small>${team.length} spillere · ${avgText(team)}</small></div>
-        <div class="grp-players">${chips}</div></div>`;
-    });
-    const from = m.groups.length > 1 ? `gruppe ${m.groups[0]} og ${m.groups[1]}` : `gruppe ${m.groups[0]}`;
-    return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${kind(mi) ? kind(mi) + " · " : ""}${from}</small></div>
-      <div class="grp-teams">${teams[0]}<div class="grp-vs" aria-hidden="true">mod</div>${teams[1]}</div></div>`;
+    const [a, b] = m.teams, rows = Math.max(a.length, b.length);
+    const head = ti => `<div class="grp-teamhead">Hold ${String.fromCharCode(65 + 2 * mi + ti)}<small>${m.teams[ti].length} spillere · ${avgText(m.teams[ti])}</small></div>`;
+    let grid = head(0) + `<span></span>` + head(1);
+    for (let i = 0; i < rows; i++) grid += chip(a[i], mi, 0, i) + `<span class="grp-vs" aria-hidden="true">–</span>` + chip(b[i], mi, 1, i);
+    return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${kind(mi) ? kind(mi) + " · " : ""}${groupList(m.groups)}</small></div>
+      <div class="grp-pairs">${grid}</div></div>`;
   }).join("");
   return `<section class="grp-sec grp-matches"><h3>Kampe til sidst</h3>
-    <p class="grp-hint grp-explain">Grupperne parres efter niveau: de mere øvede grupper spiller mod hinanden, og de mindre øvede mod hinanden. Spillerne i hver kamp blandes til to lige stærke hold.</p>
+    <p class="grp-hint grp-explain">De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe. I hver kamp får hver spiller en modspiller på samme niveau (eller så tæt på som muligt) på det andet hold, og derefter gøres holdene så lige som muligt.</p>
     <div class="grp-row"><button type="button" class="login-go" data-act="matches">${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
     ${cards}
-    ${ms.length ? `<p class="grp-legend">Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>` : ""}
+    ${ms.length ? `<p class="grp-legend">Spillerne på samme linje er hinandens modspillere.${ms.some(m => m.teams[0].length !== m.teams[1].length)
+      ? " Når et hold har én spiller færre, får det lidt mere øvede spillere, så holdene samlet er lige stærke." : ""} Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>` : ""}
   </section>`;
 }
 
@@ -3164,8 +3283,8 @@ function renderGroups() {
         </div>
       </div>
       ${byMax() ? `<div class="grp-row">
-        <span class="grp-hint">Forskel i max-niveau højst</span>
-        <div class="grp-mode" role="group" aria-label="Forskel i max-niveau højst">
+        <span class="grp-hint">Forskel i en gruppe højst</span>
+        <div class="grp-mode" role="group" aria-label="Forskel i en gruppe højst">
           ${[0, 1, 2].map(d => `<button type="button" data-diff="${d}" aria-pressed="${GRP.maxDiff === d}">${d}</button>`).join("")}
         </div>
       </div>` : ""}
@@ -3182,6 +3301,7 @@ function renderGroups() {
         <span class="grp-hint">${sizeText(n, k)}</span>
       </div>
       ${byChaos() ? `<p class="grp-hint grp-explain grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
+      : byMax() ? `<p class="grp-hint grp-explain grp-slide">Max-niveau: spillerne sorteres efter deres bedste niveau (det laveste tal i båndet), så gruppe 1 er de mest øvede. Spillere med samme niveau blandes, når du trykker igen. En gruppe bliver rød, hvis den spænder mere end den valgte forskel.</p>`
       : byEven() ? `<p class="grp-hint grp-explain grp-slide">Lige hold: holdene får så ens gennemsnitligt niveau som muligt, og de mest og mindst øvede kan være på samme hold. Båndene tæller ikke med, men de samme makkere som sidst undgås.</p>`
       : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
@@ -3204,7 +3324,7 @@ function renderGroups() {
       const levelTxt = clash.length ? "niveau passer ikke" : groupLevelText(g);
       const selHere = GRP.sel && g.indexOf(GRP.sel) !== -1;
       const chips = g.map(function (p) {
-        const moved = !freeRule() && prev && was[p.name] != null && was[p.name] !== gi;
+        const moved = !noSlider() && prev && was[p.name] != null && was[p.name] !== gi;
         return `<button type="button" class="grp-p${moved ? " moved" : ""}" data-p="${esc(p.name)}" aria-pressed="${GRP.sel === p}"` +
           `${moved ? ` title="Ny gruppe siden sidst"` : ""}>${esc(p.name)} <span class="grp-band">${bandText(p.lo, p.hi)}</span></button>`;
       }).join("");
@@ -3215,7 +3335,7 @@ function renderGroups() {
         ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i max-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
-      <p class="grp-legend">${prev && !freeRule() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
+      <p class="grp-legend">${prev && !noSlider() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       ${mixLine(players) ? `<p class="grp-mixline">${mixLine(players)}</p>` : ""}
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
         <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>` +
