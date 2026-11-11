@@ -33,7 +33,11 @@ test.after(async () => { if (browser) await browser.close(); if (site) site.clos
 /* A phone with the app open on the trainings list, talking to the simulated server */
 async function phone(srv, { width = 390, loggedIn = true } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: 860 } });
-  await ctx.route('https://script.google.com/**', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify(srv.post(r.request().postData())) }));
+  await ctx.route('https://script.google.com/**', r => {
+    const body = r.request().postData();
+    if ((srv.dropped || []).includes(JSON.parse(body).action)) return r.abort('failed');   // the connection drops
+    r.fulfill({ contentType: 'application/json', body: JSON.stringify(srv.post(body)) });
+  });
   const page = await ctx.newPage();
   page.errors = [];
   page.on('pageerror', e => page.errors.push(e.message));
@@ -176,4 +180,57 @@ test('no sideways scrolling on small phones', { skip }, async () => {
     await page.click('#grp-v [data-act="matches"]');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `width ${width}`);
   }
+});
+
+test('no connection: groups are kept on the phone and sent when it comes back', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  await page.context().setOffline(true);
+  await page.click('#grp-v [data-act="save"]');
+  assert.match(await page.locator('#grp-v .grp-save').innerText(), /Gemt på telefonen/);
+  assert.equal(srv.book['Grupper'].getLastRow(), 1, 'nothing reached the sheet yet');
+  await page.click('#v-back'); await page.click('#v-back');
+  await openGroups(page);
+  assert.equal(await cards(page).count(), 4, 'reopened offline, the kept groups are shown');
+  await page.context().setOffline(false);                 // the phone comes back online
+  await page.waitForFunction(() => /Gemt \d/.test(document.querySelector('#grp-v .grp-save').innerText), null, { timeout: 10000 });
+  assert.equal(srv.book['Grupper'].getLastRow() - 1, 16, 'sent to the sheet');
+  assert.equal(await page.evaluate(() => readQueue().length), 0);
+  assert.deepEqual(page.errors, []);
+});
+
+test('the connection drops while saving: kept, then sent later (also after reopening the app)', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  srv.dropped = ['saveSignups'];
+  await openGroups(page);
+  await page.locator('#grp-v [data-who="1"]').uncheck();
+  await page.click('#grp-v [data-act="signups"]');
+  await page.waitForFunction(() => /på telefonen/.test(document.querySelector('#grp-v').innerText));
+  srv.dropped = [];
+  await page.reload();                                     // the app is closed and opened again
+  await page.waitForSelector('#sessions .card');
+  await page.waitForFunction(() => readQueue().length === 0, null, { timeout: 10000 });
+  assert.equal(srv.book['Tilmeldte'].getLastRow() - 1, 15);
+});
+
+test('Spilleroversigt: attendance, level mix and most frequent teammates', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  const t = srv.call('login', CODE).result.token;
+  srv.call('saveGroups', t, '2026-10-01', [['Alma', 'Bo', 'Carl'], ['Dina', 'Emil']]);
+  srv.call('saveGroups', t, '2026-10-08', [['Alma', 'Bo', 'Dina'], ['Carl', 'Emil']]);
+  await page.click('#nav-groups');
+  await page.click('#grp-overview');
+  await page.waitForSelector('#ov .ov-p');
+  const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
+  const alma = card('Alma');
+  const text = await alma.innerText();
+  assert.match(text, /2 af 2/);
+  assert.match(text, /Oftest med: Bo \(2\)/);
+  assert.match(text, /\d+ % med mere øvede · \d+ % samme niveau · \d+ % med mindre øvede/);
+  assert.match(await card('Frida').innerText(), /Ikke med i gemte grupper endnu/);
+  await page.click('#ov [data-sort="times"]');
+  const first = await page.locator('#ov .ov-p strong').first().innerText();
+  assert.ok(['Alma', 'Bo', 'Carl', 'Dina', 'Emil'].includes(first), 'sorted by attendance: ' + first);
+  assert.deepEqual(page.errors, []);
 });

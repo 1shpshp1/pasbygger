@@ -592,6 +592,22 @@
     .grp-warn { margin: 8px 0 0; color: #b00020; font-size: 14px; }
     .grp-save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 16px; }
     .grp-legend { margin: 10px 0 0; color: #777777; font-size: 13px; }
+    /* Spilleroversigt */
+    .grp-ovbtn { margin: 0 0 12px; }
+    .ov-list { display: grid; gap: 10px; }
+    .ov-p { padding: 10px 12px; border: 1px solid #e3e3e3; border-radius: 10px; background: #ffffff; }
+    .ov-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+    .grp .ov-head strong { font-size: 18px; }
+    .grp .ov-seen { margin-left: auto; color: #555555; font-size: 14px; }
+    .ov-bar { display: flex; height: 10px; margin: 8px 0 4px; overflow: hidden; border-radius: 99px; background: #f0f0f0; }
+    .ov-more { background: #AD152F; }
+    .ov-same { background: #e0a6b1; }
+    .ov-less { background: #d6d6d6; }
+    .grp .ov-line { margin: 2px 0 0; color: #555555; font-size: 14px; }
+    .grp .ov-key { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 10px; color: #555555; font-size: 13px; }
+    .grp .ov-key span { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border-radius: 3px; }
+    .grp .ov-key span:first-child { margin-left: 0; }
+
     /* "Kampe til sidst" */
     .grp-matches { margin-top: 22px; }
     .grp-matches h3 { margin: 0 0 4px; }
@@ -657,6 +673,7 @@
 <div id="groups" class="view-hidden">
   <div class="grp-page">
     <h2>Grupper</h2>
+    <button type="button" class="clearbtn grp-ovbtn" id="grp-overview">Spilleroversigt</button>
     <label class="grp-date"><span class="grp-hint">Grupper uden en træning – dato</span><input type="date" id="grp-date"></label>
     <div id="grp-tab" class="grp"></div>
   </div>
@@ -688,7 +705,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 11. nov. 2026</p>
+<p class="build" id="build">App-version 11. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1259,6 +1276,7 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
       AUTH.until = Date.now() + res.seconds * 1000;
       AUTH.span = res.seconds * 1000;
       prefetchGroups();
+      sendQueue();                     // saves that were waiting for a login
       saveAuth(); scheduleExpiry();
       const cb = LOGIN_CB; LOGIN_CB = null;
       closeLogin();
@@ -2887,7 +2905,7 @@ function fetchGroupData() {
   }).then(function (res) {
     GRP_FETCH = null;
     if (!res.unchanged || !GRP_CACHE) {
-      GRP_CACHE = { version: res.version, data: { players: res.players, history: res.history, signups: res.signups || {} } };
+      GRP_CACHE = { version: res.version, data: applyQueue({ players: res.players, history: res.history, signups: res.signups || {} }) };
       storeGroups();
     }
     GRP_CACHE.at = Date.now();
@@ -3030,6 +3048,78 @@ function keyLabel(key) {
   return m ? danishDate(m[1], key) + (m[2] ? " (uden træning)" : "") : key;
 }
 
+/* ---- Spilleroversigt: per player, from the saved groups ----
+   Attendance: in how many of the saved trainings (and groups made in the tab) the player was in a group.
+   Level mix: over the last 12 of those, the share of teammates who were more experienced, at the same level
+   and less experienced (by Fra, like the 25/50/25 ambition). Most frequent teammates: over all of them. */
+let OV_SORT = "name";
+
+function openPlayerOverview() {
+  if (!canGroup()) { requireLogin(openPlayerOverview); return; }
+  openViewer("Spilleroversigt", [{ title: "Spilleroversigt", html: '<div id="ov" class="grp"><p>Henter spillere …</p></div>' }],
+             document.getElementById("grp-overview"), null);
+  const box = document.getElementById("ov");
+  box.addEventListener("click", function (e) {
+    const b = e.target.closest("[data-sort]");
+    if (b) { OV_SORT = b.dataset.sort; renderOverview(); }
+  });
+  readStoredGroups().then(function (c) { if (c) renderOverview(); });
+  fetchGroupData().then(renderOverview, function (err) {
+    if (GRP_CACHE) return;                              // the phone's copy is shown
+    if (/LOGIN/.test(String(err && err.message))) requireLogin(openPlayerOverview);
+    else if (document.getElementById("ov")) document.getElementById("ov").innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
+  });
+}
+document.getElementById("grp-overview").addEventListener("click", openPlayerOverview);
+
+function renderOverview() {
+  const box = document.getElementById("ov");
+  if (!box || !GRP_CACHE) return;
+  const data = GRP_CACHE.data;
+  const keys = Object.keys(data.history).sort().reverse();          // newest first
+  const sessions = keys.map(k => data.history[k].groups);
+  const skill = {};
+  data.players.forEach(p => { if (p.lo != null) skill[p.name] = p.lo; });
+  const mix = skillMix(sessions, skill);                             // over the last 12, as the groups use it
+  const stats = data.players.map(function (p) {
+    let times = 0, last = "";
+    const mates = {};
+    keys.forEach(function (k) {
+      const g = data.history[k].groups.find(x => x.indexOf(p.name) !== -1);
+      if (!g) return;
+      times++; if (!last) last = k;
+      g.forEach(o => { if (o !== p.name) mates[o] = (mates[o] || 0) + 1; });
+    });
+    const top = Object.keys(mates).sort((a, b) => mates[b] - mates[a] || a.localeCompare(b, "da")).slice(0, 3);
+    return { p: p, times: times, last: last, mix: mix[p.name], top: top.map(n => n + " (" + mates[n] + ")") };
+  });
+  stats.sort(OV_SORT === "times" ? (a, b) => b.times - a.times || a.p.name.localeCompare(b.p.name, "da")
+                                 : (a, b) => a.p.name.localeCompare(b.p.name, "da"));
+  const pct = (m, r) => Math.round(100 * m[r] / m[3]);
+  const rows = stats.map(function (s) {
+    const band = s.p.lo == null ? "" : `<span class="grp-band">${bandText(s.p.lo, s.p.hi)}</span>`;
+    const seen = s.times ? `${s.times} af ${keys.length} · sidst ${esc(shortDate(s.last.slice(0, 10)))}` : "Ikke med i gemte grupper endnu";
+    let mixHtml = "";
+    if (s.mix && s.mix[3]) {
+      const [a, b, c] = [0, 1, 2].map(r => pct(s.mix, r));
+      mixHtml = `<div class="ov-bar" role="img" aria-label="${a} % med mere øvede, ${b} % samme niveau, ${c} % med mindre øvede">` +
+        `<span class="ov-more" style="width:${a}%"></span><span class="ov-same" style="width:${b}%"></span><span class="ov-less" style="width:${c}%"></span></div>` +
+        `<p class="ov-line">${a} % med mere øvede · ${b} % samme niveau · ${c} % med mindre øvede</p>`;
+    } else if (s.times && s.p.lo == null) mixHtml = `<p class="ov-line">Har intet niveau i fanen Spillere.</p>`;
+    return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
+      mixHtml + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
+  }).join("");
+  box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet er over de seneste 12, og målet er 25 / 50 / 25.</p>
+    <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
+      <div class="grp-mode" role="group" aria-label="Sortér">
+        <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
+        <button type="button" data-sort="times" aria-pressed="${OV_SORT === "times"}">Fremmøde</button>
+      </div></div>
+    <p class="ov-key"><span class="ov-more"></span>mere øvede <span class="ov-same"></span>samme niveau <span class="ov-less"></span>mindre øvede</p>
+    <div class="ov-list">${rows || "<p>Fanen Spillere er tom.</p>"}</div>`;
+}
+
 /* Shows the screen from the players we have at once, then quietly takes the newest copy: it replaces
    what is shown only while nothing has been ticked, made or moved yet */
 function loadGroupData() {
@@ -3071,7 +3161,7 @@ function useGroupData(data) {
     const su = (data.signups || {})[GRP.key];
     if (su) {                                           // no groups yet, but the signups were saved: start from those
       su.names.forEach(name => { if (GRP.byName[name]) GRP.present.add(name); });
-      GRP.fromSignups = su.saved;
+      GRP.fromSignups = su.saved || "på telefonen";   // (empty while the save is waiting for a connection)
     } else data.players.forEach(p => GRP.present.add(p.name));
   }
   renderGroups();
@@ -3082,7 +3172,8 @@ function signupStatus() {
   const su = (GRP.data.signups || {})[GRP.key];
   if (!su) return "";
   const same = su.names.filter(n => GRP.byName[n]).length === GRP.present.size && su.names.every(n => !GRP.byName[n] || GRP.present.has(n));
-  return same ? "Tilmeldte gemt " + su.saved : "Ændret siden de tilmeldte blev gemt";
+  if (!same) return "Ændret siden de tilmeldte blev gemt";
+  return waiting("signups", GRP.key) ? "Tilmeldte gemt på telefonen · sendes, når der er forbindelse" : "Tilmeldte gemt " + su.saved;
 }
 
 /* A player by name; a name that is no longer in the tab "Spillere" fits anywhere */
@@ -3341,7 +3432,8 @@ function renderGroups() {
       <p class="grp-legend">${prev && !noSlider() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       ${mixLine(players) ? `<p class="grp-mixline">${mixLine(players)}</p>` : ""}
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
-        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>` +
+        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : waiting("groups", GRP.key) ? "Gemt på telefonen · sendes, når der er forbindelse"
+          : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>` +
       matchesHtml();
   }
   box.innerHTML = html;
@@ -3450,12 +3542,93 @@ function grpClick(e) {
   }
 }
 
+/* ---- Saving with poor reception ----
+   A save that can't reach the server (no connection, or the connection drops) is kept on the phone
+   (localStorage "oevGrpQueue") and shown as "Gemt på telefonen". It is sent as soon as possible: when the phone
+   comes back online, when the app is opened or brought back, after a login, and every 30 seconds while one is
+   waiting. Only the newest save per training and kind is kept. Until it is sent, the phone's copy of the groups
+   already holds it, so reopening Grupper shows it and the next groups build on it. */
+const QUEUE_KEY = "oevGrpQueue";
+let QUEUE_SENDING = false, QUEUE_TOLD = false;
+
+function readQueue() {
+  try { const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); return Array.isArray(q) ? q : []; } catch (e) { return []; }
+}
+function writeQueue(q) {
+  try { if (q.length) localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); else localStorage.removeItem(QUEUE_KEY); } catch (e) { /* storage full or blocked */ }
+}
+const waiting = (kind, key) => readQueue().some(x => x.kind === kind && x.key === key);
+
+/* Did the call fail for lack of a connection (try again later), rather than an answer from the server? */
+function noConnection(err) {
+  const m = String((err && err.message) || err);
+  return !navigator.onLine || (err && (err.name === "AbortError" || err.name === "TypeError")) ||
+         /failed to fetch|networkerror|load failed|network|abort|timed? ?out|HTTP 5\d\d/i.test(m);
+}
+
+/* What is waiting, put into a copy of the players and groups (after a fresh copy has come from the server) */
+function applyQueue(data) {
+  readQueue().forEach(function (x) {
+    if (x.kind === "groups") data.history[x.key] = { saved: "", groups: x.names };
+    else (data.signups = data.signups || {})[x.key] = { saved: "", names: x.names };
+  });
+  return data;
+}
+
+function keepForLater(want, kind, names) {
+  const q = readQueue().filter(x => !(x.kind === kind && x.key === want.key));
+  q.push({ kind: kind, key: want.key, names: names, at: Date.now() });
+  writeQueue(q);
+  applyQueue(want.data);
+  if (kind === "groups") { want.groups = names.map(g => g.map(grpPlayer)); want.saved = ""; want.dirty = false; }
+  want.msg = ""; want.bad = false;
+  if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
+  if (GRP === want) renderGroups();
+}
+
+/* Sends what is waiting, one at a time; stops at the first save that can't get through yet */
+function sendQueue() {
+  const q = readQueue();
+  if (QUEUE_SENDING || !q.length || !navigator.onLine) return;
+  if (!isAuthed()) {
+    if (!QUEUE_TOLD) { QUEUE_TOLD = true; showToast("Grupper venter på at blive gemt. Log ind med koden, så sendes de."); }
+    return;
+  }
+  QUEUE_SENDING = true;
+  const x = q[0];
+  libCall(x.kind === "groups" ? "saveGroups" : "saveSignups", [AUTH.token, x.key, x.names]).then(function (res) {
+    writeQueue(readQueue().filter(y => !(y.kind === x.kind && y.key === x.key && y.at === x.at)));
+    if (GRP_CACHE) {
+      const d = GRP_CACHE.data;
+      if (x.kind === "groups") d.history[x.key] = { saved: res.saved, groups: x.names };
+      else (d.signups = d.signups || {})[x.key] = { saved: res.saved, names: x.names };
+      storeGroups();
+    }
+    if (GRP && GRP.key === x.key && x.kind === "groups" && !GRP.dirty) GRP.saved = res.saved;
+    if (GRP && GRP.data) renderGroups();
+    QUEUE_SENDING = false;
+    sendQueue();                                         // the next one, if any
+  }, function (err) {
+    QUEUE_SENDING = false;
+    if (/LOGIN/.test(String(err && err.message))) { AUTH.token = ""; AUTH.until = 0; saveAuth(); QUEUE_TOLD = false; sendQueue(); return; }
+    if (noConnection(err)) return;                       // tried again later
+    writeQueue(readQueue().filter(y => y !== x && !(y.kind === x.kind && y.key === x.key && y.at === x.at)));   // the server said no: drop it
+    showToast("Kunne ikke gemme grupperne: " + String(err && err.message || err));
+    sendQueue();
+  });
+}
+window.addEventListener("online", sendQueue);
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") sendQueue(); });
+setInterval(function () { if (readQueue().length) sendQueue(); }, 30000);
+
 function saveGroupsNow(btn) {
   const want = GRP;
-  if (!isAuthed()) { askCodeThenSave(want); return; }
   const names = GRP.groups.filter(g => g.length).map(g => g.map(p => p.name));
+  if (!navigator.onLine) { keepForLater(want, "groups", names); return; }
+  if (!isAuthed()) { askCodeThenSave(want); return; }
   btn.disabled = true; btn.textContent = "Gemmer…";
   libCall("saveGroups", [AUTH.token, GRP.key, names]).then(function (res) {
+    writeQueue(readQueue().filter(x => !(x.kind === "groups" && x.key === want.key)));   // this one supersedes any waiting
     want.data.history[want.key] = { saved: res.saved, groups: names };
     want.groups = names.map(g => g.map(grpPlayer));
     want.saved = res.saved; want.dirty = false; want.msg = ""; want.bad = false;
@@ -3465,6 +3638,7 @@ function saveGroupsNow(btn) {
     if (GRP !== want) return;
     btn.disabled = false; btn.textContent = "Gem grupper";
     if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want);
+    else if (noConnection(err)) keepForLater(want, "groups", names);
     else { GRP.msg = "Kunne ikke gemme: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
   });
 }
@@ -3487,10 +3661,12 @@ function askCodeThenSave(want, signups) {
 /* Saves the ticks as this training's signups (in the tab "Tilmeldte"), so any phone can start from them */
 function saveSignupsNow(btn) {
   const want = GRP;
-  if (!isAuthed()) { askCodeThenSave(want, true); return; }
   const names = GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => p.name);
+  if (!navigator.onLine) { keepForLater(want, "signups", names); return; }
+  if (!isAuthed()) { askCodeThenSave(want, true); return; }
   btn.disabled = true; btn.textContent = "Gemmer…";
   libCall("saveSignups", [AUTH.token, GRP.key, names]).then(function (res) {
+    writeQueue(readQueue().filter(x => !(x.kind === "signups" && x.key === want.key)));
     want.data.signups = want.data.signups || {};
     want.data.signups[want.key] = { saved: res.saved, names: names };
     if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
@@ -3500,11 +3676,13 @@ function saveSignupsNow(btn) {
     if (GRP !== want) return;
     btn.disabled = false; btn.textContent = "Gem tilmeldte";
     if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, true);
+    else if (noConnection(err)) keepForLater(want, "signups", names);
     else { GRP.msg = "Kunne ikke gemme de tilmeldte: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
   });
 }
 
 prefetchGroups();                  // still logged in when the app opens: fetch the players ahead
+sendQueue();                       // saves that were waiting for a connection
 
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
 function sessionLink(s) {
