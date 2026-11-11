@@ -688,7 +688,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 29. okt. 2026 (4)</p>
+<p class="build" id="build">App-version 11. nov. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1118,7 +1118,10 @@ function exerciseLink(d) {
 
 /* Note shown under a link, by website */
 const LINK_NOTES = { "mit.dbu.dk": "Kræver login hos DBU", "fck.better-coaching.dk": "Kræver login hos FCK",
-                     "learn.englandfootball.com": "På engelsk. Her finder du også sessionen som PDF." };
+                     "learn.englandfootball.com": "På engelsk. Her finder du også sessionen som PDF.",
+                     "rinus.knvb.nl": "På hollandsk. Oversæt siden med browserens egen knap: i Chrome ⋮ → Oversæt, i Safari aA → Oversæt." };
+/* The link's text when the sheet gives none (a drill from the DBU drill bank needs nothing: that is the default) */
+const LINK_LABELS = { "rinus.knvb.nl": "Åbn øvelsen hos KNVB Rinus" };
 
 /* "6–12 spillere", "Min. 6 spillere", "Op til 12 spillere" */
 function rangeText(a, b, unit) {
@@ -2003,9 +2006,9 @@ function libBody(def, d) {
   if (def.type === "image") return diagramHtml(val, d);
   if (def.type === "video") return videoHtml(val);
   if (def.type === "link") {
-    const label = (val === d["Link"] && d["__linktext"] && d["__linktext"] !== val) ? d["__linktext"] : "Åbn link til øvelsen hos DBU";
-    let note = "";
-    try { note = LINK_NOTES[new URL(val).hostname] || ""; } catch (e) { note = ""; }
+    let note = "", host = "";
+    try { host = new URL(val).hostname; note = LINK_NOTES[host] || ""; } catch (e) { note = ""; }
+    const label = (val === d["Link"] && d["__linktext"] && d["__linktext"] !== val) ? d["__linktext"] : LINK_LABELS[host] || "Åbn link til øvelsen hos DBU";
     if (isFckLink(val)) {                     // FCK has no page per drill: the link opens their drill bank
       return libLink(val, "Find øvelsen i FCK's øvelsesbank") +
         `<p class="link-note">Linket åbner forsiden af øvelsesbanken. Søg efter »${esc(cleanVal(d["Navn"]))}«. ${esc(note)}</p>`;
