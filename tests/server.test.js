@@ -80,7 +80,8 @@ test('a player marked Aktiv = nej is left out', () => {
 test('the script\'s own address forwards to the app, keeping training and drill links', () => {
   const srv = testServer();
   const plain = srv.ctx.doGet({ parameter: {} }).html;
-  assert.match(plain, /location\.replace\("https:\/\/1shpshp1\.github\.io\/pasbygger\/"\)/);
+  assert.match(plain, /<a href="https:\/\/1shpshp1\.github\.io\/pasbygger\/"[^>]*>Åbn Pasbygger<\/a>/, 'a button to the app');
+  assert.match(plain, /1shpshp1\.github\.io\/pasbygger</, 'the new address is shown, so it can be saved');
   const page = srv.ctx.doGet({ parameter: { s: SESSION_DATES[0], d: 'FA-x"<y' } }).html;
   assert.ok(page.includes('?s=' + SESSION_DATES[0] + '&amp;d=FA-x%22%3Cy'), 'the link keeps both parts, safely encoded');
   assert.ok(!page.includes('"<y'), 'nothing from the address is put into the page unencoded');

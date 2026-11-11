@@ -54,8 +54,10 @@ const DRILL_COLUMNS = ['ID', 'Navn', 'Publiceret', 'Video', 'Diagram', 'Link', '
   'Kampnærhed'];
 
 /* The app itself lives on GitHub Pages (index.html in the repository). This script's own web address only
-   sends people there, keeping a link to one training (?s=2026-11-03) or one drill (?d=FA-…), so old
-   bookmarks and shared links still work. Change the address here if the app moves (e.g. to its own domain). */
+   points people there, keeping a link to one training (?s=2026-11-03) or one drill (?d=FA-…), so old
+   bookmarks and shared links still work. Google lets a script page leave its frame only when the visitor taps
+   something, so the page is one big button (the automatic try below works in a few browsers).
+   Change the address here if the app moves (e.g. to its own domain). */
 const APP_PAGE_URL = 'https://1shpshp1.github.io/pasbygger/';
 
 function doGet(e) {
@@ -63,11 +65,18 @@ function doGet(e) {
   const query = ['s', 'd'].filter(k => p[k]).map(k => k + '=' + encodeURIComponent(p[k])).join('&');
   const url = APP_PAGE_URL + (query ? '?' + query : '');
   const attr = url.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const shown = APP_PAGE_URL.replace(/^https:\/\//, '').replace(/\/$/, '');
   return HtmlService.createHtmlOutput(
       '<base target="_top">' +
-      '<p style="font:18px/1.5 Arial,sans-serif;margin:24px">Pasbygger åbner …<br>' +
-      'Sker der ikke noget, så tryk her: <a href="' + attr + '">Åbn Pasbygger</a></p>' +
-      '<script>try { window.top.location.replace(' + JSON.stringify(url) + '); } catch (err) { /* the link above works */ }</script>')
+      '<div style="font:18px/1.5 Arial,sans-serif;margin:32px 20px;max-width:30em">' +
+      '<h1 style="margin:0 0 8px;color:#AD152F;font-size:26px">Pasbygger er flyttet</h1>' +
+      '<p style="margin:0 0 20px">Tryk på knappen for at åbne appen.</p>' +
+      '<a href="' + attr + '" style="display:inline-block;padding:14px 28px;border-radius:99px;background:#AD152F;' +
+      'color:#fff;font-weight:bold;font-size:20px;text-decoration:none">Åbn Pasbygger</a>' +
+      '<p style="margin:24px 0 0;color:#555;font-size:16px">Gem den nye adresse, så du kommer direkte ind næste gang:<br>' +
+      '<strong>' + shown + '</strong><br>Har du appen på hjemmeskærmen, så slet den gamle og tilføj den igen fra den nye adresse.</p>' +
+      '</div>' +
+      '<script>try { window.top.location.replace(' + JSON.stringify(url) + '); } catch (err) { /* the button works */ }</script>')
     .setTitle(APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');   // without this, phones show the page zoomed out
 }
