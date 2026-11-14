@@ -94,7 +94,8 @@ const API_ACTIONS = {
   // training groups (file Grupper); called through a function, so it works whatever order the files load in
   getGroupData:     function () { return getGroupData.apply(null, arguments); },
   saveGroups:       function () { return saveGroups.apply(null, arguments); },
-  saveSignups:      function () { return saveSignups.apply(null, arguments); }
+  saveSignups:      function () { return saveSignups.apply(null, arguments); },
+  saveMatches:      function () { return saveMatches.apply(null, arguments); }
 };
 
 function doPost(e) {
@@ -453,7 +454,7 @@ function clearDrillCache() {
 function onEdit(e) {
   const name = e && e.range ? e.range.getSheet().getName() : '';
   if ([DRILLS_SHEET, ALIAS_SHEET, TAGS_SHEET].indexOf(name) !== -1) clearDrillCache();
-  if ([PLAYERS_SHEET, GROUPS_SHEET, SIGNUPS_SHEET].indexOf(name) !== -1) clearGroupCache();   // players, groups, signups (file Grupper)
+  if ([PLAYERS_SHEET, GROUPS_SHEET, SIGNUPS_SHEET, MATCHES_SHEET].indexOf(name) !== -1) clearGroupCache();   // file Grupper
 }
 
 /* Keeps the library ready in the cache, so no coach has to wait for the sheet to be read.

@@ -35,8 +35,11 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: 860 } });
   await ctx.route('https://script.google.com/**', r => {
     const body = r.request().postData();
-    if ((srv.dropped || []).includes(JSON.parse(body).action)) return r.abort('failed');   // the connection drops
-    r.fulfill({ contentType: 'application/json', body: JSON.stringify(srv.post(body)) });
+    const action = JSON.parse(body).action;
+    if ((srv.dropped || []).includes(action)) return r.abort('failed');   // the connection drops
+    const answer = JSON.stringify(srv.post(body));
+    if ((srv.slow || []).includes(action)) return setTimeout(() => r.fulfill({ contentType: 'application/json', body: answer }), 1500);
+    r.fulfill({ contentType: 'application/json', body: answer });
   });
   const page = await ctx.newPage();
   page.errors = [];
@@ -232,5 +235,50 @@ test('Spilleroversigt: attendance, level mix and most frequent teammates', { ski
   await page.click('#ov [data-sort="times"]');
   const first = await page.locator('#ov .ov-p strong').first().innerText();
   assert.ok(['Alma', 'Bo', 'Carl', 'Dina', 'Emil'].includes(first), 'sorted by attendance: ' + first);
+  assert.deepEqual(page.errors, []);
+});
+
+test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-rule="max"]');
+  await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-mmode="mix"]');
+  assert.match(await page.locator('#grp-v .grp-matches').innerText(), /25 % af kampene i en sværere kamp/);
+  await page.click('#grp-v [data-act="matches"]');
+  assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 2);
+  assert.match(await page.locator('#grp-v .grp-matches .grp-card .grp-head').first().innerText(), /gns\. niveau/);
+  await page.click('#grp-v [data-act="save"]');
+  await page.waitForFunction(() => /Gemt/.test(document.querySelector('#grp-v .grp-save').innerText));   // (the groups' save line comes first)
+  await page.click('#grp-v [data-act="savematches"]');
+  await page.waitForFunction(() => /Kampe gemt/.test(document.querySelector('#grp-v .grp-matches').innerText));
+  assert.equal(srv.book['Kampe'].getLastRow() - 1, 16);
+  await page.click('#v-back'); await page.click('#v-back');
+  await openGroups(page);
+  assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 2, 'the saved matches come back');
+  await page.click('#grp-v [data-mmode="level"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.match(await page.locator('#grp-v .grp-matches .grp-card .grp-head').first().innerText(), /mere øvede/);
+  assert.match(await page.locator('#grp-v .grp-matches .grp-save').innerText(), /Ikke gemt/);
+  await page.click('#v-back'); await page.click('#v-back');
+  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.waitForSelector('#ov .ov-p');
+  assert.match(await page.locator('#ov').innerText(), /Kampe \(1\): \d+ % sværere · \d+ % eget niveau · \d+ % lettere/);
+  assert.deepEqual(page.errors, []);
+});
+
+test('the login running out while the players are being checked doesn\'t break Grupper', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  await openGroups(page);                                  // the phone now has a copy of the players
+  await page.click('#v-back'); await page.click('#v-back');
+  await page.evaluate(() => { GRP_CACHE.at = 0; });       // so the next opening asks the server "anything new?"
+  srv.slow = ['getGroupData'];
+  await openGroups(page);
+  await page.evaluate(() => { AUTH.until = Date.now() - 1000; expire(); });   // runs out while the question is on its way
+  await page.waitForTimeout(2000);                         // the answer "unchanged" arrives
+  await page.locator('#grp-v [data-who="2"]').uncheck();
+  assert.match(await page.locator('#grp-v summary').innerText(), /15 af 16/);
+  await page.click('#grp-v [data-act="make"]');
+  assert.equal(await cards(page).count(), 4);
   assert.deepEqual(page.errors, []);
 });

@@ -10,5 +10,5 @@ if (start < 0 || end < start) throw new Error('Could not find the grouping code 
 const ctx = {};
 vm.createContext(ctx);
 vm.runInContext(html.slice(start, end) +
-  '\n;this.api = { makeGroups, sortedGroups, makeMatches, poolSizes, pairHistory, stayRuns, skillMix, groupLevel, bandsMeet, hashText };', ctx);
+  '\n;this.api = { makeGroups, sortedGroups, makeMatches, makeMixMatches, matchMix, matchCategory, poolSizes, pairHistory, stayRuns, skillMix, groupLevel, bandsMeet, hashText };', ctx);
 module.exports = ctx.api;

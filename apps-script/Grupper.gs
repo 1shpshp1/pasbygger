@@ -19,6 +19,10 @@
    (Træning, Spiller, Gemt). Grupper starts from these ticks when the training has no saved groups yet.
    They are only a starting point: they don't count as groups and don't change how groups are made.
 
+   Tab "Kampe": written by the app's "Gem kampe" button, one row per player per training (Træning, Kamp, Hold,
+   Spiller, Gemt). Hold is A or B; within a match, the rows keep the order of the opposite numbers. The saved
+   matches are what "Del kampene efter 25-50-25" uses to vary who plays harder and easier matches.
+
    Speed: the players and groups are kept ready in the cache (cleared when either tab is edited, built again
    after a save and by the 5-minute warm-up), and a phone that already has the newest copy only gets "unchanged". */
 const PLAYERS_SHEET = 'Spillere';
@@ -27,6 +31,8 @@ const GROUPS_PASSWORD_PROPERTY = 'GROUPS_PASSWORD';
 const GROUPS_HEADERS = ['Træning', 'Gruppe', 'Spiller', 'Gemt'];
 const SIGNUPS_SHEET = 'Tilmeldte';
 const SIGNUPS_HEADERS = ['Træning', 'Spiller', 'Gemt'];
+const MATCHES_SHEET = 'Kampe';
+const MATCHES_HEADERS = ['Træning', 'Kamp', 'Hold', 'Spiller', 'Gemt'];
 const GROUP_CACHE = 'grp';                 // cache keys grp_meta ("version|pieces") and grp_0, grp_1, …
 
 /* Run once: makes the two tabs (if missing) */
@@ -52,17 +58,32 @@ function setupGroups() {
   return msg;
 }
 
-/* The "Tilmeldte" tab, made if missing */
-function signupsSheet_() {
+/* A tab written by the app, made if missing */
+function appSheet_(name, headers) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let t = ss.getSheetByName(SIGNUPS_SHEET);
+  let t = ss.getSheetByName(name);
   if (!t) {
-    t = ss.insertSheet(SIGNUPS_SHEET);
-    t.getRange(1, 1, 1, SIGNUPS_HEADERS.length).setValues([SIGNUPS_HEADERS]).setFontWeight('bold');
+    t = ss.insertSheet(name);
+    t.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     t.getRange('A:A').setNumberFormat('@');                 // "2026-11-03" stays text, not a date
     t.setFrozenRows(1);
   }
   return t;
+}
+const signupsSheet_ = () => appSheet_(SIGNUPS_SHEET, SIGNUPS_HEADERS);
+
+/* Replaces one training's rows in a tab written by the app (rows: the new rows, each starting with the key),
+   keeping the tab in training order. Returns the time stamp written in the rows. */
+function replaceTrainingRows_(sheet, width, key, rows) {
+  const old = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getDisplayValues() : [];
+  const all = old.filter(r => String(r[0]).trim() !== key).concat(rows);
+  all.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);   // (a stable sort: a training's rows keep their order)
+  if (old.length) sheet.getRange(2, 1, old.length, width).clearContent();
+  if (all.length) {
+    const range = sheet.getRange(2, 1, all.length, width);
+    range.setNumberFormat('@');                             // keep every cell as plain text
+    range.setValues(all);
+  }
 }
 
 /* A level as a number ("2,5" works too); null if the cell has no number */
@@ -116,7 +137,20 @@ function buildGroupData_() {
     });
   }
 
-  const json = JSON.stringify({ players: players, history: history, signups: signups });
+  const matches = {};                                     // { "2026-11-03": { saved, matches: [[[team A], [team B]], …] } }
+  const ms = ss.getSheetByName(MATCHES_SHEET);
+  if (ms && ms.getLastRow() > 1) {
+    ms.getRange(2, 1, ms.getLastRow() - 1, MATCHES_HEADERS.length).getDisplayValues().forEach(r => {
+      const key = String(r[0]).trim(), m = parseInt(r[1], 10), team = String(r[2]).trim().toUpperCase() === 'B' ? 1 : 0;
+      const name = String(r[3]).trim();
+      if (!key || !(m >= 1) || !name) return;
+      const h = matches[key] = matches[key] || { saved: r[4], matches: [] };
+      while (h.matches.length < m) h.matches.push([[], []]);
+      h.matches[m - 1][team].push(name);
+    });
+  }
+
+  const json = JSON.stringify({ players: players, history: history, signups: signups, matches: matches });
   const version = Utilities.base64EncodeWebSafe(
     Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, json, Utilities.Charset.UTF_8)).slice(0, 12);
   const put = {};
@@ -154,7 +188,7 @@ function warmGroupCache() {
 
 /* The players, every saved training's groups and the saved signups:
    { version, players: [{ name, lo, hi }], history: { "2026-11-03": { saved, groups: [[names]] } },
-     signups: { "2026-11-03": { saved, names: [names] } } },
+     signups: { "2026-11-03": { saved, names: [names] } }, matches: { "2026-11-03": { saved, matches: [[[A], [B]]] } } },
    or { unchanged: true, version } when the phone already has this version.
    (a missing level is sent as null; the app treats it as "fits everywhere") */
 function getGroupData(token, version) {
@@ -213,22 +247,37 @@ function saveSignups(token, key, names) {
   lock.waitLock(10000);
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const ts = signupsSheet_();
-    const width = SIGNUPS_HEADERS.length;
-    const old = ts.getLastRow() > 1 ? ts.getRange(2, 1, ts.getLastRow() - 1, width).getDisplayValues() : [];
     const saved = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm');
-    const rows = old.filter(r => String(r[0]).trim() !== key);
-    names.forEach(name => {
+    const rows = names.map(name => String(name).trim()).filter(Boolean).map(name => [key, name, saved]);
+    replaceTrainingRows_(signupsSheet_(), SIGNUPS_HEADERS.length, key, rows);
+    clearGroupCache();
+    buildGroupData_();
+    return { ok: true, saved: saved };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Saves one training's matches ([[[team A names], [team B names]], …]), replacing what was saved for it before.
+   [] removes them. */
+function saveMatches(token, key, matches) {
+  requireToken_(token);
+  key = String(key || '').trim();
+  if (!key || key.length > 40) throw new Error('No training given.');
+  if (!Array.isArray(matches) || matches.some(m => !Array.isArray(m) || m.length !== 2 || !Array.isArray(m[0]) || !Array.isArray(m[1]))) {
+    throw new Error('The matches could not be read.');
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const saved = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm');
+    const rows = [];
+    matches.forEach((m, i) => m.forEach((team, t) => team.forEach(name => {
       name = String(name).trim();
-      if (name) rows.push([key, name, saved]);
-    });
-    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);   // by training, so the tab is easy to read
-    if (old.length) ts.getRange(2, 1, old.length, width).clearContent();
-    if (rows.length) {
-      const range = ts.getRange(2, 1, rows.length, width);
-      range.setNumberFormat('@');
-      range.setValues(rows);
-    }
+      if (name) rows.push([key, String(i + 1), t ? 'B' : 'A', name, saved]);
+    })));
+    replaceTrainingRows_(appSheet_(MATCHES_SHEET, MATCHES_HEADERS), MATCHES_HEADERS.length, key, rows);
     clearGroupCache();
     buildGroupData_();
     return { ok: true, saved: saved };

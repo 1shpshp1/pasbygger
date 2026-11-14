@@ -609,6 +609,7 @@
     .grp .ov-key span:first-child { margin-left: 0; }
 
     /* "Kampe til sidst" */
+    .grp-arrow { margin-right: 4px; color: var(--red); font-weight: bold; }
     .grp-matches { margin-top: 22px; }
     .grp-matches h3 { margin: 0 0 4px; }
     .grp-matches .grp-card { margin-top: 12px; }
@@ -705,7 +706,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 11. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 14. nov. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2755,7 +2756,13 @@ function makeMatches(groups, level, seed) {
     let at = 0;
     poolSizes(line.length, (ranked.length + 1) / 2).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
   }
+  return poolsToMatches(pools, lv, home, rand, known);
+}
+
+/* Each match's players into two teams (player for player, see pairedSplit / unevenSplit) */
+function poolsToMatches(pools, lv, home, rand, known) {
   const top = known.length ? Math.max.apply(null, known) : 1;           // experience points: top + 1 − level
+  const avg = g => g.reduce((x, p) => x + lv(p), 0) / g.length;
   return pools.map(function (players) {
     const teams = players.length % 2 && players.length <= 15 ? unevenSplit(players, lv, home, rand, p => top + 1 - lv(p))
                                                              : pairedSplit(players, lv, home, rand);
@@ -2763,6 +2770,110 @@ function makeMatches(groups, level, seed) {
     players.forEach(p => { if (from.indexOf(home.get(p)) === -1) from.push(home.get(p)); });
     return teams && { groups: from, teams: teams, avg: teams.map(avg) };
   }).filter(Boolean);
+}
+
+/* ---- "Kampe" by 25-50-25 ----
+   Instead of the more experienced against each other and the less experienced against each other, the players
+   are placed in the matches so that, over time, each one plays about 25 % of the matches in a harder match,
+   50 % at their own level and 25 % in an easier one. A match is harder for a player when the other players'
+   average level is at least MATCH_STEP better than the player's own (a lower number), easier when it is at
+   least MATCH_STEP weaker. Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own
+   level. The matches may differ in average level; each match is then split into two teams player for player.
+   The number of matches is the same as for "Niveau": half the groups (rounded up). */
+const MATCH_STEP = 0.5;
+const MATCH_MAX_GAP = 1.5;
+const MATCH_GOAL = [0.25, 0.5, 0.25];                  // harder, own level, easier
+const MATCH_WEIGHTS = { mix: 1000, gap: 1e5 };
+
+/* 0 harder, 1 own level, 2 easier */
+function matchCategory(own, others) {
+  if (!isFinite(own) || !isFinite(others)) return 1;
+  return others <= own - MATCH_STEP ? 0 : others >= own + MATCH_STEP ? 2 : 1;
+}
+
+/* What each player has had in earlier matches: { name: [harder, own level, easier, matches] }, from saved
+   trainings (newest first; each a list of matches, each [[team A names], [team B names]]), the last 12 */
+function matchMix(earlier, level) {
+  const mix = {};
+  earlier.slice(0, GROUP_HISTORY).forEach(ms => ms.forEach(function (teams) {
+    const names = teams[0].concat(teams[1]);
+    const lv = names.map(level);
+    names.forEach(function (name, i) {
+      if (!isFinite(lv[i])) return;
+      const others = lv.filter((v, j) => j !== i && isFinite(v));
+      if (!others.length) return;
+      const m = mix[name] = mix[name] || [0, 0, 0, 0];
+      m[matchCategory(lv[i], others.reduce((x, y) => x + y, 0) / others.length)]++;
+      m[3]++;
+    });
+  }));
+  return mix;
+}
+
+/* mix: matchMix(...). Returns what makeMatches returns, plus cat: { name: 0 | 1 | 2 } for this time */
+function makeMixMatches(groups, level, mix, seed) {
+  const used = groups.filter(g => g.length);
+  if (used.length < 2) return makeMatches(groups, level, seed);  // one match: nothing to place players between
+  const rand = seededRandom(seed || 1);
+  const all = [].concat.apply([], used);
+  const known = all.map(level).filter(v => v != null && isFinite(v));
+  const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
+  const lv = p => { const v = level(p); return v != null && isFinite(v) ? v : mean; };
+  const home = new Map();
+  groups.forEach((g, i) => g.forEach(p => home.set(p, i + 1)));
+  const own = all.map(p => { const v = level(p); return v != null && isFinite(v) ? v : NaN; });
+  const had = all.map(p => mix[p.name] || [0, 0, 0, 0]);
+  const m = used.length % 2 ? (used.length + 1) / 2 : used.length / 2, n = all.length;
+  const sizes = poolSizes(n, m);
+
+  let a;
+  const sum = new Float64Array(m), cnt = new Float64Array(m);
+  function cost() {
+    sum.fill(0); cnt.fill(0);
+    for (let i = 0; i < n; i++) if (own[i] === own[i]) { sum[a[i]] += own[i]; cnt[a[i]]++; }
+    let c = 0;
+    for (let i = 0; i < n; i++) {
+      if (own[i] !== own[i] || cnt[a[i]] < 2) continue;
+      const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), cat = matchCategory(own[i], others), h = had[i];
+      for (let r = 0; r < 3; r++) { const d = (h[r] + (r === cat ? 1 : 0)) / (h[3] + 1) - MATCH_GOAL[r]; c += MATCH_WEIGHTS.mix * d * d; }
+      const over = Math.abs(others - own[i]) - MATCH_MAX_GAP;
+      if (over > 0) c += MATCH_WEIGHTS.gap * over * over;
+    }
+    return c;
+  }
+  // Start sorted by level (the most experienced in match 1), then swap players between matches while it helps;
+  // a few starts, the best kept (equally good ones at random)
+  const sorted = byLevel(all, lv, rand).map(p => all.indexOf(p));
+  let best = null, bestCost = Infinity, ties = 0;
+  for (let start = 0; start < 3; start++) {
+    a = new Int32Array(n);
+    let at = 0;
+    sizes.forEach((s, mi) => { for (let j = 0; j < s; j++) a[sorted[at++]] = mi; });
+    let now = cost(), temp = start ? 300 : 0;
+    const steps = 2000 + 200 * n, cool = Math.pow(0.01 / 300, 1 / steps);
+    for (let s = 0; s < steps; s++, temp *= cool) {
+      const i = Math.floor(rand() * n), j = Math.floor(rand() * n);
+      if (a[i] === a[j]) continue;
+      const x = a[i]; a[i] = a[j]; a[j] = x;
+      const next = cost();
+      if (next <= now || (temp > 0 && rand() < Math.exp((now - next) / temp))) now = next;
+      else { a[j] = a[i]; a[i] = x; }
+    }
+    if (now < bestCost - 1e-9) { bestCost = now; best = a.slice(); ties = 1; }
+    else if (Math.abs(now - bestCost) <= 1e-9 && rand() < 1 / ++ties) best = a.slice();
+  }
+  a = best;
+  cost();                                                // (fills sum and cnt for the final placement)
+  const cat = {};
+  all.forEach(function (p, i) {
+    if (own[i] === own[i] && cnt[a[i]] > 1) cat[p.name] = matchCategory(own[i], (sum[a[i]] - own[i]) / (cnt[a[i]] - 1));
+  });
+  const pools = Array.from({ length: m }, (_, mi) => all.filter((p, i) => a[i] === mi))
+    .map(ps => ({ ps: ps, avg: ps.reduce((x, p) => x + lv(p), 0) / ps.length }))
+    .sort((x, y) => x.avg - y.avg).map(o => o.ps);
+  const out = poolsToMatches(pools, lv, home, rand, known);
+  out.cat = cat;
+  return out;
 }
 
 /* One team has a player fewer (odd number of players): the pairs may be a little less close if that makes
@@ -2900,12 +3011,16 @@ function canGroup() { return isAuthed(); }
    Several callers at once share one request. */
 function fetchGroupData() {
   if (GRP_FETCH) return GRP_FETCH;
+  let asked = null;                                     // the copy the server is asked about
   GRP_FETCH = readStoredGroups().then(function () {     // the stored copy's version: then "unchanged" is enough
-    return libCall("getGroupData", [AUTH.token, GRP_CACHE ? GRP_CACHE.version : ""]);
+    asked = GRP_CACHE;
+    return libCall("getGroupData", [AUTH.token, asked ? asked.version : ""]);
   }).then(function (res) {
     GRP_FETCH = null;
-    if (!res.unchanged || !GRP_CACHE) {
-      GRP_CACHE = { version: res.version, data: applyQueue({ players: res.players, history: res.history, signups: res.signups || {} }) };
+    // "unchanged" refers to the copy that was asked about, which a login running out meanwhile may have cleared
+    if (res.unchanged && asked) { if (!GRP_CACHE || GRP_CACHE.version === asked.version) GRP_CACHE = asked; }
+    else if (!res.unchanged || !GRP_CACHE) {
+      GRP_CACHE = { version: res.version, data: applyQueue({ players: res.players, history: res.history, signups: res.signups || {}, matches: res.matches || {} }) };
       storeGroups();
     }
     GRP_CACHE.at = Date.now();
@@ -2941,12 +3056,12 @@ const GRP_SETTINGS_KEY = "oevGrpSettings";      // only the settings (number of 
 function grpSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(GRP_SETTINGS_KEY) || "null"); } catch (e) { /* ignore */ }
-  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1 }, s || {});
+  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1, matchMode: "level" }, s || {});
 }
 function saveGrpSettings() {
   try {
     localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
-                                                      rule: GRP.rule, maxDiff: GRP.maxDiff }));
+                                                      rule: GRP.rule, maxDiff: GRP.maxDiff, matchMode: GRP.matchMode }));
   } catch (e) { /* ignore */ }
 }
 
@@ -3081,6 +3196,8 @@ function renderOverview() {
   const skill = {};
   data.players.forEach(p => { if (p.lo != null) skill[p.name] = p.lo; });
   const mix = skillMix(sessions, skill);                             // over the last 12, as the groups use it
+  const mKeys = Object.keys(data.matches || {}).sort().reverse();
+  const mMix = matchMix(mKeys.map(k => data.matches[k].matches), name => skill[name] == null ? NaN : skill[name]);
   const stats = data.players.map(function (p) {
     let times = 0, last = "";
     const mates = {};
@@ -3091,7 +3208,7 @@ function renderOverview() {
       g.forEach(o => { if (o !== p.name) mates[o] = (mates[o] || 0) + 1; });
     });
     const top = Object.keys(mates).sort((a, b) => mates[b] - mates[a] || a.localeCompare(b, "da")).slice(0, 3);
-    return { p: p, times: times, last: last, mix: mix[p.name], top: top.map(n => n + " (" + mates[n] + ")") };
+    return { p: p, times: times, last: last, mix: mix[p.name], mmix: mMix[p.name], top: top.map(n => n + " (" + mates[n] + ")") };
   });
   stats.sort(OV_SORT === "times" ? (a, b) => b.times - a.times || a.p.name.localeCompare(b.p.name, "da")
                                  : (a, b) => a.p.name.localeCompare(b.p.name, "da"));
@@ -3106,11 +3223,12 @@ function renderOverview() {
         `<span class="ov-more" style="width:${a}%"></span><span class="ov-same" style="width:${b}%"></span><span class="ov-less" style="width:${c}%"></span></div>` +
         `<p class="ov-line">${a} % med mere øvede · ${b} % samme niveau · ${c} % med mindre øvede</p>`;
     } else if (s.times && s.p.lo == null) mixHtml = `<p class="ov-line">Har intet niveau i fanen Spillere.</p>`;
+    const mm = s.mmix && s.mmix[3] ? `<p class="ov-line">Kampe (${s.mmix[3]}): ${pct(s.mmix, 0)} % sværere · ${pct(s.mmix, 1)} % eget niveau · ${pct(s.mmix, 2)} % lettere</p>` : "";
     return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
-      mixHtml + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
+      mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet er over de seneste 12, og målet er 25 / 50 / 25.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25.</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
@@ -3148,7 +3266,8 @@ function renewWhileWorking() {
 }
 
 function useGroupData(data) {
-  Object.assign(GRP, { data: data, byName: {}, present: new Set(), groups: null, saved: "", fromSignups: "" });
+  Object.assign(GRP, { data: data, byName: {}, present: new Set(), groups: null, saved: "", fromSignups: "",
+                       matches: null, matchesSaved: "", matchesDirty: false });
   data.players.forEach(function (p) {
     GRP.byName[p.name] = { name: p.name, lo: p.lo == null ? -Infinity : p.lo, hi: p.hi == null ? Infinity : p.hi };
   });
@@ -3157,6 +3276,12 @@ function useGroupData(data) {
     GRP.groups = mine.groups.map(g => g.map(grpPlayer));
     GRP.groups.forEach(g => g.forEach(p => GRP.present.add(p.name)));
     GRP.saved = mine.saved;
+    const sm = (data.matches || {})[GRP.key];
+    if (sm && sm.matches.every(m => m.every(t => t.every(n => GRP.present.has(n))))) {   // the saved matches, if they fit the groups
+      GRP.matches = sm.matches.map(teams => ({ groups: [], teams: teams.map(t => t.map(grpPlayer)) }));
+      GRP.matchesFor = groupsSignature();
+      GRP.matchesSaved = sm.saved;
+    }
   } else {
     const su = (data.signups || {})[GRP.key];
     if (su) {                                           // no groups yet, but the signups were saved: start from those
@@ -3288,42 +3413,88 @@ function evenText() {
     : `Forskel mellem holdenes gennemsnitlige niveau: ${gap.toFixed(2).replace(".", ",")}.`;
 }
 
-/* ---- "Kampe til sidst": the groups paired by level, each pair split into two equally strong teams ----
-   Not saved: the matches are made from the groups on the screen, and disappear if those groups change. */
+/* ---- "Kampe til sidst": the matches at the end of a training ----
+   Two ways (Del kampene efter): "Niveau" – the more experienced groups play each other, and so do the less
+   experienced (makeMatches); "25-50-25" – players are placed so that over time each plays about 25 % harder,
+   50 % own level and 25 % easier matches (makeMixMatches, from the saved matches). Either way each match is
+   split into two equally strong teams player for player. The matches are made from the groups on the screen
+   and disappear if those groups change; "Gem kampe" saves them (tab Kampe), which 25-50-25 builds on. */
 const groupsSignature = () => JSON.stringify((GRP.groups || []).map(g => g.map(p => p.name)));
 const fraOf = p => isFinite(p.lo) ? p.lo : null;
 
+const byMix = () => GRP.matchMode === "mix";
+
+/* Earlier saved matches (before this training), newest first */
+function earlierMatches() {
+  const m = GRP.data.matches || {};
+  return Object.keys(m).filter(k => k < GRP.key).sort().reverse().map(k => m[k].matches);
+}
+const levelOfName = name => { const p = GRP.byName[name]; return p && isFinite(p.lo) ? p.lo : NaN; };
+
 function makeMatchesNow() {
-  GRP.matches = makeMatches(GRP.groups, fraOf, hashText(GRP.key + "|kampe|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1)));
+  const seed = hashText(GRP.key + "|kampe|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1));
+  GRP.matches = byMix() ? makeMixMatches(GRP.groups, fraOf, matchMix(earlierMatches(), levelOfName), seed)
+                        : makeMatches(GRP.groups, fraOf, seed);
   GRP.matchesFor = groupsSignature();
   GRP.matchSel = null;
+  GRP.matchesDirty = true;
   renderGroups();
+}
+
+/* 25-50-25: is this match harder (0), at the player's level (1) or easier (2) for them? */
+function catInMatch(p, m) {
+  if (!isFinite(p.lo)) return 1;
+  const others = m.teams[0].concat(m.teams[1]).filter(q => q !== p && isFinite(q.lo)).map(q => q.lo);
+  return others.length ? matchCategory(p.lo, others.reduce((x, y) => x + y, 0) / others.length) : 1;
 }
 
 function matchesHtml() {
   if (!GRP.groups || GRP.groups.filter(g => g.length).length < 1) return "";
-  if (GRP.matches && GRP.matchesFor !== groupsSignature()) GRP.matches = null;   // the groups have changed since
+  if (GRP.matches && GRP.matchesFor !== groupsSignature()) { GRP.matches = null; GRP.matchesDirty = false; }   // the groups have changed since
   const ms = GRP.matches || [];
-  const kind = i => ms.length < 2 ? "" : i === 0 ? "mere øvede" : i === ms.length - 1 ? "mindre øvede" : "mellem";
+  const matchAvg = m => groupAverage(m.teams[0].concat(m.teams[1]));
+  const kind = i => byMix() || !ms[i].groups.length ? (matchAvg(ms[i]) == null ? "" : "gns. niveau " + matchAvg(ms[i]).toFixed(2).replace(".", ","))
+    : ms.length < 2 ? "" : i === 0 ? "mere øvede" : i === ms.length - 1 ? "mindre øvede" : "mellem";
   const avgText = team => { const a = groupAverage(team); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); };
   // each match as rows of opposite numbers: team A's player i faces team B's player i
+  const arrow = (p, mi) => {
+    if (!byMix()) return "";
+    const c = catInMatch(p, ms[mi]);
+    return c === 0 ? `<span class="grp-arrow" title="En sværere kamp end eget niveau">↑</span>`
+         : c === 2 ? `<span class="grp-arrow" title="En lettere kamp end eget niveau">↓</span>` : "";
+  };
   const chip = (p, mi, ti, pi) => p ? `<button type="button" class="grp-p" data-mp="${mi}:${ti}:${pi}" aria-pressed="${GRP.matchSel === mi + ":" + ti + ":" + pi}">` +
-    `<span class="grp-pname">${esc(p.name)}</span> <span class="grp-band">${bandText(p.lo, p.lo)}</span></button>` : `<span class="grp-none-p">ingen modspiller</span>`;
+    `<span class="grp-pname">${arrow(p, mi)}${esc(p.name)}</span> <span class="grp-band">${bandText(p.lo, p.lo)}</span></button>` : `<span class="grp-none-p">ingen modspiller</span>`;
   const groupList = g => g.length === 1 ? "gruppe " + g[0] : "gruppe " + g.slice(0, -1).join(", ") + " og " + g[g.length - 1];
   const cards = ms.map(function (m, mi) {
     const [a, b] = m.teams, rows = Math.max(a.length, b.length);
     const head = ti => `<div class="grp-teamhead">Hold ${String.fromCharCode(65 + 2 * mi + ti)}<small>${m.teams[ti].length} spillere · ${avgText(m.teams[ti])}</small></div>`;
     let grid = head(0) + `<span></span>` + head(1);
     for (let i = 0; i < rows; i++) grid += chip(a[i], mi, 0, i) + `<span class="grp-vs" aria-hidden="true">–</span>` + chip(b[i], mi, 1, i);
-    return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${kind(mi) ? kind(mi) + " · " : ""}${groupList(m.groups)}</small></div>
+    const from = byMix() || !m.groups.length ? "" : groupList(m.groups);
+    return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${[kind(mi), from].filter(Boolean).join(" · ")}</small></div>
       <div class="grp-pairs">${grid}</div></div>`;
   }).join("");
+  const status = GRP.matchesDirty ? "Ikke gemt" : waiting("matches", GRP.key) ? "Gemt på telefonen · sendes, når der er forbindelse"
+    : GRP.matchesSaved ? "Kampe gemt " + esc(GRP.matchesSaved) : "";
   return `<section class="grp-sec grp-matches"><h3>Kampe til sidst</h3>
-    <p class="grp-hint grp-explain">De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe. I hver kamp får hver spiller en modspiller på samme niveau (eller så tæt på som muligt) på det andet hold, og derefter gøres holdene så lige som muligt.</p>
+    <div class="grp-row" style="margin-top:0">
+      <span class="grp-hint grp-label">Del kampene efter</span>
+      <div class="grp-mode" role="group" aria-label="Del kampene efter">
+        <button type="button" data-mmode="level" aria-pressed="${!byMix()}">Niveau</button>
+        <button type="button" data-mmode="mix" aria-pressed="${byMix()}">25-50-25</button>
+      </div>
+    </div>
+    <p class="grp-hint grp-explain">${byMix()
+      ? "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d."
+      : "De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe."}
+      I hver kamp får hver spiller en modspiller på samme niveau (eller så tæt på som muligt) på det andet hold, og derefter gøres holdene så lige som muligt.</p>
     <div class="grp-row"><button type="button" class="login-go" data-act="matches">${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
     ${cards}
-    ${ms.length ? `<p class="grp-legend">Spillerne på samme linje er hinandens modspillere.${ms.some(m => m.teams[0].length !== m.teams[1].length)
-      ? " Når et hold har én spiller færre, får det lidt mere øvede spillere, så holdene samlet er lige stærke." : ""} Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>` : ""}
+    ${ms.length ? `<p class="grp-legend">Spillerne på samme linje er hinandens modspillere.${byMix() ? " ↑ = en sværere kamp end eget niveau, ↓ = en lettere." : ""}${ms.some(m => m.teams[0].length !== m.teams[1].length)
+      ? " Når et hold har én spiller færre, får det lidt mere øvede spillere, så holdene samlet er lige stærke." : ""} Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>
+      <div class="grp-save"><button type="button" class="login-go" data-act="savematches"${GRP.matchesDirty ? "" : " disabled"}>Gem kampe</button>
+        <span class="grp-hint" role="status">${status}</span></div>` : ""}
   </section>`;
 }
 
@@ -3336,6 +3507,7 @@ function matchTap(code) {
     const teams = GRP.matches[m2].teams, x = teams[t1][p1];
     teams[t1][p1] = teams[t2][p2]; teams[t2][p2] = x;
     GRP.matchSel = null;
+    GRP.matchesDirty = true;
   } else GRP.matchSel = code;
   renderGroups();
 }
@@ -3519,6 +3691,10 @@ function grpClick(e) {
     saveGroupsNow(b);
   } else if (act === "signups") {
     saveSignupsNow(b);
+  } else if (b.dataset.mmode) {
+    GRP.matchMode = b.dataset.mmode; saveGrpSettings(); renderGroups();
+  } else if (act === "savematches") {
+    saveMatchesNow(b);
   } else if (act === "matches") {
     makeMatchesNow();
   } else if (b.dataset.mp != null) {
@@ -3549,6 +3725,7 @@ function grpClick(e) {
    waiting. Only the newest save per training and kind is kept. Until it is sent, the phone's copy of the groups
    already holds it, so reopening Grupper shows it and the next groups build on it. */
 const QUEUE_KEY = "oevGrpQueue";
+const SAVE_ACTIONS = { groups: "saveGroups", signups: "saveSignups", matches: "saveMatches" };
 let QUEUE_SENDING = false, QUEUE_TOLD = false;
 
 function readQueue() {
@@ -3570,6 +3747,7 @@ function noConnection(err) {
 function applyQueue(data) {
   readQueue().forEach(function (x) {
     if (x.kind === "groups") data.history[x.key] = { saved: "", groups: x.names };
+    else if (x.kind === "matches") (data.matches = data.matches || {})[x.key] = { saved: "", matches: x.names };
     else (data.signups = data.signups || {})[x.key] = { saved: "", names: x.names };
   });
   return data;
@@ -3581,6 +3759,7 @@ function keepForLater(want, kind, names) {
   writeQueue(q);
   applyQueue(want.data);
   if (kind === "groups") { want.groups = names.map(g => g.map(grpPlayer)); want.saved = ""; want.dirty = false; }
+  if (kind === "matches") { want.matchesSaved = ""; want.matchesDirty = false; }
   want.msg = ""; want.bad = false;
   if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
   if (GRP === want) renderGroups();
@@ -3596,15 +3775,17 @@ function sendQueue() {
   }
   QUEUE_SENDING = true;
   const x = q[0];
-  libCall(x.kind === "groups" ? "saveGroups" : "saveSignups", [AUTH.token, x.key, x.names]).then(function (res) {
+  libCall(SAVE_ACTIONS[x.kind], [AUTH.token, x.key, x.names]).then(function (res) {
     writeQueue(readQueue().filter(y => !(y.kind === x.kind && y.key === x.key && y.at === x.at)));
     if (GRP_CACHE) {
       const d = GRP_CACHE.data;
       if (x.kind === "groups") d.history[x.key] = { saved: res.saved, groups: x.names };
+      else if (x.kind === "matches") (d.matches = d.matches || {})[x.key] = { saved: res.saved, matches: x.names };
       else (d.signups = d.signups || {})[x.key] = { saved: res.saved, names: x.names };
       storeGroups();
     }
     if (GRP && GRP.key === x.key && x.kind === "groups" && !GRP.dirty) GRP.saved = res.saved;
+    if (GRP && GRP.key === x.key && x.kind === "matches" && !GRP.matchesDirty) GRP.matchesSaved = res.saved;
     if (GRP && GRP.data) renderGroups();
     QUEUE_SENDING = false;
     sendQueue();                                         // the next one, if any
@@ -3644,15 +3825,17 @@ function saveGroupsNow(btn) {
 }
 
 /* The login has run out: the groups stay on the screen, the code is asked for, and then they are saved */
-function askCodeThenSave(want, signups) {
+function askCodeThenSave(want, kind) {
   if (AUTH.token && !isAuthed()) { AUTH.token = ""; AUTH.until = 0; saveAuth(); }   // the old login is no use to the server
   requireLogin(function () {
     if (GRP !== want) return;
-    if (signups) saveSignupsNow(GRP.box.querySelector('[data-act="signups"]'));
+    if (kind === "signups") saveSignupsNow(GRP.box.querySelector('[data-act="signups"]'));
+    else if (kind === "matches") saveMatchesNow(GRP.box.querySelector('[data-act="savematches"]'));
     else saveGroupsNow(GRP.box.querySelector('[data-act="save"]'));
   }, function () {
     if (GRP !== want) return;
-    GRP.msg = "Ikke gemt endnu: log ind med koden, og tryk på \u201c" + (signups ? "Gem tilmeldte" : "Gem grupper") + "\u201d igen.";
+    GRP.msg = "Ikke gemt endnu: log ind med koden, og tryk på \u201c" +
+      ({ signups: "Gem tilmeldte", matches: "Gem kampe" }[kind] || "Gem grupper") + "\u201d igen.";
     GRP.bad = true;
     renderGroups();
   });
@@ -3663,7 +3846,7 @@ function saveSignupsNow(btn) {
   const want = GRP;
   const names = GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => p.name);
   if (!navigator.onLine) { keepForLater(want, "signups", names); return; }
-  if (!isAuthed()) { askCodeThenSave(want, true); return; }
+  if (!isAuthed()) { askCodeThenSave(want, "signups"); return; }
   btn.disabled = true; btn.textContent = "Gemmer…";
   libCall("saveSignups", [AUTH.token, GRP.key, names]).then(function (res) {
     writeQueue(readQueue().filter(x => !(x.kind === "signups" && x.key === want.key)));
@@ -3675,9 +3858,31 @@ function saveSignupsNow(btn) {
   }, function (err) {
     if (GRP !== want) return;
     btn.disabled = false; btn.textContent = "Gem tilmeldte";
-    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, true);
+    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, "signups");
     else if (noConnection(err)) keepForLater(want, "signups", names);
     else { GRP.msg = "Kunne ikke gemme de tilmeldte: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
+  });
+}
+
+/* Saves the matches on the screen (tab Kampe): 25-50-25 builds on the saved matches */
+function saveMatchesNow(btn) {
+  const want = GRP;
+  const names = GRP.matches.map(m => m.teams.map(t => t.map(p => p.name)));
+  if (!navigator.onLine) { keepForLater(want, "matches", names); return; }
+  if (!isAuthed()) { askCodeThenSave(want, "matches"); return; }
+  btn.disabled = true; btn.textContent = "Gemmer…";
+  libCall("saveMatches", [AUTH.token, GRP.key, names]).then(function (res) {
+    writeQueue(readQueue().filter(x => !(x.kind === "matches" && x.key === want.key)));
+    (want.data.matches = want.data.matches || {})[want.key] = { saved: res.saved, matches: names };
+    want.matchesSaved = res.saved; want.matchesDirty = false; want.msg = ""; want.bad = false;
+    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
+    if (GRP === want) renderGroups();
+  }, function (err) {
+    if (GRP !== want) return;
+    btn.disabled = false; btn.textContent = "Gem kampe";
+    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, "matches");
+    else if (noConnection(err)) keepForLater(want, "matches", names);
+    else { GRP.msg = "Kunne ikke gemme kampene: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
   });
 }
 
