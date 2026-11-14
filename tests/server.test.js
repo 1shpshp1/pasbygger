@@ -61,6 +61,22 @@ test('saveSignups saves who signed up, separately from the groups history', () =
   assert.deepEqual(srv.call('getGroupData', t).result.signups, {});
 });
 
+test('saveMatches keeps teams and the order of opposite numbers; saving again replaces', () => {
+  const srv = testServer(), t = login(srv);
+  const [a, b] = SESSION_DATES;
+  assert.equal(srv.call('saveMatches', 'nope', a, []).error, 'LOGIN');
+  srv.call('saveMatches', t, a, [[['Alma', 'Carl'], ['Bo', 'Noah']], [['Ida', 'Jonas'], ['Karla', 'Malou']]]);
+  srv.call('saveMatches', t, b, [[['Dina'], ['Emil']]]);
+  srv.call('saveMatches', t, a, [[['Carl', 'Alma'], ['Noah', 'Bo']], [['Ida', 'Jonas'], ['Karla', 'Malou']]]);
+  const m = srv.call('getGroupData', t).result.matches;
+  assert.deepEqual(m[a].matches, [[['Carl', 'Alma'], ['Noah', 'Bo']], [['Ida', 'Jonas'], ['Karla', 'Malou']]]);
+  assert.deepEqual(m[b].matches, [[['Dina'], ['Emil']]]);
+  assert.deepEqual(rows(srv, 'Kampe').slice(0, 2).map(r => r.slice(0, 4)), [[a, '1', 'A', 'Carl'], [a, '1', 'A', 'Alma']]);
+  assert.equal(srv.call('saveMatches', t, a, [['x']]).error, 'The matches could not be read.');
+  srv.call('saveMatches', t, b, []);
+  assert.deepEqual(Object.keys(srv.call('getGroupData', t).result.matches), [a]);
+});
+
 test('an edit in the Spillere tab reaches the app (the cache is cleared)', () => {
   const srv = testServer(), t = login(srv);
   assert.equal(srv.call('getGroupData', t).result.players.length, 16);

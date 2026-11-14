@@ -114,3 +114,35 @@ test('Pool sizes are even where possible', () => {
   assert.deepEqual(Array.from(A.poolSizes(15, 2)), [8, 7]);
   assert.deepEqual(Array.from(A.poolSizes(16, 2)), [8, 8]);
 });
+
+test('Kampe 25-50-25: middle levels move towards the aim over time; nobody is far from their match', () => {
+  const P = squad(), level = name => (P.find(p => p.name === name) || {}).lo;
+  const saved = [];
+  for (let s = 0; s < 16; s++) {
+    const present = P.filter((_, i) => (i * 5 + s) % 7);
+    const groups = A.sortedGroups(present, 4, p => p.lo, s + 1);
+    const ms = A.makeMixMatches(groups, p => p.lo, A.matchMix(saved, level), s + 7);
+    assert.equal(ms.reduce((n, m) => n + m.teams[0].length + m.teams[1].length, 0), present.length, 'everyone plays');
+    ms.forEach(m => {
+      assert.ok(Math.abs(m.teams[0].length - m.teams[1].length) <= 1);
+      const ps = m.teams[0].concat(m.teams[1]);
+      ps.forEach(p => {
+        const o = ps.filter(q => q !== p).map(q => q.lo), avg = o.reduce((x, y) => x + y, 0) / o.length;
+        assert.ok(Math.abs(avg - p.lo) <= 1.5 + 1e-9, `${p.name} (${p.lo}) in a match averaging ${avg.toFixed(2)}`);
+      });
+    });
+    saved.unshift(Array.from(ms, m => m.teams.map(t => t.map(p => p.name))));
+  }
+  const mix = A.matchMix(saved, level);
+  const fra2 = P.filter(p => p.lo === 2).map(p => mix[p.name]).filter(Boolean);
+  const share = r => fra2.reduce((x, m) => x + m[r] / m[3], 0) / fra2.length;
+  assert.ok(share(0) >= 0.15 && share(2) >= 0.15, `level 2 gets harder (${share(0).toFixed(2)}) and easier (${share(2).toFixed(2)}) matches`);
+  assert.ok(share(1) >= 0.3, `and mostly own level (${share(1).toFixed(2)})`);
+});
+
+test('Kampe 25-50-25: what counts as harder, own level and easier', () => {
+  assert.equal(A.matchCategory(3, 2.5), 0);      // the others are half a level more experienced: harder
+  assert.equal(A.matchCategory(3, 2.7), 1);
+  assert.equal(A.matchCategory(3, 3.5), 2);      // half a level less experienced: easier
+  assert.equal(A.matchCategory(NaN, 2), 1);      // no level: counts as own level
+});
