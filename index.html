@@ -724,7 +724,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (9)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (10)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2609,6 +2609,13 @@ function groupLevel(players) {
    teammates count as shares (e.g. 1 better and 2 the same of 3 = 0.33 and 0.67), so a big group doesn't weigh
    more. skill: { name: number } – a lower number is more skilled (Fra, with 1 as the best level). */
 const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50 % the same, 25 % weaker
+/* A teammate compared with a player for the 25/50/25 mix: 0 more experienced, 1 the same level, 2 less experienced.
+   The levels can be averages (e.g. 2,17 from several coaches' assessments), so a teammate less than half a level
+   from the player counts as the same level (as in the matches, MATCH_STEP): from 2,17, a 2,6 is the same level,
+   a 2,67 is less experienced and a 1,67 more experienced. */
+const LEVEL_SAME = 0.5;
+const mateCategory = (me, other) => other <= me - LEVEL_SAME + 1e-9 ? 0 : other >= me + LEVEL_SAME - 1e-9 ? 2 : 1;
+
 function skillMix(earlier, skill) {
   const mix = {};
   earlier.slice(0, GROUP_HISTORY).forEach(groups => groups.forEach(function (g) {
@@ -2618,7 +2625,7 @@ function skillMix(earlier, skill) {
       const others = g.filter(o => o !== name && isFinite(skill[o]));
       if (!others.length) return;
       const m = mix[name] = mix[name] || [0, 0, 0, 0];
-      others.forEach(o => { m[skill[o] < me ? 0 : skill[o] > me ? 2 : 1] += 1 / others.length; });
+      others.forEach(o => { m[mateCategory(me, skill[o])] += 1 / others.length; });
       m[3]++;
     });
   }));
@@ -2738,7 +2745,7 @@ function makeGroups(opts) {
       for (let j = i + 1; j < n; j++) if (a[i] === a[j]) {
         c += pair[i][j];
         if (useMix && skill[i] === skill[i] && skill[j] === skill[j]) {   // (x === x: not NaN)
-          const r = skill[j] < skill[i] ? 0 : skill[j] > skill[i] ? 2 : 1;
+          const r = mateCategory(skill[i], skill[j]);
           cnt[r][i]++; cnt[2 - r][j]++;
         }
       }
@@ -3447,7 +3454,8 @@ function keyLabel(key) {
 /* ---- Spilleroversigt: per player, from the saved groups ----
    Attendance: in how many of the saved trainings (and groups made in the tab) the player was in a group.
    Level mix: over the last 12 of those, the share of teammates who were more experienced, at the same level
-   and less experienced (by Fra, like the 25/50/25 ambition). Most frequent teammates: over all of them. */
+   and less experienced (by Fra, less than half a level apart counting as the same level, like the 25/50/25
+   ambition: mateCategory). Most frequent teammates: over all of them. */
 let OV_SORT = "name";
 
 function openPlayerOverview() {
@@ -3509,7 +3517,7 @@ function renderOverview() {
       mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. I niveau-mixet tæller en medspiller under et halvt niveau fra spilleren som samme niveau (fra 2,17 er 2,6 samme niveau, 2,67 mindre øvede), ligesom i kampene.</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>

@@ -247,3 +247,13 @@ test('Kaos matches are completely random: teams are not balanced, and differ fro
   assert.ok(draws.size >= 18, 'different teams each time');
   assert.ok(unbalanced >= 5, 'no balancing: often uneven teams');
 });
+
+test('Level mix: less than half a level apart counts as the same level, so "samme niveau" exists with averaged levels', () => {
+  const skill = { a: 2.17, b: 2.6, c: 1.67, d: 2.67, e: 2.4, f: 2.9 };
+  const mix = A.skillMix([[['a', 'b', 'c', 'd']], [['e', 'f']]], skill);
+  // a (2,17): b 2,6 is the same level (0,43 apart), c 1,67 more experienced (0,5), d 2,67 less experienced (0,5)
+  assert.deepEqual(Array.from(mix.a, x => Math.round(x * 1000) / 1000), [0.333, 0.333, 0.333, 1]);
+  // e (2,4) and f (2,9): exactly half a level apart, so not the same level (as in the matches)
+  assert.deepEqual(Array.from(mix.e), [0, 0, 1, 1]);
+  assert.deepEqual(Array.from(mix.f), [1, 0, 0, 1]);
+});
