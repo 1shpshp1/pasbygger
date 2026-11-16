@@ -102,3 +102,21 @@ test('the script\'s own address forwards to the app, keeping training and drill 
   assert.ok(page.includes('?s=' + SESSION_DATES[0] + '&amp;d=FA-x%22%3Cy'), 'the link keeps both parts, safely encoded');
   assert.ok(!page.includes('"<y'), 'nothing from the address is put into the page unencoded');
 });
+
+test('getPlan: the plan from the cache, "unchanged" when the phone has it, new after an edit', () => {
+  const srv = testServer();
+  const first = srv.call('getPlan', '').result;
+  assert.equal(first.sessions.length, 3);
+  assert.deepEqual(first.sessions, srv.call('getSessions').result, 'the same as reading the sheet');
+  assert.deepEqual(srv.call('getPlan', first.version).result, { unchanged: true, version: first.version });
+  const plan = srv.book["Træningspas Efterår '26"];
+  plan.getRange(2, 8).setValue('Ny station 1');                    // an edit by hand in the plan tab
+  assert.equal(srv.call('getPlan', first.version).result.unchanged, true, 'before onEdit, the cached copy');
+  srv.ctx.onEdit({ range: { getSheet: () => ({ getName: () => "Træningspas Efterår '26" }) } });
+  const after = srv.call('getPlan', first.version).result;
+  assert.notEqual(after.version, first.version);
+  assert.equal(after.sessions[0].station1.text, 'Ny station 1');
+  plan.getRange(2, 9).setValue('Ændret af en formel');            // a change without onEdit: the 5-minute warm-up
+  srv.ctx.warmDrillCache();
+  assert.equal(srv.call('getPlan', after.version).result.sessions[0].station2.text, 'Ændret af en formel');
+});

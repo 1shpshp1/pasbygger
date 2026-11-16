@@ -36,7 +36,9 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
   await ctx.route('https://script.google.com/**', r => {
     const body = r.request().postData();
     const action = JSON.parse(body).action;
+    (srv.calls = srv.calls || []).push(action);
     if ((srv.dropped || []).includes(action)) return r.abort('failed');   // the connection drops
+    if ((srv.unknown || []).includes(action)) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ error: 'Unknown action: ' + action }) });
     const answer = JSON.stringify(srv.post(body));
     if ((srv.slow || []).includes(action)) return setTimeout(() => r.fulfill({ contentType: 'application/json', body: answer }), 1500);
     r.fulfill({ contentType: 'application/json', body: answer });
@@ -332,5 +334,33 @@ test('Kampe by hand: swap between matches, move a player, rebalance, and choose 
   await page.click('#grp-v [data-act="matches"]');
   assert.deepEqual([await count(0), await count(1), await count(2)], [6, 4, 6]);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(page.errors, []);
+});
+
+test('the plan: "Opdateret kl.", the Opdater button, and a check when returning to the app', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  await page.waitForFunction(() => /Opdateret kl\. \d\d:\d\d/.test(document.getElementById('plan-time').textContent));
+  const plan = srv.book["Træningspas Efterår '26"], edited = () => srv.ctx.onEdit({ range: { getSheet: () => ({ getName: () => "Træningspas Efterår '26" }) } });
+  plan.getRange(2, 5).setValue('Ny fokus');
+  edited();
+  await page.click('#plan-refresh');
+  await page.waitForFunction(() => /Ny fokus/.test(document.getElementById('sessions').innerText));
+  srv.calls = [];
+  await page.click('#plan-refresh');                         // nothing changed: only "unchanged" comes back
+  await page.waitForFunction(() => !PLAN_FETCH);
+  assert.deepEqual(srv.calls, ['getPlan']);
+  plan.getRange(2, 5).setValue('Endnu en fokus');
+  edited();
+  await page.evaluate(() => { PLAN_AT = Date.now() - 61000; document.dispatchEvent(new Event('visibilitychange')); });   // back after more than a minute
+  await page.waitForFunction(() => /Endnu en fokus/.test(document.getElementById('sessions').innerText));
+  assert.deepEqual(page.errors, []);
+});
+
+test('the plan still loads from a server without getPlan (before Code.gs is updated)', { skip }, async () => {
+  const srv = testServer();
+  srv.unknown = ['getPlan'];
+  const page = await phone(srv, { loggedIn: false });
+  assert.equal(await page.locator('#sessions .card').count(), 3);
+  assert.ok(srv.calls.includes('getSessions'));
   assert.deepEqual(page.errors, []);
 });

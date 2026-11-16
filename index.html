@@ -358,6 +358,8 @@
 
     .loading.done { pointer-events: none; }
     .build { margin: 28px 0 0; color: #999999; font-size: 12px; }
+    .plan-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: #666666; font-size: 14px; }
+    .plan-bar .clearbtn:disabled { opacity: 0.5; cursor: default; }
 
     .v-sec + .v-sec { margin-top: 22px; padding-top: 18px; border-top: 1px solid #eeeeee; }
     .dchips + .v-sec { margin-top: 18px; }
@@ -713,7 +715,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -877,8 +879,12 @@ function api(action, args) {
     });
 }
 
-/* ---- Start: show the last saved plan at once, then fetch the newest one ---- */
+/* ---- Start: show the last saved plan at once, then fetch the newest one ----
+   The server keeps the plan ready and only answers "unchanged" when the phone has the newest version. The plan
+   is fetched again when the app is brought back after more than a minute, and with the "Opdater" button. */
 const SESSIONS_KEY = "oevSessions";            // the plan is saved on the phone, so the app also opens offline
+const PLAN_VERSION_KEY = "oevSessionsVersion";
+let PLAN_AT = 0, PLAN_FETCH = null, PLAN_FAILED = false;
 let LATEST = null;                             // the newest plan we have
 let STARTED = false, SHOWN = false, PENDING_SESSIONS = false;
 
@@ -922,11 +928,7 @@ function firstRender() {
   if (saved) {
     try { gotSessions(JSON.parse(saved)); } catch (e) { saved = null; }
   }
-  api("getSessions").then(function (sessions) {
-    const text = JSON.stringify(sessions);
-    try { localStorage.setItem(SESSIONS_KEY, text); } catch (e) { /* storage full or blocked */ }
-    if (text !== saved) gotSessions(sessions);
-  }, function () {
+  fetchPlan().catch(function () {
     window.APP_STARTED = true;
     if (saved) { showToast("Ingen forbindelse – viser den senest hentede plan."); return; }
     clearLoading();
@@ -934,6 +936,56 @@ function firstRender() {
       '<p style="grid-column:1/-1">Kunne ikke hente træningspas. Prøv igen om lidt.</p>';
   });
 })();
+
+/* Asks the server for the newest plan ("unchanged" if the phone has it); several callers share one request */
+function fetchPlan() {
+  if (PLAN_FETCH) return PLAN_FETCH;
+  let version = "";
+  try { version = LATEST ? localStorage.getItem(PLAN_VERSION_KEY) || "" : ""; } catch (e) { /* no storage */ }
+  PLAN_FETCH = api("getPlan", [version]).catch(function (err) {
+    if (/Unknown action/.test(String(err && err.message))) {             // a server from before getPlan
+      return api("getSessions").then(sessions => ({ sessions: sessions, version: "" }));
+    }
+    throw err;
+  }).then(function (res) {
+    PLAN_FETCH = null; PLAN_AT = Date.now(); PLAN_FAILED = false;
+    if (!res.unchanged) {
+      const text = JSON.stringify(res.sessions);
+      let old = null;
+      try {
+        old = localStorage.getItem(SESSIONS_KEY);
+        localStorage.setItem(SESSIONS_KEY, text);
+        localStorage.setItem(PLAN_VERSION_KEY, res.version || "");
+      } catch (e) { /* storage full or blocked */ }
+      if (text !== old || !LATEST) gotSessions(res.sessions);
+    }
+    updatePlanBar();
+  }, function (err) {
+    PLAN_FETCH = null; PLAN_FAILED = true;
+    updatePlanBar();
+    throw err;
+  });
+  updatePlanBar();
+  return PLAN_FETCH;
+}
+
+/* "Opdateret kl. 14:03 · Opdater" under the trainings */
+function updatePlanBar() {
+  const time = document.getElementById("plan-time"), btn = document.getElementById("plan-refresh");
+  if (!time || !btn) return;
+  const at = PLAN_AT ? new Date(PLAN_AT) : null;
+  const clock = at ? ("0" + at.getHours()).slice(-2) + ":" + ("0" + at.getMinutes()).slice(-2) : "";
+  time.textContent = PLAN_FETCH ? "Henter nyeste plan …"
+    : PLAN_FAILED ? (clock ? "Ingen forbindelse – viser planen fra kl. " + clock : "Ingen forbindelse – viser den gemte plan")
+    : clock ? "Opdateret kl. " + clock : "Viser den gemte plan";
+  btn.disabled = !!PLAN_FETCH;
+}
+document.addEventListener("click", function (e) {
+  if (e.target.closest("#plan-refresh")) fetchPlan().catch(function () { /* shown in the bar */ });
+});
+document.addEventListener("visibilitychange", function () {   // back in the app after more than a minute: check for a newer plan
+  if (document.visibilityState === "visible" && STARTED && Date.now() - PLAN_AT > 60000) fetchPlan().catch(function () { /* shown in the bar */ });
+});
 
 /* Offline support and "Add to Home Screen" */
 if ("serviceWorker" in navigator) {
@@ -1098,7 +1150,11 @@ function renderSessions(sessions) {
     `;
   }
 
+  html += `<div class="plan-bar"><span id="plan-time" role="status"></span><button type="button" class="clearbtn" id="plan-refresh">Opdater</button></div>`;
+  const pastOpen = document.querySelector("#sessions .past-group[open]");   // keep "Tidligere træninger" open when the plan is updated
   document.getElementById("sessions").innerHTML = html;
+  if (pastOpen && document.querySelector("#sessions .past-group")) document.querySelector("#sessions .past-group").open = true;
+  updatePlanBar();
   if (nextPos !== -1) setTimeout(function () { prefetchSession(upcoming[nextPos].session); }, 300);  // next training: drills ready before anyone taps
 }
 

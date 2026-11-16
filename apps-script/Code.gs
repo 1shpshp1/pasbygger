@@ -85,7 +85,8 @@ function doGet(e) {
    The app sends POST { action, args } and gets back { result } or { error }.
    Only the functions listed here can be called from outside. */
 const API_ACTIONS = {
-  getSessions:      getSessions,
+  getSessions:      getSessions,        // the plan, read from the sheet (apps from before 16 Nov 2026)
+  getPlan:          getPlan,            // the plan, kept ready; only "unchanged" when the phone has the newest
   login:            login,
   getDrills:        getDrills,
   getDrillsDa:      getDrillsDa,        // the Danish translations, fetched by the app after the library
@@ -262,6 +263,52 @@ function login(password) {
   const token = Utilities.getUuid();
   cache.put('tok_' + token, '1', LOGIN_SECONDS);
   return { ok: true, token: token, seconds: LOGIN_SECONDS };
+}
+
+/* ---------- The plan, kept ready ----------
+   getPlan(version) gives what getSessions gives, but from the cache: reading the plan tab (and the drills, to
+   link stations to drills) takes several seconds. The cache is cleared when the plan tab or the drills are
+   edited by hand, and the plan is built again every 5 minutes by warmDrillCache, so a change made without an
+   edit (by a formula or a script) shows within 5 minutes. A phone that already has the newest version only gets
+   "unchanged". */
+const PLAN_CACHE = 'plan';                 // cache keys plan_meta ("version|pieces") and plan_0, plan_1, …
+
+function versionOf_(json) {
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, json, Utilities.Charset.UTF_8)).slice(0, 12);
+}
+
+function buildPlan_() {
+  const json = JSON.stringify(getSessions());
+  const version = versionOf_(json);
+  const put = {};
+  let n = 0;
+  for (let i = 0; i < json.length; i += 30000) put[PLAN_CACHE + '_' + n++] = json.slice(i, i + 30000);
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.putAll(put, DRILL_CACHE_SECONDS);
+    cache.put(PLAN_CACHE + '_meta', version + '|' + n, DRILL_CACHE_SECONDS);   // last, so a half-written copy is never used
+  } catch (e) { /* cache full: the next request reads the sheet again */ }
+  return { json: json, version: version };
+}
+
+function cachedPlan_() {
+  const cache = CacheService.getScriptCache();
+  const meta = String(cache.get(PLAN_CACHE + '_meta') || '').split('|');
+  if (meta.length !== 2) return null;
+  const keys = Array.from({ length: +meta[1] }, (_, i) => PLAN_CACHE + '_' + i);
+  const got = cache.getAll(keys);
+  return keys.every(k => got[k] != null) ? { json: keys.map(k => got[k]).join(''), version: meta[0] } : null;
+}
+
+function clearPlanCache() {
+  CacheService.getScriptCache().remove(PLAN_CACHE + '_meta');
+}
+
+function getPlan(version) {
+  const plan = cachedPlan_() || buildPlan_();
+  if (version && version === plan.version) return { unchanged: true, version: plan.version };
+  return { version: plan.version, sessions: JSON.parse(plan.json) };
 }
 
 /* Throws "LOGIN" unless the code is valid. (The trailing underscore keeps it private to the server.) */
@@ -448,12 +495,14 @@ function slimDrill_(d) {
 function clearDrillCache() {
   const cache = CacheService.getScriptCache();
   LIB_PARTS.forEach(name => cache.remove(name + '_meta'));
+  clearPlanCache();                                    // the plan links its stations to the drills
 }
 
 /* Simple trigger: Google runs this on every edit made by hand in the spreadsheet */
 function onEdit(e) {
   const name = e && e.range ? e.range.getSheet().getName() : '';
   if ([DRILLS_SHEET, ALIAS_SHEET, TAGS_SHEET].indexOf(name) !== -1) clearDrillCache();
+  if (name === SHEET_NAME) clearPlanCache();                                       // the training plan
   if ([PLAYERS_SHEET, GROUPS_SHEET, SIGNUPS_SHEET, MATCHES_SHEET].indexOf(name) !== -1) clearGroupCache();   // file Grupper
 }
 
@@ -463,6 +512,7 @@ function onEdit(e) {
 function warmDrillCache() {
   let groups = '';
   try { groups = ' ' + warmGroupCache(); } catch (e) { groups = ' Groups: ' + e.message; }   // file Grupper
+  try { buildPlan_(); groups += ' The plan was built again.'; } catch (e) { groups += ' Plan: ' + e.message; }
   if (LIB_PARTS.every(name => cachedPart_(name))) return 'The library is already in the cache.' + groups;
   buildLibrary_();
   return 'The library was built and put in the cache.' + groups;
