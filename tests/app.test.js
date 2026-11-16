@@ -60,7 +60,7 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
 }
 async function openGroups(page, i = 0) {
   await page.locator('#sessions .card').nth(i).locator('button, [onclick]').first().click();
-  await page.locator('#viewer button', { hasText: 'Grupper til denne træning' }).click();
+  await page.locator('#viewer button', { hasText: 'Grupper/kampe til denne træning' }).click();
   await page.waitForSelector('#grp-v .grp-slide');
 }
 const cards = page => page.locator('#grp-v .grp-list .grp-card');
@@ -73,7 +73,7 @@ test('login box and the "no groups yet" message', { skip }, async () => {
   await page.click('#login-cancel');
   await page.evaluate(() => showView('sessions'));
   await page.locator('#sessions .card').first().locator('button, [onclick]').first().click();
-  await page.locator('#viewer button', { hasText: 'Grupper til denne træning' }).click();
+  await page.locator('#viewer button', { hasText: 'Grupper/kampe til denne træning' }).click();
   assert.ok(await page.locator('#login').isVisible(), 'Grupper asks for the code first');
   await page.fill('#login-pw', CODE); await page.click('#login-go');
   await page.waitForSelector('#grp-v .grp-slide');
@@ -365,5 +365,22 @@ test('the plan still loads from a server without getPlan (before Code.gs is upda
   const page = await phone(srv, { loggedIn: false });
   assert.equal(await page.locator('#sessions .card').count(), 3);
   assert.ok(srv.calls.includes('getSessions'));
+  assert.deepEqual(page.errors, []);
+});
+
+test('"Hvem er med?" is alphabetical, whatever the order in the Spillere tab', { skip }, async () => {
+  const srv = testServer();
+  srv.book['Spillere'].getRange(18, 1, 1, 3).setValues([['Bertram', '2', '3']]);   // added last in the sheet
+  srv.book['Spillere'].getRange(19, 1, 1, 3).setValues([['Ærø', '3', '4']]);
+  srv.ctx.clearGroupCache();
+  const page = await phone(srv);
+  await openGroups(page);
+  const names = await page.locator('#grp-v .grp-who label').allInnerTexts();
+  assert.deepEqual(names.slice(0, 3), ['Alma', 'Bertram', 'Bo']);
+  assert.equal(names[names.length - 1], 'Ærø', 'Danish order: Æ after Z');
+  await page.locator('#grp-v .grp-who label', { hasText: 'Bertram' }).locator('input').uncheck();
+  assert.match(await page.locator('#grp-v summary').innerText(), /17 af 18/);
+  await page.click('#grp-v [data-act="make"]');
+  assert.equal(await page.locator('#grp-v .grp-p[data-p="Bertram"]').count(), 0, 'the right player was left out');
   assert.deepEqual(page.errors, []);
 });

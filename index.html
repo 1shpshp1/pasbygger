@@ -2508,7 +2508,7 @@ function sessionPages(s, index) {
       s.notes.map(p => libLink(p.url, p.text) || `<span>${escLines(p.text)}</span>`).join(" ") + `</section>`;
   }
   html += items.length ? `<div class="v-plan">${rows}</div>` : "<p>Intet planlagt.</p>";
-  if (sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper til denne træning</button>`;
+  if (sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper/kampe til denne træning</button>`;
   return [{ title: s.focus || danishDate(s.iso, s.date), html: html }];
 }
 
@@ -3676,8 +3676,10 @@ function renderGroups() {
   const prev = earlierGroups()[0] || null;
   const was = lastGroupOf(prev);
 
-  const who = all.map((p, i) => `<label><input type="checkbox" data-who="${i}"${GRP.present.has(p.name) ? " checked" : ""}>` +
-    `<span>${esc(p.name)}</span></label>`).join("");
+  // alphabetical, whatever the order in the tab Spillere (data-who stays the player's place in the list from the sheet)
+  const order = all.map((p, i) => i).sort((a, b) => all[a].name.localeCompare(all[b].name, "da"));
+  const who = order.map(i => `<label><input type="checkbox" data-who="${i}"${GRP.present.has(all[i].name) ? " checked" : ""}>` +
+    `<span>${esc(all[i].name)}</span></label>`).join("");
 
   const none = GRP.groups ? "" : /\sfri$/.test(GRP.key)
     ? "Der er ikke lavet grupper til denne dato endnu."
