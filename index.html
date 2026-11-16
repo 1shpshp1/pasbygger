@@ -706,7 +706,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 14. nov. 2026</p>
+<p class="build" id="build">App-version 16. nov. 2026</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2731,11 +2731,20 @@ function makeGroups(opts) {
    cut into (groups + 1) / 2 matches, so 3 groups give 2 matches: the middle group's more experienced players
    join the top match and the rest the bottom one. Each match should have an even number of players where
    possible, so everyone gets an opposite number.
+   count: the number of matches, if chosen ("Antal kampe"); otherwise half the groups, rounded up. When it is
+   not half the groups, all players are lined up as above and cut into that many matches.
    Each match is split into two teams player for player (see pairedSplit).
    level(p): a player's level, or null (counted as the average of everyone). Returns
    [{ groups: [group numbers], teams: [[players], [players]], avg: [a, b] }], most experienced match first;
    team A's player i is matched with team B's player i. */
-function makeMatches(groups, level, seed) {
+/* The number of matches: the one chosen, or half the groups (rounded up); at least 1, at most one per 2 players */
+function matchCount(groups, count) {
+  const used = groups.filter(g => g.length), players = used.reduce((n, g) => n + g.length, 0);
+  const auto = Math.max(1, Math.ceil(used.length / 2));
+  return Math.max(1, Math.min(count || auto, Math.floor(players / 2) || 1));
+}
+
+function makeMatches(groups, level, seed, count) {
   const rand = seededRandom(seed || 1);
   const known = [].concat.apply([], groups).map(level).filter(v => v != null && isFinite(v));
   const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
@@ -2746,15 +2755,16 @@ function makeMatches(groups, level, seed) {
   const home = new Map();
   ranked.forEach(o => o.g.forEach(p => home.set(p, o.i + 1)));
 
+  const m = matchCount(groups, count);
   let pools = [];
-  if (ranked.length % 2 === 0) {
+  if (ranked.length % 2 === 0 && m === ranked.length / 2) {
     for (let r = 0; r < ranked.length; r += 2) pools.push([].concat(ranked[r].g, ranked[r + 1].g));
-  } else if (ranked.length === 1) {
-    pools = [ranked[0].g.slice()];
+  } else if (m === 1) {
+    pools = [[].concat.apply([], ranked.map(o => o.g))];
   } else {
     const line = [].concat.apply([], ranked.map(o => byLevel(o.g, lv, rand)));
     let at = 0;
-    poolSizes(line.length, (ranked.length + 1) / 2).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
+    poolSizes(line.length, m).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
   }
   return poolsToMatches(pools, lv, home, rand, known);
 }
@@ -2779,7 +2789,7 @@ function poolsToMatches(pools, lv, home, rand, known) {
    average level is at least MATCH_STEP better than the player's own (a lower number), easier when it is at
    least MATCH_STEP weaker. Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own
    level. The matches may differ in average level; each match is then split into two teams player for player.
-   The number of matches is the same as for "Niveau": half the groups (rounded up). */
+   The number of matches is the same as for "Niveau": the one chosen, or half the groups (rounded up). */
 const MATCH_STEP = 0.5;
 const MATCH_MAX_GAP = 1.5;
 const MATCH_GOAL = [0.25, 0.5, 0.25];                  // harder, own level, easier
@@ -2811,9 +2821,10 @@ function matchMix(earlier, level) {
 }
 
 /* mix: matchMix(...). Returns what makeMatches returns, plus cat: { name: 0 | 1 | 2 } for this time */
-function makeMixMatches(groups, level, mix, seed) {
+function makeMixMatches(groups, level, mix, seed, count) {
   const used = groups.filter(g => g.length);
-  if (used.length < 2) return makeMatches(groups, level, seed);  // one match: nothing to place players between
+  const m = matchCount(groups, count);
+  if (m < 2) return makeMatches(groups, level, seed, 1);         // one match: nothing to place players between
   const rand = seededRandom(seed || 1);
   const all = [].concat.apply([], used);
   const known = all.map(level).filter(v => v != null && isFinite(v));
@@ -2823,7 +2834,7 @@ function makeMixMatches(groups, level, mix, seed) {
   groups.forEach((g, i) => g.forEach(p => home.set(p, i + 1)));
   const own = all.map(p => { const v = level(p); return v != null && isFinite(v) ? v : NaN; });
   const had = all.map(p => mix[p.name] || [0, 0, 0, 0]);
-  const m = used.length % 2 ? (used.length + 1) / 2 : used.length / 2, n = all.length;
+  const n = all.length;
   const sizes = poolSizes(n, m);
 
   let a;
@@ -3056,12 +3067,13 @@ const GRP_SETTINGS_KEY = "oevGrpSettings";      // only the settings (number of 
 function grpSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(GRP_SETTINGS_KEY) || "null"); } catch (e) { /* ignore */ }
-  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1, matchMode: "level" }, s || {});
+  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1, matchMode: "level", matchCount: 0 }, s || {});
 }
 function saveGrpSettings() {
   try {
     localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
-                                                      rule: GRP.rule, maxDiff: GRP.maxDiff, matchMode: GRP.matchMode }));
+                                                      rule: GRP.rule, maxDiff: GRP.maxDiff, matchMode: GRP.matchMode,
+                                                      matchCount: GRP.matchCount }));
   } catch (e) { /* ignore */ }
 }
 
@@ -3433,8 +3445,9 @@ const levelOfName = name => { const p = GRP.byName[name]; return p && isFinite(p
 
 function makeMatchesNow() {
   const seed = hashText(GRP.key + "|kampe|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1));
-  GRP.matches = byMix() ? makeMixMatches(GRP.groups, fraOf, matchMix(earlierMatches(), levelOfName), seed)
-                        : makeMatches(GRP.groups, fraOf, seed);
+  const count = GRP.matchCount || undefined;            // 0: auto, half the groups
+  GRP.matches = byMix() ? makeMixMatches(GRP.groups, fraOf, matchMix(earlierMatches(), levelOfName), seed, count)
+                        : makeMatches(GRP.groups, fraOf, seed, count);
   GRP.matchesFor = groupsSignature();
   GRP.matchSel = null;
   GRP.matchesDirty = true;
@@ -3485,9 +3498,16 @@ function matchesHtml() {
         <button type="button" data-mmode="mix" aria-pressed="${byMix()}">25-50-25</button>
       </div>
     </div>
+    <div class="grp-row">
+      <span class="grp-hint grp-label">Antal kampe</span>
+      <div class="grp-mode" role="group" aria-label="Antal kampe">
+        <button type="button" data-mcount="0" aria-pressed="${!GRP.matchCount}">Auto (${matchCount(GRP.groups)})</button>
+        ${[1, 2, 3, 4].map(c => `<button type="button" data-mcount="${c}" aria-pressed="${GRP.matchCount === c}">${c}</button>`).join("")}
+      </div>
+    </div>
     <p class="grp-hint grp-explain">${byMix()
       ? "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d."
-      : "De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe."}
+      : "De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe. Vælger du et andet antal kampe, stilles alle op efter niveau og deles i så mange kampe."}
       I hver kamp får hver spiller en modspiller på samme niveau (eller så tæt på som muligt) på det andet hold, og derefter gøres holdene så lige som muligt.</p>
     <div class="grp-row"><button type="button" class="login-go" data-act="matches">${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
     ${cards}
@@ -3498,7 +3518,8 @@ function matchesHtml() {
   </section>`;
 }
 
-/* Tap a player in a match: select; tap one on the other team of the same match: swap them */
+/* Tap a player in a match: select; tap one on the other team of the same match: swap them.
+   ("Antal kampe": Auto is half the groups, rounded up – see matchCount) */
 function matchTap(code) {
   const sel = GRP.matchSel;
   if (sel === code) { GRP.matchSel = null; renderGroups(); return; }
@@ -3691,6 +3712,8 @@ function grpClick(e) {
     saveGroupsNow(b);
   } else if (act === "signups") {
     saveSignupsNow(b);
+  } else if (b.dataset.mcount != null) {
+    GRP.matchCount = +b.dataset.mcount; saveGrpSettings(); renderGroups();
   } else if (b.dataset.mmode) {
     GRP.matchMode = b.dataset.mmode; saveGrpSettings(); renderGroups();
   } else if (act === "savematches") {

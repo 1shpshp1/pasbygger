@@ -282,3 +282,20 @@ test('the login running out while the players are being checked doesn\'t break G
   assert.equal(await cards(page).count(), 4);
   assert.deepEqual(page.errors, []);
 });
+
+test('Antal kampe: choosing 3 gives 3 matches from 4 groups', { skip }, async () => {
+  const page = await phone(testServer());
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  assert.match(await page.locator('#grp-v [data-mcount="0"]').innerText(), /Auto \(2\)/);
+  await page.click('#grp-v [data-mcount="3"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 3);
+  const heads = await page.locator('#grp-v .grp-matches .grp-card .grp-head small').allInnerTexts();
+  assert.match(heads[1], /mellem/);
+  await page.click('#grp-v [data-mmode="mix"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 3);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(page.errors, []);
+});

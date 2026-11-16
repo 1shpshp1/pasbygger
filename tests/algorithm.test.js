@@ -146,3 +146,18 @@ test('Kampe 25-50-25: what counts as harder, own level and easier', () => {
   assert.equal(A.matchCategory(3, 3.5), 2);      // half a level less experienced: easier
   assert.equal(A.matchCategory(NaN, 2), 1);      // no level: counts as own level
 });
+
+test('Antal kampe: 4 groups can give 1, 2, 3 or 4 matches in both modes; Auto is half the groups', () => {
+  const groups = A.sortedGroups(squad(), 4, p => p.lo, 1);
+  assert.equal(A.matchCount(groups), 2);
+  assert.equal(A.matchCount(A.sortedGroups(squad(), 5, p => p.lo, 1)), 3);
+  for (const count of [1, 2, 3, 4]) {
+    for (const ms of [A.makeMatches(groups, p => p.lo, 1, count), A.makeMixMatches(groups, p => p.lo, {}, 1, count)]) {
+      assert.equal(ms.length, count);
+      assert.equal(ms.reduce((n, m) => n + m.teams[0].length + m.teams[1].length, 0), 16, 'everyone plays');
+      ms.forEach(m => assert.ok(Math.abs(m.teams[0].length - m.teams[1].length) <= 1));
+    }
+  }
+  const three = A.makeMatches(groups, p => p.lo, 1, 3);
+  assert.ok(three[0].avg[0] <= three[1].avg[0] && three[1].avg[0] <= three[2].avg[0], 'Niveau: most experienced match first');
+});
