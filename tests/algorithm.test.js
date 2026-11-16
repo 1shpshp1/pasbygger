@@ -248,12 +248,20 @@ test('Kaos matches are completely random: teams are not balanced, and differ fro
   assert.ok(unbalanced >= 5, 'no balancing: often uneven teams');
 });
 
-test('Level mix: less than half a level apart counts as the same level, so "samme niveau" exists with averaged levels', () => {
-  const skill = { a: 2.17, b: 2.6, c: 1.67, d: 2.67, e: 2.4, f: 2.9 };
-  const mix = A.skillMix([[['a', 'b', 'c', 'd']], [['e', 'f']]], skill);
-  // a (2,17): b 2,6 is the same level (0,43 apart), c 1,67 more experienced (0,5), d 2,67 less experienced (0,5)
-  assert.deepEqual(Array.from(mix.a, x => Math.round(x * 1000) / 1000), [0.333, 0.333, 0.333, 1]);
-  // e (2,4) and f (2,9): exactly half a level apart, so not the same level (as in the matches)
-  assert.deepEqual(Array.from(mix.e), [0, 0, 1, 1]);
-  assert.deepEqual(Array.from(mix.f), [1, 0, 0, 1]);
+test('Level mix: a soft transition around half a level (fully the same up to 0,25, fully different from 0,75)', () => {
+  const w = (me, o) => Array.from(A.levelWeights(me, o), x => Math.round(x * 1000) / 1000);
+  assert.deepEqual(w(2.5, 2.5), [0, 1, 0]);
+  assert.deepEqual(w(2.5, 2.75), [0, 1, 0], 'up to 0,25: the same level');
+  assert.deepEqual(w(2.5, 3), [0, 0.5, 0.5], '0,5: half the same, half less experienced');
+  assert.deepEqual(w(2.5, 2), [0.5, 0.5, 0], '… or half more experienced');
+  assert.deepEqual(w(2.5, 3.25), [0, 0, 1], '0,75 or more: fully less experienced');
+  assert.deepEqual(w(2.5, 1.5), [1, 0, 0]);
+  assert.deepEqual(w(2, 2.49), [0, 0.52, 0.48], 'no jump at half a level …');
+  assert.deepEqual(w(2, 2.51), [0, 0.48, 0.52], '… 0,49 and 0,51 count almost the same');
+  const mix = A.skillMix([[['a', 'b', 'c']]], { a: 2.5, b: 3, c: 1.5 });
+  // a: b counts half same, half less; c fully more experienced (each teammate weighs 1/2)
+  assert.deepEqual(Array.from(mix.a, x => Math.round(x * 1000) / 1000), [0.5, 0.25, 0.25, 1]);
+  // the matches use the same: the others' average 0,5 better is half harder, half own level
+  const hist = A.matchMix([[[['x', 'y'], ['z']]]], n => ({ x: 3, y: 2.5, z: 2.5 })[n]);
+  assert.deepEqual(Array.from(hist.x), [0.5, 0.5, 0, 1]);
 });
