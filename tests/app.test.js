@@ -266,7 +266,7 @@ test('Spilleroversigt: attendance, level mix and most frequent teammates', { ski
   assert.match(text, /2 af 2/);
   assert.match(text, /Oftest med: Bo \(2\)/);
   assert.match(text, /Grupper\s*2 træninger[\s\S]*\d+ \/ \d+ \/ \d+ %\s*mål \d+ \/ \d+ \/ \d+/);
-  assert.match(text, /Kampe\s*ingen gemte kampe endnu/, 'the matches section is there even without saved matches');
+  assert.match(text, /Kampe til træning\s*ingen gemte kampe endnu/, 'the matches section is there even without saved matches');
   assert.match(await alma.locator('.ov-bars').first().getAttribute('aria-label'), /^Grupper: \d+ % med mere øvede, \d+ % samme niveau, \d+ % med mindre øvede\. Mål: /);
   assert.match(await card('Frida').innerText(), /Ikke med i gemte grupper endnu/);
   assert.equal(await card('Frida').locator('.ov-empty').count(), 2, 'no data: an empty bar, the aim still shown');
@@ -303,8 +303,8 @@ test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview'
   await page.click('#v-back');
   await page.click('#nav-groups'); await page.click('#grp-overview');
   await page.waitForSelector('#ov .ov-p');
-  assert.match(await page.locator('#ov').innerText(), /Kampe\s*1 kamp\s*\d+ \/ \d+ \/ \d+ %/);
-  assert.match(await page.locator('#ov .ov-bars').nth(1).getAttribute('aria-label'), /^Kampe: \d+ % sværere, \d+ % eget niveau, \d+ % lettere\./);
+  assert.match(await page.locator('#ov').innerText(), /Kampe til træning\s*1 kamp\s*\d+ \/ \d+ \/ \d+ %/);
+  assert.match(await page.locator('#ov .ov-bars').nth(1).getAttribute('aria-label'), /^Kampe til træning: \d+ % sværere, \d+ % eget niveau, \d+ % lettere\./);
   assert.deepEqual(page.errors, []);
 });
 

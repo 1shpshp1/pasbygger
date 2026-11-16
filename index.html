@@ -3720,7 +3720,7 @@ function renderOverview() {
     const body = me == null ? `<p class="ov-line">Har intet niveau i fanen Spillere, så niveau-mixet kan ikke regnes ud.</p>`
       : section("Grupper", s.mix && s.mix[3] ? `${s.mix[3]} ${s.mix[3] === 1 ? "træning" : "træninger"}` : "", s.mix, aim,
                 ["med mere øvede", "samme niveau", "med mindre øvede"], "ingen gemte grupper endnu") +
-        section("Kampe", s.mmix && s.mmix[3] ? `${s.mmix[3]} ${s.mmix[3] === 1 ? "kamp" : "kampe"}` : "", s.mmix, aim,
+        section("Kampe til træning", s.mmix && s.mmix[3] ? `${s.mmix[3]} ${s.mmix[3] === 1 ? "kamp" : "kampe"}` : "", s.mmix, aim,
                 ["sværere", "eget niveau", "lettere"], "ingen gemte kampe endnu", alone) +
         (why ? `<p class="ov-line">${why}</p>` : "");
     return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
@@ -3730,7 +3730,7 @@ function renderOverview() {
     `For hver spiller: med hvem de har været i grupper og kampe (de seneste 12 træninger), og målet for dem.</p>
     <details class="ov-how"><summary>Sådan regnes det</summary>
       <p><b>Niveau</b> er midten af båndet (Fra–Til 2–3 giver 2,5).</p>
-      <p><b>Grupper:</b> hver medspiller i gruppen tæller som mere øvede, samme niveau eller mindre øvede. <b>Kampe:</b> hver af de andre spillere i kampen (begge hold) tæller som sværere, eget niveau eller lettere.</p>
+      <p><b>Grupper:</b> hver medspiller i gruppen tæller som mere øvede, samme niveau eller mindre øvede. <b>Kampe til træning:</b> hver af de andre spillere i kampen (begge hold) tæller som sværere, eget niveau eller lettere.</p>
       <p><b>Samme niveau:</b> op til 0,25 fra spilleren tæller helt som samme niveau, 0,75 eller mere helt som mere/mindre øvede, og ind imellem delvist (0,5 fra: halvt af hver).</p>
       <p><b>Målet</b> er 25 / 50 / 25. De mest øvede har ingen mere øvede at spille med (og de mindst øvede ingen mindre øvede), så den del går til samme niveau: 0 / 75 / 25 for den mest øvede, 25 / 75 / 0 for den mindst øvede.</p>
       <p><b>Fremmøde</b> tæller kun træninger, hvor grupperne er gemt (også grupper lavet uden en træning).</p>
