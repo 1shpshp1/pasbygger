@@ -39,6 +39,7 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
     (srv.calls = srv.calls || []).push(action);
     if ((srv.dropped || []).includes(action)) return r.abort('failed');   // the connection drops
     if ((srv.unknown || []).includes(action)) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ error: 'Unknown action: ' + action }) });
+    if ((srv.broken || {})[action]) return r.fulfill({ contentType: 'text/html', body: srv.broken[action] });   // Google's error page
     const answer = JSON.stringify(srv.post(body));
     if ((srv.slow || []).includes(action)) return setTimeout(() => r.fulfill({ contentType: 'application/json', body: answer }), 1500);
     r.fulfill({ contentType: 'application/json', body: answer });
@@ -417,6 +418,55 @@ test('Three teams in a match (winner stays on): chosen per pulje, letters run on
   assert.deepEqual(saved.map(m => m.length), [2, 2, 3]);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await cards.nth(2).screenshot({ path: process.env.SHOT || '/dev/null' }).catch(() => {});
+  assert.deepEqual(page.errors, []);
+});
+
+test('A script error on the server is shown as it is, not as "Ingen forbindelse"', { skip }, async () => {
+  const srv = testServer();
+  const page = await phone(srv);
+  srv.broken = { getPlan: '<!DOCTYPE html><html><head><script>var x = 1;</script><style>b{}</style></head><body><div>Error</div>' +
+    '<div>SyntaxError: Identifier &#39;PLAYERS_SHEET&#39; has already been declared (line 1, file &quot;Grupper&quot;)</div></body></html>' };
+  await page.click('#plan-refresh');
+  await page.waitForFunction(() => /Fejl på serveren/.test(document.getElementById('plan-time').textContent));
+  const bar = await page.locator('#plan-time').innerText();
+  assert.match(bar, /^Fejl på serveren: SyntaxError: Identifier 'PLAYERS_SHEET' has already been declared \(line 1, file "Grupper"\) – viser planen fra kl\. \d\d:\d\d$/);
+  srv.broken = {};
+  srv.dropped = ['getPlan'];                                       // a real lack of connection still says so
+  await page.click('#plan-refresh');
+  await page.waitForFunction(() => /^Ingen forbindelse/.test(document.getElementById('plan-time').textContent));
+  assert.deepEqual(page.errors, []);
+});
+
+test('Gem grupper / Gem tilmeldte / Gem kampe register at once and reach the sheet in the background', { skip }, async () => {
+  const srv = testServer();
+  const page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  srv.slow = ['saveGroups', 'saveSignups', 'saveMatches'];
+  await page.click('#grp-v [data-act="save"]');
+  const t0 = Date.now();
+  await page.waitForFunction(() => /sendes til arket/.test(document.querySelector('#grp-v .grp-save').innerText));
+  assert.ok(Date.now() - t0 < 1000, 'registered before the server answers');
+  assert.equal(await page.locator('#grp-v [data-act="save"]').isDisabled(), true);
+  await page.click('#grp-v details summary');
+  await page.click('#grp-v [data-act="signups"]');                 // and the screen can be used meanwhile
+  await page.click('#grp-v [data-act="matches"]');
+  await page.click('#grp-v [data-act="savematches"]');
+  await page.waitForFunction(() => /Kampe gemt/.test(document.querySelector('#grp-v .grp-matches').innerText), null, { timeout: 15000 });
+  assert.match(await page.locator('#grp-v .grp-save').first().innerText(), /Gemt \d/);
+  assert.match(await page.locator('#grp-v details').evaluate(d => d.textContent), /Tilmeldte gemt \d/);
+  const t = srv.call('login', CODE).result.token, d = srv.call('getGroupData', t).result;
+  assert.equal(Object.keys(d.history).length, 1);
+  assert.equal(Object.keys(d.signups).length, 1);
+  assert.equal(Object.keys(d.matches).length, 1);
+  // the server refuses: the screen says why and the groups can be saved again
+  srv.slow = [];
+  srv.unknown = ['saveGroups'];
+  await page.locator('#grp-v .grp-card .grp-p').first().click();
+  await page.locator('#grp-v .grp-card').nth(1).locator('.grp-p').first().click();   // a swap: not saved
+  await page.click('#grp-v [data-act="save"]');
+  await page.waitForFunction(() => /Kunne ikke gemme grupperne: Unknown action/.test(document.getElementById('grp-v').innerText));
+  assert.equal(await page.locator('#grp-v [data-act="save"]').isDisabled(), false);
   assert.deepEqual(page.errors, []);
 });
 

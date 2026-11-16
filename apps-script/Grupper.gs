@@ -24,8 +24,9 @@
    rows keep the order of the opposite numbers. The saved
    matches are what "Del kampene efter 25-50-25" uses to vary who plays harder and easier matches.
 
-   Speed: the players and groups are kept ready in the cache (cleared when either tab is edited, built again
-   after a save and by the 5-minute warm-up), and a phone that already has the newest copy only gets "unchanged". */
+   Speed: the players and groups are kept ready in the cache (cleared when a tab is edited by hand and built again
+   by the next request or the 5-minute warm-up). A save from the app only writes that training's rows and updates
+   the cached copy, without reading the other tabs. A phone that already has the newest copy only gets "unchanged". */
 const PLAYERS_SHEET = 'Spillere';
 const GROUPS_SHEET = 'Grupper';
 const GROUPS_PASSWORD_PROPERTY = 'GROUPS_PASSWORD';
@@ -93,7 +94,7 @@ function level_(v) {
   return isFinite(x) ? x : null;
 }
 
-/* Reads both tabs and puts the result in the cache: { json, version } */
+/* Reads the tabs and puts the result in the cache: { json, version } */
 function buildGroupData_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ps = ss.getSheetByName(PLAYERS_SHEET);
@@ -116,43 +117,50 @@ function buildGroupData_() {
     players.push({ name: name, lo: lo, hi: hi });
   });
 
+  const rowsOf = (name, width) => { const t = ss.getSheetByName(name); return t && t.getLastRow() > 1 ? t.getRange(2, 1, t.getLastRow() - 1, width).getDisplayValues() : []; };
+  const json = JSON.stringify({ players: players, history: groupsFromRows_(rowsOf(GROUPS_SHEET, GROUPS_HEADERS.length)),
+                                signups: signupsFromRows_(rowsOf(SIGNUPS_SHEET, SIGNUPS_HEADERS.length)),
+                                matches: matchesFromRows_(rowsOf(MATCHES_SHEET, MATCHES_HEADERS.length)) });
+  return putGroupData_(json);
+}
+
+/* The tabs' rows (without the header) as the app gets them; also used to update the cached copy after a save */
+function groupsFromRows_(rows) {                          // { "2026-11-03": { saved, groups: [[names]] } }
   const history = {};
-  const gs = ss.getSheetByName(GROUPS_SHEET);
-  if (gs && gs.getLastRow() > 1) {
-    gs.getRange(2, 1, gs.getLastRow() - 1, GROUPS_HEADERS.length).getDisplayValues().forEach(r => {
-      const key = String(r[0]).trim(), g = parseInt(r[1], 10), name = String(r[2]).trim();
-      if (!key || !(g >= 1) || !name) return;
-      const h = history[key] = history[key] || { saved: r[3], groups: [] };
-      while (h.groups.length < g) h.groups.push([]);
-      h.groups[g - 1].push(name);
-    });
-  }
+  rows.forEach(r => {
+    const key = String(r[0]).trim(), g = parseInt(r[1], 10), name = String(r[2]).trim();
+    if (!key || !(g >= 1) || !name) return;
+    const h = history[key] = history[key] || { saved: r[3], groups: [] };
+    while (h.groups.length < g) h.groups.push([]);
+    h.groups[g - 1].push(name);
+  });
+  return history;
+}
+function signupsFromRows_(rows) {                         // { "2026-11-03": { saved, names: [...] } }
+  const signups = {};
+  rows.forEach(r => {
+    const key = String(r[0]).trim(), name = String(r[1]).trim();
+    if (!key || !name) return;
+    (signups[key] = signups[key] || { saved: r[2], names: [] }).names.push(name);
+  });
+  return signups;
+}
+function matchesFromRows_(rows) {                         // { "2026-11-03": { saved, matches: [[[team A], [team B]], …] } }
+  const matches = {};
+  rows.forEach(r => {
+    const key = String(r[0]).trim(), m = parseInt(r[1], 10), team = Math.max(0, 'ABC'.indexOf(String(r[2]).trim().toUpperCase()));
+    const name = String(r[3]).trim();
+    if (!key || !(m >= 1) || !name) return;
+    const h = matches[key] = matches[key] || { saved: r[4], matches: [] };
+    while (h.matches.length < m) h.matches.push([[], []]);
+    while (h.matches[m - 1].length <= team) h.matches[m - 1].push([]);
+    h.matches[m - 1][team].push(name);
+  });
+  return matches;
+}
 
-  const signups = {};                                     // { "2026-11-03": { saved, names: [...] } }
-  const ts = ss.getSheetByName(SIGNUPS_SHEET);
-  if (ts && ts.getLastRow() > 1) {
-    ts.getRange(2, 1, ts.getLastRow() - 1, SIGNUPS_HEADERS.length).getDisplayValues().forEach(r => {
-      const key = String(r[0]).trim(), name = String(r[1]).trim();
-      if (!key || !name) return;
-      (signups[key] = signups[key] || { saved: r[2], names: [] }).names.push(name);
-    });
-  }
-
-  const matches = {};                                     // { "2026-11-03": { saved, matches: [[[team A], [team B]], …] } }
-  const ms = ss.getSheetByName(MATCHES_SHEET);
-  if (ms && ms.getLastRow() > 1) {
-    ms.getRange(2, 1, ms.getLastRow() - 1, MATCHES_HEADERS.length).getDisplayValues().forEach(r => {
-      const key = String(r[0]).trim(), m = parseInt(r[1], 10), team = Math.max(0, 'ABC'.indexOf(String(r[2]).trim().toUpperCase()));
-      const name = String(r[3]).trim();
-      if (!key || !(m >= 1) || !name) return;
-      const h = matches[key] = matches[key] || { saved: r[4], matches: [] };
-      while (h.matches.length < m) h.matches.push([[], []]);
-      while (h.matches[m - 1].length <= team) h.matches[m - 1].push([]);
-      h.matches[m - 1][team].push(name);
-    });
-  }
-
-  const json = JSON.stringify({ players: players, history: history, signups: signups, matches: matches });
+/* Puts the copy in the cache (in pieces, the meta key last): { json, version } */
+function putGroupData_(json) {
   const version = Utilities.base64EncodeWebSafe(
     Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, json, Utilities.Charset.UTF_8)).slice(0, 12);
   const put = {};
@@ -162,8 +170,21 @@ function buildGroupData_() {
     const cache = CacheService.getScriptCache();
     cache.putAll(put, DRILL_CACHE_SECONDS);
     cache.put(GROUP_CACHE + '_meta', version + '|' + n, DRILL_CACHE_SECONDS);   // last, so a half-written copy is never used
-  } catch (e) { /* cache full: the next request reads the sheet again */ }
+  } catch (e) { clearGroupCache(); }                     // cache full: the next request reads the sheet again
   return { json: json, version: version };
+}
+
+/* After a save: the one training's part of the cached copy replaced (field: history, signups or matches; rows: the
+   rows just written for it), instead of reading every tab again. Without a cached copy, the next request builds one. */
+function patchGroupCache_(field, key, entries) {
+  try {
+    const part = cachedGroupData_();
+    if (!part) { clearGroupCache(); return; }
+    const data = JSON.parse(part.json);
+    data[field] = data[field] || {};
+    if (entries[key]) data[field][key] = entries[key]; else delete data[field][key];
+    putGroupData_(JSON.stringify(data));
+  } catch (e) { clearGroupCache(); }
 }
 
 /* The cached copy, or null */
@@ -215,23 +236,14 @@ function saveGroups(token, key, groups) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let gs = ss.getSheetByName(GROUPS_SHEET);
     if (!gs) { setupGroups(); gs = ss.getSheetByName(GROUPS_SHEET); }
-    const width = GROUPS_HEADERS.length;
-    const old = gs.getLastRow() > 1 ? gs.getRange(2, 1, gs.getLastRow() - 1, width).getDisplayValues() : [];
     const saved = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm');
-    const rows = old.filter(r => String(r[0]).trim() !== key);
+    const rows = [];
     groups.forEach((g, i) => g.forEach(name => {
       name = String(name).trim();
       if (name) rows.push([key, String(i + 1), name, saved]);
     }));
-    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);   // by training, so the tab is easy to read
-    if (old.length) gs.getRange(2, 1, old.length, width).clearContent();
-    if (rows.length) {
-      const range = gs.getRange(2, 1, rows.length, width);
-      range.setNumberFormat('@');                         // keep every cell as plain text
-      range.setValues(rows);
-    }
-    clearGroupCache();
-    buildGroupData_();                                    // the next phone to open Grupper doesn't wait
+    replaceTrainingRows_(gs, GROUPS_HEADERS.length, key, rows);
+    patchGroupCache_('history', key, groupsFromRows_(rows));   // the next phone to open Grupper doesn't wait
     return { ok: true, saved: saved };
   } finally {
     lock.releaseLock();
@@ -252,8 +264,7 @@ function saveSignups(token, key, names) {
     const saved = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm');
     const rows = names.map(name => String(name).trim()).filter(Boolean).map(name => [key, name, saved]);
     replaceTrainingRows_(signupsSheet_(), SIGNUPS_HEADERS.length, key, rows);
-    clearGroupCache();
-    buildGroupData_();
+    patchGroupCache_('signups', key, signupsFromRows_(rows));
     return { ok: true, saved: saved };
   } finally {
     lock.releaseLock();
@@ -281,8 +292,7 @@ function saveMatches(token, key, matches) {
       if (name) rows.push([key, String(i + 1), 'ABC'.charAt(t), name, saved]);
     })));
     replaceTrainingRows_(appSheet_(MATCHES_SHEET, MATCHES_HEADERS), MATCHES_HEADERS.length, key, rows);
-    clearGroupCache();
-    buildGroupData_();
+    patchGroupCache_('matches', key, matchesFromRows_(rows));
     return { ok: true, saved: saved };
   } finally {
     lock.releaseLock();
