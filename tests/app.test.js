@@ -135,14 +135,33 @@ test('Gem tilmeldte: another phone starts from the saved signups', { skip }, asy
   assert.deepEqual(home.errors.concat(pitch.errors), []);
 });
 
-test('Max-niveau: group 1 holds the most experienced', { skip }, async () => {
+test('Niveau (the middle of the band): group 1 holds the most experienced; cards, matches and Spilleroversigt show Niveau', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
+  assert.deepEqual(await page.locator('#grp-v [data-rule]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold']);
   await page.click('#grp-v [data-rule="max"]');
+  assert.deepEqual(await page.locator('#grp-v [data-diff]').allInnerTexts(), ['0', '0,5', '1', '1,5', '2']);
   await page.click('#grp-v [data-act="make"]');
-  const first = await cards(page).first().locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.p).sort());
-  assert.deepEqual(first, ['Alma', 'Bo', 'Carl', 'Noah']);
-  assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider in Max-niveau');
+  const names = i => cards(page).nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.p).sort());
+  assert.deepEqual(await names(0), ['Alma', 'Bo', 'Carl', 'Noah']);          // niveau 1,5 1,5 2 1,5
+  // group 2: Dina, Emil and Lucas (2–3 → 2,5) and one of Frida (2–4 → 3) and Pelle (2–4 → 3); by Fra it would be the 2s
+  const second = await names(1);
+  assert.deepEqual(second.filter(n => ['Dina', 'Emil', 'Lucas'].includes(n)), ['Dina', 'Emil', 'Lucas']);
+  assert.match(await cards(page).nth(0).locator('.grp-head').innerText(), /niveau 1,5–2/);
+  assert.match(await cards(page).nth(1).locator('.grp-head').innerText(), /niveau 2,5–3/);
+  assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider with Niveau');
+  await page.click('#grp-v [data-act="matches"]');
+  const chip = page.locator('#grp-v .grp-matches .grp-p', { hasText: 'Carl' });
+  assert.equal(await chip.locator('.grp-band').innerText(), '2', 'Carl (1–3) plays at niveau 2');
+  await page.click('#viewer-close').catch(() => {});
+  await page.goto(page.url());
+  await page.waitForSelector('#sessions .card');
+  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.waitForSelector('#ov .ov-p');
+  assert.match(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), /^2–4 · niveau 3$/);
+  assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), /^1–2 · niveau 1,5$/);
+  assert.match(await page.locator('#ov').innerText(), /midten af båndet/);
+  assert.deepEqual(page.errors, []);
 });
 
 test('Kampe til sidst: 3 groups give 2 matches with opposite numbers side by side', { skip }, async () => {
@@ -475,11 +494,11 @@ test('Kampe til sidst in puljer: pools by one rule, matches per pool by another,
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
   const sec = page.locator('#grp-v .grp-matches');
-  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['Bånd', 'Max-niveau', 'Kaos', 'Lige hold', '25-50-25']);
+  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold', '25-50-25']);
   assert.equal(await sec.locator('[data-pmode]').count(), 0, 'with 1 pulje: as before');
   assert.equal(await sec.locator('[data-mcount]').count(), 4);
   await sec.locator('[data-mpools="3"]').click();
-  assert.deepEqual(await sec.locator('[data-pmode]').allInnerTexts(), ['Bånd', 'Max-niveau', 'Kaos', 'Lige hold', '25-50-25']);
+  assert.deepEqual(await sec.locator('[data-pmode]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold', '25-50-25']);
   assert.equal(await sec.locator('[data-mcount]').count(), 0, 'the counts per pool replace "Antal kampe"');
   // 16 players: even pools 6 + 6 + 4, 2 matches each (pulje 3 also 2: 4 players allow it)
   assert.match(await sec.locator('.grp-sizes').innerText(), /Pulje 1\s*−?\s*2 kampe · 6 spillere[\s\S]*Pulje 3\s*−?\s*2 kampe · 4 spillere/);
