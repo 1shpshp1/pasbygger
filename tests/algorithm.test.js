@@ -265,3 +265,24 @@ test('Level mix: a soft transition around half a level (fully the same up to 0,2
   const hist = A.matchMix([[[['x', 'y'], ['z']]]], n => ({ x: 3, y: 2.5, z: 2.5 })[n]);
   assert.deepEqual(Array.from(hist.x), [0.5, 0.5, 0, 1]);
 });
+
+test('"Ingen modspiller" in turn: who had none is read from saved matches, and it rotates', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(A.spareCounts([[[['a', 'b'], ['c']]], [[['d'], ['e'], ['f', 'g']], [['h', 'i'], ['j', 'k']]]]))), { b: 1, g: 1 });
+  const P = [1, 1.5, 2, 2.5, 3, 3.5, 4.5].map((lo, i) => ({ name: 'p' + i, lo: lo }));
+  const run = (teams, size) => {
+    const saved = [], count = {};
+    for (let s = 1; s <= 8; s++) {
+      const [m] = Array.from(A.makePoolMatches(P.slice(0, size), [size], 'even', s, { level: p => p.lo, teams: teams, spares: A.spareCounts(saved) }));
+      const names = m.teams.map(t => t.map(p => p.name));
+      saved.unshift([names]);
+      const full = Math.min(...names.map(t => t.length));
+      names.forEach(t => t.slice(full).forEach(n => { count[n] = (count[n] || 0) + 1; }));
+    }
+    return count;
+  };
+  const two = run(2, 7);                                  // one without an opposite number each time
+  assert.ok(Object.keys(two).length >= 3 && Math.max(...Object.values(two)) <= 3, 'two teams: ' + JSON.stringify(two));
+  P.push({ name: 'p7', lo: 5 });
+  const three = run(3, 8);                                // two left over each time
+  assert.ok(Object.keys(three).length >= 4 && Math.max(...Object.values(three)) <= 4, 'three teams: ' + JSON.stringify(three));
+});

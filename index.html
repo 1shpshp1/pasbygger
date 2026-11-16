@@ -360,6 +360,9 @@
     .build { margin: 28px 0 0; color: #999999; font-size: 12px; }
     .plan-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: #666666; font-size: 14px; }
     .plan-bar .clearbtn:disabled { opacity: 0.5; cursor: default; }
+    .server-note { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #6b3a00; font-size: 14px; line-height: 1.4; }
+    .server-note a { color: inherit; font-weight: bold; }
+    @media (prefers-color-scheme: dark) { .server-note { background: #3a2a10; color: #ffd9a0; } }
 
     .v-sec + .v-sec { margin-top: 22px; padding-top: 18px; border-top: 1px solid #eeeeee; }
     .dchips + .v-sec { margin-top: 18px; }
@@ -724,7 +727,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (12)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (13)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -866,6 +869,31 @@ document.getElementById("v-fav").innerHTML = STAR_ICON;
 /* The address of the Apps Script web app (Deploy → Manage deployments → Web app URL, ends in /exec) */
 const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKxQ6XJmC3j3q8ElGVHbQa3EGpHn5Bh-JmOnzWcjTzA37C8/exec";
 
+/* The server files this app was made for: each reports its version (CODE_VERSION in Code.gs with the plan,
+   GRUPPER_VERSION in Grupper.gs with the players). An older deployed copy gives "Serveren er ikke opdateret" with
+   what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
+const SERVER_NEEDS = { code: 2, grupper: 2 };
+const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
+const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
+function serverOutdated() {
+  return ["code", "grupper"].filter(k => SERVER_HAS[k] != null && SERVER_HAS[k] < SERVER_NEEDS[k]);
+}
+function serverNoteHtml() {
+  const old = serverOutdated();
+  if (!old.length || !isAuthed()) return "";
+  const files = old.map(k => k === "code" ? "Code.gs" : "Grupper.gs");
+  return `⚠ Serveren er ikke opdateret til denne udgave af appen. Kopiér ${files.map(f => `<a href="${GITHUB_FILE(f)}" target="_blank" rel="noopener">${f}</a>`).join(" og ")} ` +
+    `fra GitHub ind i Apps Script (erstat hele filen), og vælg Deploy → Manage deployments → Edit → New version.`;
+}
+function updateServerNote() {
+  const el = document.getElementById("server-note");
+  if (el) { const html = serverNoteHtml(); if (el.innerHTML !== html) el.innerHTML = html; el.hidden = !html; }
+}
+function showServerNote() {
+  updateServerNote();
+  if (typeof GRP !== "undefined" && GRP && GRP.box && GRP.box.isConnected && GRP.data) renderGroups();
+}
+
 /* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
    The body is sent as plain text, which Google accepts from another website without extra checks. */
 function api(action, args) {
@@ -985,6 +1013,7 @@ function fetchPlan() {
     throw err;
   }).then(function (res) {
     PLAN_FETCH = null; PLAN_AT = Date.now(); PLAN_FAILED = false; PLAN_ERROR = null;
+    if (SERVER_HAS.code !== (res.server || 0)) { SERVER_HAS.code = res.server || 0; setTimeout(showServerNote); }
     if (!res.unchanged) {
       const text = JSON.stringify(res.sessions);
       let old = null;
@@ -1008,6 +1037,7 @@ function fetchPlan() {
 /* "Opdateret kl. 14:03 · Opdater" under the trainings */
 function updatePlanBar() {
   const time = document.getElementById("plan-time"), btn = document.getElementById("plan-refresh");
+  updateServerNote();
   if (!time || !btn) return;
   const at = PLAN_AT ? new Date(PLAN_AT) : null;
   const clock = at ? ("0" + at.getHours()).slice(-2) + ":" + ("0" + at.getMinutes()).slice(-2) : "";
@@ -1186,7 +1216,7 @@ function renderSessions(sessions) {
     `;
   }
 
-  html += `<div class="plan-bar"><span id="plan-time" role="status"></span><button type="button" class="clearbtn" id="plan-refresh">Opdater</button></div>`;
+  html += `<div class="plan-bar"><span id="plan-time" role="status"></span><button type="button" class="clearbtn" id="plan-refresh">Opdater</button></div><p id="server-note" class="server-note" role="status" hidden></p>`;
   const pastOpen = document.querySelector("#sessions .past-group[open]");   // keep "Tidligere træninger" open when the plan is updated
   document.getElementById("sessions").innerHTML = html;
   if (pastOpen && document.querySelector("#sessions .past-group")) document.querySelector("#sessions .past-group").open = true;
@@ -1280,6 +1310,7 @@ const isAuthed = () => !!AUTH.token && Date.now() < AUTH.until;
 /* The login is kept in localStorage, so it survives closing the app (sessionStorage is wiped by phones
    when the app is closed or put to sleep). It still ends after 30 minutes. */
 function saveAuth() {
+  setTimeout(updateServerNote);                        // logged in or out: the note is for coaches
   try {
     if (AUTH.token) localStorage.setItem("oevAuth", JSON.stringify(AUTH));
     else localStorage.removeItem("oevAuth");
@@ -2864,7 +2895,7 @@ function sizesFor(groups, count, sizes) {
          sizes.reduce((x, y) => x + y, 0) === players ? sizes.slice() : null;
 }
 
-function makeMatches(groups, level, seed, count, sizes, teams) {
+function makeMatches(groups, level, seed, count, sizes, teams, spares) {
   const rand = seededRandom(seed || 1);
   const known = [].concat.apply([], groups).map(level).filter(v => v != null && isFinite(v));
   const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
@@ -2886,18 +2917,19 @@ function makeMatches(groups, level, seed, count, sizes, teams) {
     let at = 0;
     (chosen || poolSizes(line.length, m)).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
   }
-  return poolsToMatches(pools, lv, home, rand, known, teams);
+  return poolsToMatches(pools, lv, home, rand, known, teams, spares);
 }
 
 /* Each match's players into two teams (player for player, see pairedSplit / unevenSplit), or three with
    teams = 3 (threeSplit; for "vinderen bliver på") */
-function poolsToMatches(pools, lv, home, rand, known, teamCount) {
+function poolsToMatches(pools, lv, home, rand, known, teamCount, spares) {
   const top = known.length ? Math.max.apply(null, known) : 1;           // experience points: top + 1 − level
   const avg = g => g.reduce((x, p) => x + lv(p), 0) / g.length;
+  const spareOf = p => (spares && spares[p.name]) || 0;                // times without an opposite number lately
   return pools.map(function (players) {
-    const teams = teamCount === 3 && players.length >= 3 ? threeSplit(players, lv, rand, p => top + 1 - lv(p))
-                : players.length % 2 && players.length <= 15 ? unevenSplit(players, lv, home, rand, p => top + 1 - lv(p))
-                                                             : pairedSplit(players, lv, home, rand);
+    const teams = teamCount === 3 && players.length >= 3 ? threeSplit(players, lv, rand, p => top + 1 - lv(p), spareOf)
+                : players.length % 2 && players.length <= 15 ? unevenSplit(players, lv, home, rand, p => top + 1 - lv(p), spareOf)
+                                                             : pairedSplit(players, lv, home, rand, spareOf);
     const from = [];
     players.forEach(p => { if (from.indexOf(home.get(p)) === -1) from.push(home.get(p)); });
     return teams && { groups: from, teams: teams, avg: teams.map(avg) };
@@ -3002,10 +3034,10 @@ function mixPools(all, sizes, level, lv, mix, rand) {
 }
 
 /* mix: matchMix(...). Returns what makeMatches returns, plus cat: { name: 0 | 1 | 2 } for this time */
-function makeMixMatches(groups, level, mix, seed, count, chosenSizes, teams) {
+function makeMixMatches(groups, level, mix, seed, count, chosenSizes, teams, spares) {
   const used = groups.filter(g => g.length);
   const m = matchCount(groups, count), chosen = sizesFor(groups, count, chosenSizes);
-  if (m < 2) return makeMatches(groups, level, seed, 1, null, teams);   // one match: nothing to place players between
+  if (m < 2) return makeMatches(groups, level, seed, 1, null, teams, spares);   // one match: nothing to place players between
   const rand = seededRandom(seed || 1);
   const all = [].concat.apply([], used);
   const known = all.map(level).filter(v => v != null && isFinite(v));
@@ -3017,9 +3049,25 @@ function makeMixMatches(groups, level, mix, seed, count, chosenSizes, teams) {
   let pools = placed.pools;
   if (!chosen) pools = pools.map(ps => ({ ps: ps, avg: ps.reduce((x, p) => x + lv(p), 0) / ps.length }))   // chosen sizes stay
     .sort((x, y) => x.avg - y.avg).map(o => o.ps);                                                     // with their match
-  const out = poolsToMatches(pools, lv, home, rand, known, teams);
+  const out = poolsToMatches(pools, lv, home, rand, known, teams, spares);
   out.cat = cat;
   return out;
+}
+
+/* ---- "Ingen modspiller" in turn ----
+   With an odd number of players one plays without an opposite number (and in a match with three teams, the one or
+   two players left over). The best pairs alone would often pick the same player week after week, so each earlier
+   time (saved matches, the last 12 trainings) counts as SPARE_WEIGHT levels against being picked again. */
+const SPARE_WEIGHT = 0.5;
+/* { name: times without an opposite number } in saved matches (newest first, each [[team A names], [team B names], …]):
+   the teams keep the order of opposite numbers, so anyone further down than the shortest team had none */
+function spareCounts(earlier) {
+  const n = {};
+  earlier.slice(0, GROUP_HISTORY).forEach(ms => ms.forEach(function (teams) {
+    const full = Math.min(...teams.map(t => t.length));
+    teams.forEach(t => t.slice(full).forEach(name => { n[name] = (n[name] || 0) + 1; }));
+  }));
+  return n;
 }
 
 /* One team has a player fewer (odd number of players): the pairs may be a little less close if that makes
@@ -3029,7 +3077,8 @@ function makeMixMatches(groups, level, mix, seed, count, chosenSizes, teams) {
    (both teams by level; the extra player is the one that leaves the closest pairs) and the total gap is the
    difference in experience points. Then mixing of the groups, then at random among equals. */
 const ODD_TOTAL_WEIGHT = 0.75;
-function unevenSplit(players, lv, home, rand, points) {
+function unevenSplit(players, lv, home, rand, points, spareOf) {
+  spareOf = spareOf || (() => 0);
   const n = players.length, big = (n + 1) / 2, firstGroup = home.get(players[0]);
   let best = null, bestCost = Infinity, ties = 0;
   for (let mask = 0; mask < (1 << n); mask++) {
@@ -3043,6 +3092,7 @@ function unevenSplit(players, lv, home, rand, points) {
     for (let k = 0; k < a.length; k++) {
       let g = 0;
       a.filter((p, j) => j !== k).forEach((p, j) => { g += Math.abs(lv(p) - lv(b[j])); });
+      g += SPARE_WEIGHT * spareOf(a[k]);                  // (had no opposite number lately: rather someone else)
       if (g < pairs) { pairs = g; skip = k; }
     }
     const total = Math.abs(a.reduce((x, p) => x + points(p), 0) - b.reduce((x, p) => x + points(p), 0));
@@ -3077,9 +3127,29 @@ function poolSizes(n, m, t) {
    two or one of the teams. The splits are turned (all 6 ways per three) while the teams' average levels get
    closer; with uneven teams, the teams with a player fewer also get a little more experience (points), as for two
    teams. A few random starts, the best kept (equally good ones at random). */
-function threeSplit(players, lv, rand, points) {
-  const line = byLevel(players, lv, rand), units = [];
+function threeSplit(players, lv, rand, points, spareOf) {
+  spareOf = spareOf || (() => 0);
+  const all = byLevel(players, lv, rand), r = all.length % 3, units = [];
+  // who is left over (r players, no full line of three): the choice leaving the closest threes, and not the same
+  // players as last time (SPARE_WEIGHT); equally good choices at random
+  let out = [];
+  if (r) {
+    const spread = rest => { let c = 0; for (let i = 0; i < rest.length; i += 3) c += lv(rest[i + 2]) - lv(rest[i]); return c; };
+    let best = Infinity, picks = [];
+    const tryOut = idx => {
+      const rest = all.filter((p, i) => idx.indexOf(i) === -1);
+      const c = spread(rest) + SPARE_WEIGHT * idx.reduce((x, i) => x + spareOf(all[i]), 0);
+      if (c < best - 1e-9) { best = c; picks = [idx]; } else if (Math.abs(c - best) <= 1e-9) picks.push(idx);
+    };
+    for (let i = 0; i < all.length; i++) {
+      if (r === 1) tryOut([i]);
+      else for (let j = i + 1; j < all.length; j++) tryOut([i, j]);
+    }
+    out = picks[Math.floor(rand() * picks.length)];
+  }
+  const line = all.filter((p, i) => out.indexOf(i) === -1);
   for (let i = 0; i < line.length; i += 3) units.push(line.slice(i, i + 3));
+  if (out.length) units.push(out.map(i => all[i]));
   const PERMS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
   function build(pick) {
     const t = [[], [], []];
@@ -3128,7 +3198,8 @@ function threeSplit(players, lv, rand, points) {
    2. the teams' average levels as equal as possible;
    3. both teams with players from each group;
    4. among splits that are equally good, one at random (so "Lav nye kampe" gives another). */
-function pairedSplit(players, lv, home, rand) {
+function pairedSplit(players, lv, home, rand, spareOf) {
+  spareOf = spareOf || (() => 0);
   if (players.length < 2) return null;
   let line = byLevel(players, lv, rand), spare = null;
   if (line.length % 2) {                                 // who plays without an opposite number
@@ -3137,6 +3208,7 @@ function pairedSplit(players, lv, home, rand) {
       const rest = line.filter((p, j) => j !== i);
       let gap = 0;
       for (let j = 0; j < rest.length; j += 2) gap += Math.abs(lv(rest[j]) - lv(rest[j + 1]));
+      gap += SPARE_WEIGHT * spareOf(line[i]);
       if (gap < best - 1e-9) { best = gap; picks = [i]; } else if (Math.abs(gap - best) <= 1e-9) picks.push(i);
     }
     const i = picks[Math.floor(rand() * picks.length)];
@@ -3252,7 +3324,8 @@ function assignPools(players, sizes, kind, rand, lv, mean, opts) {
      "pools" – the matches given (opts.pools).
    Except in Kaos, each match is split into two equally strong teams player for player (pairedSplit /
    unevenSplit). Without chosen sizes the matches are listed most experienced first.
-   opts: { level(p), meet(a, b), home: Map player → group number, pools, keepOrder, teams: 2 or 3 per match } */
+   opts: { level(p), meet(a, b), home: Map player → group number, pools, keepOrder, teams: 2 or 3 per match,
+           spares: spareCounts(...), who had no opposite number lately } */
 /* Kaos: shuffled players dealt into t teams of near-equal size (the first teams one more) */
 function chaosTeams(mixed, t) {
   const teams = Array.from({ length: t }, () => []);
@@ -3273,7 +3346,7 @@ function makePoolMatches(players, sizes, kind, seed, opts) {
       return { groups: [], teams: teams, avg: teams.map(t => t.length ? t.reduce((x, p) => x + lv(p), 0) / t.length : mean) };
     });
   }
-  return poolsToMatches(pools.filter(ps => ps.length >= 2), lv, opts.home || new Map(), rand, known, opts.teams);
+  return poolsToMatches(pools.filter(ps => ps.length >= 2), lv, opts.home || new Map(), rand, known, opts.teams, opts.spares);
 }
 
 /* ---- "Niveau": sorted by level (the app passes Niveau, the middle of the band) ----
@@ -3312,6 +3385,7 @@ function fetchGroupData() {
     return libCall("getGroupData", [AUTH.token, asked ? asked.version : ""]);
   }).then(function (res) {
     GRP_FETCH = null;
+    if (SERVER_HAS.grupper !== (res.server || 0)) { SERVER_HAS.grupper = res.server || 0; setTimeout(showServerNote); }
     // "unchanged" refers to the copy that was asked about, which a login running out meanwhile may have cleared
     if (res.unchanged && asked) { if (!GRP_CACHE || GRP_CACHE.version === asked.version) GRP_CACHE = asked; }
     else if (!res.unchanged || !GRP_CACHE) {
@@ -3443,6 +3517,7 @@ function openGroups(index) {
   const s = SESSIONS[index];
   if (!s) return;
   if (!canGroup()) { requireLogin(function () { openGroups(index); }); return; }
+  if (GRP && GRP.box && GRP.box.id === "grp-tab" && unsavedText()) { leaveGroups(function () { openGroups(index); }); return; }   // the tab's unsaved work
   openViewer(danishDate(s.iso, s.date), [{ title: "Grupper", html: '<div id="grp-v" class="grp"></div>' }],
              document.getElementById("sheader-" + index), function () { openSession(index); });
   startGroups(sessionKey(s), document.getElementById("grp-v"), function () { openGroups(index); });
@@ -3460,6 +3535,51 @@ document.getElementById("grp-date").addEventListener("change", function () {
   if (GRP && GRP.box === document.getElementById("grp-tab") && GRP.dirty &&
       !confirm("Grupperne er ikke gemt. Skift dato alligevel?")) { this.value = GRP.key.slice(0, 10); return; }
   openGroupsTab();
+});
+
+/* ---- Unsaved groups or matches: asked before they are lost ----
+   Leaving a training's Grupper ("Tilbage", Escape), opening another training's Grupper over unsaved work in the
+   Grupper tab, and closing or reloading the app. 25-50-25 and Spilleroversigt only learn from what is saved. */
+function unsavedText() {
+  if (!GRP || !GRP.data || !GRP.box || !GRP.box.isConnected) return "";
+  const groups = GRP.dirty && GRP.groups && GRP.groups.some(g => g.length);
+  const matches = GRP.matchesDirty && GRP.matches && GRP.matches.length && GRP.matchesFor === groupsSignature();
+  return groups && matches ? "Grupperne og kampene" : groups ? "Grupperne" : matches ? "Kampene" : "";
+}
+function leaveGroups(proceed) {
+  const what = unsavedText();
+  if (!what) { proceed(); return; }
+  if (document.querySelector(".leave-ask")) return;       // already asking
+  const want = GRP, back = document.activeElement;
+  const box = document.createElement("div");
+  box.className = "login leave-ask";
+  box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "leave-title");
+  box.innerHTML = `<div class="login-box"><h2 id="leave-title">${what} er ikke gemt</h2>
+    <p>Gemte grupper og kampe bruges til at variere de næste grupper og kampe og til Spilleroversigt.</p>
+    <div class="login-actions" style="flex-wrap:wrap">
+      <button type="button" class="clearbtn" data-leave="stay">Bliv</button>
+      <button type="button" class="clearbtn" data-leave="drop">Luk uden at gemme</button>
+      <button type="button" class="login-go" data-leave="save">Gem og luk</button></div></div>`;
+  document.body.appendChild(box);
+  const close = function () { box.remove(); };
+  box.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.stopPropagation(); close(); if (back) back.focus(); } });
+  box.addEventListener("click", function (e) {
+    const b = e.target.closest("[data-leave]");
+    if (!b) return;
+    close();
+    if (b.dataset.leave === "stay") { if (back && back.isConnected) back.focus(); return; }
+    if (b.dataset.leave === "save" && GRP === want) {    // on the phone at once, sent in the background (see saveNow)
+      if (want.dirty && want.groups.some(g => g.length)) keepForLater(want, "groups", want.groups.filter(g => g.length).map(g => g.map(p => p.name)));
+      if (want.matchesDirty && want.matches && want.matches.length) keepForLater(want, "matches", want.matches.map(m => m.teams.map(t => t.map(p => p.name))));
+      sendQueue();
+    }
+    if (GRP === want) { want.dirty = false; want.matchesDirty = false; }   // (dropped: not asked again for these)
+    proceed();
+  });
+  box.querySelector('[data-leave="save"]').focus();
+}
+window.addEventListener("beforeunload", function (e) {   // closing or reloading the app: the browser asks
+  if (unsavedText()) { e.preventDefault(); e.returnValue = ""; }
 });
 
 /* "Tirsdag den 3. november 2026", with "(uden træning)" for groups made in the Grupper tab */
@@ -3504,6 +3624,7 @@ function renderOverview() {
   const mix = skillMix(sessions, skill);                             // over the last 12, as the groups use it
   const mKeys = Object.keys(data.matches || {}).sort().reverse();
   const mMix = matchMix(mKeys.map(k => data.matches[k].matches), name => skill[name] == null ? NaN : skill[name]);
+  const spared = spareCounts(mKeys.map(k => data.matches[k].matches));
   const stats = data.players.map(function (p) {
     let times = 0, last = "";
     const mates = {};
@@ -3529,7 +3650,8 @@ function renderOverview() {
         `<span class="ov-more" style="width:${a}%"></span><span class="ov-same" style="width:${b}%"></span><span class="ov-less" style="width:${c}%"></span></div>` +
         `<p class="ov-line">${a} % med mere øvede · ${b} % samme niveau · ${c} % med mindre øvede</p>`;
     } else if (s.times && s.p.lo == null) mixHtml = `<p class="ov-line">Har intet niveau i fanen Spillere.</p>`;
-    const mm = s.mmix && s.mmix[3] ? `<p class="ov-line">Kampe (${s.mmix[3]}): ${pct(s.mmix, 0)} % sværere · ${pct(s.mmix, 1)} % eget niveau · ${pct(s.mmix, 2)} % lettere</p>` : "";
+    const alone = spared[s.p.name] ? ` · ${spared[s.p.name]} ${spared[s.p.name] === 1 ? "gang" : "gange"} uden modspiller` : "";
+    const mm = s.mmix && s.mmix[3] ? `<p class="ov-line">Kampe (${s.mmix[3]}): ${pct(s.mmix, 0)} % sværere · ${pct(s.mmix, 1)} % eget niveau · ${pct(s.mmix, 2)} % lettere${alone}</p>` : "";
     return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
       mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
@@ -3790,7 +3912,8 @@ function makeMatchesNow() {
   const custom = GRP.sizeMode === "custom" ? chosenSizes() : null;
   const players = GRP.groups.flat(), home = new Map();
   GRP.groups.forEach((g, i) => g.forEach(p => home.set(p, i + 1)));
-  const mode = matchMode(), opts = { level: fraOf, meet: strictMeet, home: home };
+  const spares = spareCounts(earlierMatches());            // "ingen modspiller" in turn
+  const mode = matchMode(), opts = { level: fraOf, meet: strictMeet, home: home, spares: spares };
   const mixOf = () => matchMix(earlierMatches(), levelOfName);
   if (poolCount() > 1) {                                 // pools first, then matches within each
     const counts = subCounts();
@@ -3801,7 +3924,7 @@ function makeMatchesNow() {
       at += counts[i];
       if (ps.length < 2) return [];
       const s = sz && sz.length === c ? sz : Array.from(poolSizes(ps.length, c, teamsIn(i)));
-      const ms = Array.from(mode === "mix" ? makeMixMatches([ps], fraOf, mixOf(), seed + 1 + i, s.length, s, teamsIn(i))
+      const ms = Array.from(mode === "mix" ? makeMixMatches([ps], fraOf, mixOf(), seed + 1 + i, s.length, s, teamsIn(i), spares)
                                            : makePoolMatches(ps, s, mode, seed + 1 + i, Object.assign({ keepOrder: true, teams: teamsIn(i) }, opts)));
       ms.forEach(m => { m.pool = i + 1; });
       return ms;
@@ -3809,7 +3932,7 @@ function makeMatchesNow() {
   } else {
     const m = subCounts()[0], t = teamsIn(0);
     const sizes = (custom && custom.length === m && !sizesOff() && custom.slice()) || Array.from(poolSizes(players.length, m, t));
-    GRP.matches = Array.from(mode === "mix" ? makeMixMatches(GRP.groups, fraOf, mixOf(), seed, m, custom ? sizes : null, t)
+    GRP.matches = Array.from(mode === "mix" ? makeMixMatches(GRP.groups, fraOf, mixOf(), seed, m, custom ? sizes : null, t, spares)
                                             : makePoolMatches(players, sizes, mode, seed, Object.assign({ keepOrder: !!custom, teams: t }, opts)));
   }
   GRP.matchesFor = groupsSignature();
@@ -3849,7 +3972,7 @@ function rebalanceMatch(mi) {
   const home = new Map();
   GRP.groups.forEach((g, i) => g.forEach(p => home.set(p, i + 1)));
   const allKnown = GRP.groups.flat().map(fraOf).filter(v => v != null);
-  const [again] = poolsToMatches([players], lv, home, seededRandom(hashText(GRP.key + "|igen|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1))), allKnown, t);
+  const [again] = poolsToMatches([players], lv, home, seededRandom(hashText(GRP.key + "|igen|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1))), allKnown, t, spareCounts(earlierMatches()));
   if (again) { m.teams = again.teams; GRP.matchesDirty = true; }
   GRP.matchSel = null;
   renderGroups();
@@ -4104,6 +4227,7 @@ function renderGroups() {
     </section>`;
 
   if (GRP.msg) html += `<p class="grp-msg${GRP.bad ? " bad" : ""}" role="status">${esc(GRP.msg)}</p>`;
+  if (serverNoteHtml()) html = `<p class="server-note" role="status" style="margin-bottom:12px">${serverNoteHtml()}</p>` + html;
 
   if (GRP.groups) {
     html += `<div class="grp-list">` + GRP.groups.map(function (g, gi) {
@@ -4511,7 +4635,9 @@ function openViewer(title, pages, opener, onBack, drill) {
 }
 
 function goBack() {
-  if (V.onBack) { const f = V.onBack; V.onBack = null; f(); } else closeDrill();
+  const go = function () { if (V.onBack) { const f = V.onBack; V.onBack = null; f(); } else closeDrill(); };
+  if (GRP && GRP.box && document.getElementById("viewer").contains(GRP.box)) leaveGroups(go);   // leaving a training's Grupper
+  else go();
 }
 
 function closeDrill() {

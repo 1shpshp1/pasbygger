@@ -1,3 +1,6 @@
+/* The version of this file. Raise it by one whenever Code.gs changes: the app (index.html, SERVER_NEEDS) says
+   "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
+const CODE_VERSION = 2;
 const SHEET_NAME = 'Træningspas Efterår \'26';
 const DRILLS_SHEET = 'Øvelser';   // tab with the drill library
 /* The password for the "Øvelser" tab is NOT written in this file.
@@ -307,8 +310,8 @@ function clearPlanCache() {
 
 function getPlan(version) {
   const plan = cachedPlan_() || buildPlan_();
-  if (version && version === plan.version) return { unchanged: true, version: plan.version };
-  return { version: plan.version, sessions: JSON.parse(plan.json) };
+  if (version && version === plan.version) return { unchanged: true, version: plan.version, server: CODE_VERSION };
+  return { version: plan.version, sessions: JSON.parse(plan.json), server: CODE_VERSION };
 }
 
 /* Throws "LOGIN" unless the code is valid. (The trailing underscore keeps it private to the server.) */

@@ -32,7 +32,8 @@ test('getGroupData sends the players, and only "unchanged" when nothing has chan
   const d = srv.call('getGroupData', t).result;
   assert.equal(d.players.length, 16);
   assert.deepEqual(d.players[0], { name: 'Alma', lo: 1, hi: 2 });
-  assert.deepEqual(srv.call('getGroupData', t, d.version).result, { unchanged: true, version: d.version });
+  assert.deepEqual(srv.call('getGroupData', t, d.version).result, { unchanged: true, version: d.version, server: d.server });
+  assert.ok(d.server >= 2, 'Grupper.gs says its version');
 });
 
 test('saveGroups replaces one training\'s groups, and [] removes them', () => {
@@ -134,7 +135,8 @@ test('getPlan: the plan from the cache, "unchanged" when the phone has it, new a
   const first = srv.call('getPlan', '').result;
   assert.equal(first.sessions.length, 3);
   assert.deepEqual(first.sessions, srv.call('getSessions').result, 'the same as reading the sheet');
-  assert.deepEqual(srv.call('getPlan', first.version).result, { unchanged: true, version: first.version });
+  assert.deepEqual(srv.call('getPlan', first.version).result, { unchanged: true, version: first.version, server: first.server });
+  assert.ok(first.server >= 2, 'Code.gs says its version');
   const plan = srv.book["Træningspas Efterår '26"];
   plan.getRange(2, 8).setValue('Ny station 1');                    // an edit by hand in the plan tab
   assert.equal(srv.call('getPlan', first.version).result.unchanged, true, 'before onEdit, the cached copy');
