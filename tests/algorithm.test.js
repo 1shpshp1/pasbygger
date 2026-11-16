@@ -174,14 +174,26 @@ test('Chosen match sizes: used when they add up to the players, in both modes', 
   assert.ok(big[0].avg[0] <= big[2].avg[0], 'Niveau: match 1 is still the most experienced');
 });
 
-test('Two levels first: sized by their number of groups, the most experienced in the first', () => {
+test('Puljer: splitPools gives the chosen sizes by every rule; Max-niveau puts the most experienced first', () => {
   const players = squad().concat([{ name: 'Q1', lo: 2, hi: 3 }, { name: 'Q2', lo: 3, hi: 4 }, { name: 'Q3', lo: 5, hi: 5 }, { name: 'Q4', lo: 1, hi: 2 }]);
-  const [top, low] = A.tierSplit(players, [2, 3], p => p.lo, 1);
-  assert.equal(top.length, 8); assert.equal(low.length, 12);
-  assert.ok(Math.max(...top.map(p => p.lo)) <= Math.min(...low.map(p => p.lo)));
+  const opts = { level: p => p.lo, meet: A.bandsMeet, keepOrder: true, mix: {} };
+  for (const kind of ['max', 'band', 'even', 'chaos', 'mix']) {
+    const pools = Array.from(A.splitPools(players, [6, 6, 8], kind, 3, opts));
+    assert.deepEqual(pools.map(p => p.length), [6, 6, 8], kind + ': sizes kept');
+    assert.equal(new Set(pools.flat().map(p => p.name)).size, 20, kind + ': everyone once');
+  }
+  const [top, mid, low] = Array.from(A.splitPools(players, [6, 6, 8], 'max', 1, opts));
+  assert.ok(Math.max(...top.map(p => p.lo)) <= Math.min(...mid.map(p => p.lo)));
+  assert.ok(Math.max(...mid.map(p => p.lo)) <= Math.min(...low.map(p => p.lo)));
+  const avg = ps => ps.reduce((x, p) => x + p.lo, 0) / ps.length;
+  const even = Array.from(A.splitPools(players, [10, 10], 'even', 1, opts));
+  assert.ok(Math.abs(avg(even[0]) - avg(even[1])) <= 0.1 + 1e-9, 'Lige hold: pools as equal as possible');
+  const draws = new Set();
+  for (let seed = 1; seed <= 10; seed++) draws.add(A.splitPools(players, [10, 10], 'chaos', seed, opts)[0].map(p => p.name).sort().join());
+  assert.ok(draws.size >= 9, 'Kaos: different pools each time');
 });
 
-test('Del kampene efter: Max-niveau, Bånd, Lige hold, Kaos and Niveauer', () => {
+test('Del kampene efter: Max-niveau, Bånd, Lige hold, Kaos and given pools', () => {
   const P = squad(), opts = { level: p => p.lo, meet: A.bandsMeet };
   const all = ms => Array.from(ms).reduce((n, m) => n + m.teams[0].length + m.teams[1].length, 0);
   const avg = m => { const ps = m.teams[0].concat(m.teams[1]); return ps.reduce((x, p) => x + p.lo, 0) / ps.length; };
