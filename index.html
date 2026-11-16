@@ -615,6 +615,11 @@
     .grp .ov-p .ov-lab { min-width: 3.6em; color: #333333; font-size: 13px; }
     .grp .ov-p .ov-val { color: #333333; font-size: 13px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .grp .ov-p .ov-goal { color: #666666; }
+    .grp .ov-up, .grp .ov-eq, .grp .ov-dn { font-style: normal; font-weight: bold; }
+    .grp .ov-up { color: #AD152F; }
+    .grp .ov-eq { color: #c4788a; }
+    .grp .ov-dn { color: #8a8a8a; }
+    .grp .ov-key i { margin-right: -2px; }
     .ov-bars .ov-aim .ov-less { background: #b3b3b3; }
     .ov-bars .ov-empty { background: repeating-linear-gradient(45deg, #ececec 0 6px, #f7f7f7 6px 12px); }
     .grp .ov-how { margin: 0 0 12px; color: #555555; font-size: 14px; }
@@ -743,7 +748,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (17)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (18)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -3687,21 +3692,23 @@ function renderOverview() {
   stats.sort(OV_SORT === "times" ? (a, b) => b.times - a.times || a.p.name.localeCompare(b.p.name, "da")
                                  : (a, b) => a.p.name.localeCompare(b.p.name, "da"));
   const pct = (m, r) => Math.round(100 * m[r] / m[3]);
-  const three = v => v.map(x => Math.round(100 * x)).join(" / ");
   const segs = shares => `<span class="ov-more" style="width:${100 * shares[0]}%"></span><span class="ov-same" style="width:${100 * shares[1]}%"></span>` +
     `<span class="ov-less" style="width:${100 * shares[2]}%"></span>`;
   /* One section (Grupper or Kampe): the actual mix as a bar, the player's aim as a thinner bar right under it with
      the same colours (so the edges can be compared), and the numbers */
-  function section(title, count, m, aim, names, empty, extra) {
+  /* The three numbers with what they mean: "↑ 0 · = 39 · ↓ 61 %" (the arrows in the colours of the bar) */
+  const arrows = v => `<i class="ov-up">↑</i>&#8239;${v[0]} · <i class="ov-eq">=</i>&#8239;${v[1]} · <i class="ov-dn">↓</i>&#8239;${v[2]} %`;
+  const names = ["spiller op", "samme niveau", "spiller ned"];
+  function section(title, count, m, aim, empty, extra) {
     const has = m && m[3];
     const shares = has ? [0, 1, 2].map(r => m[r] / m[3]) : null;
     const label = has ? `${title}: ${[0, 1, 2].map(r => pct(m, r) + " % " + names[r]).join(", ")}.` : `${title}: ${empty}.`;
-    const goal = aim ? ` Mål: ${three(aim)}.` : "";
+    const goal = aim ? ` Mål: ${[0, 1, 2].map(r => Math.round(100 * aim[r]) + " % " + names[r]).join(", ")}.` : "";
     return `<div class="ov-sec"><div class="ov-sechead"><span class="ov-title">${title}</span><small>${has ? count : empty}${extra || ""}</small></div>
       <div class="ov-bars" role="img" aria-label="${esc(label + goal)}">
         <span class="ov-lab">Faktisk</span><div class="ov-bar${has ? "" : " ov-empty"}">${has ? segs(shares) : ""}</div>
-        <span class="ov-val">${has ? [0, 1, 2].map(r => pct(m, r)).join(" / ") + " %" : "–"}</span>
-        ${aim ? `<span class="ov-lab ov-goal">Mål</span><div class="ov-bar ov-aim">${segs(aim)}</div><span class="ov-val ov-goal">${three(aim)} %</span>` : ""}</div></div>`;
+        <span class="ov-val">${has ? arrows([0, 1, 2].map(r => pct(m, r))) : "–"}</span>
+        ${aim ? `<span class="ov-lab ov-goal">Mål</span><div class="ov-bar ov-aim">${segs(aim)}</div><span class="ov-val ov-goal">${arrows(aim.map(x => Math.round(100 * x)))}</span>` : ""}</div></div>`;
   }
   const rows = stats.map(function (s) {
     const band = s.p.lo == null ? "" : `<span class="grp-band">${bandText(s.p.lo, s.p.hi)}${s.p.lo !== s.p.hi ? " · niveau " + nivText(nivOf(s.p)) : ""}</span>`;
@@ -3710,15 +3717,13 @@ function renderOverview() {
     if (me != null) others.splice(others.indexOf(me), 1);          // everyone but the player
     const aim = me == null ? null : playerAim(me, others);
     const why = !aim || Math.abs(aim[1] - 0.5) <= 0.005 ? ""
-      : aim[0] < 0.005 ? "Ingen er mere øvede, så målet er mere på eget niveau."
-      : aim[2] < 0.005 ? "Ingen er mindre øvede, så målet er mere på eget niveau."
-      : `Få er ${aim[0] < aim[2] ? "mere" : "mindre"} øvede, så målet er lidt mere på eget niveau.`;
+      : aim[0] < 0.005 ? "Ingen er mere øvede at spille op med, så målet er mere på samme niveau."
+      : aim[2] < 0.005 ? "Ingen er mindre øvede at spille ned med, så målet er mere på samme niveau."
+      : `Få er ${aim[0] < aim[2] ? "mere øvede at spille op med" : "mindre øvede at spille ned med"}, så målet er lidt mere på samme niveau.`;
     const alone = spared[s.p.name] ? ` · ${spared[s.p.name]}× uden modspiller` : "";
     const body = me == null ? `<p class="ov-line">Har intet niveau i fanen Spillere, så niveau-mixet kan ikke regnes ud.</p>`
-      : section("Grupper", s.mix && s.mix[3] ? `${s.mix[3]} ${s.mix[3] === 1 ? "træning" : "træninger"}` : "", s.mix, aim,
-                ["med mere øvede", "samme niveau", "med mindre øvede"], "ingen gemte grupper endnu") +
-        section("Kampe til træning", s.mmix && s.mmix[3] ? `${s.mmix[3]} ${s.mmix[3] === 1 ? "kamp" : "kampe"}` : "", s.mmix, aim,
-                ["sværere", "eget niveau", "lettere"], "ingen gemte kampe endnu", alone) +
+      : section("Grupper", s.mix && s.mix[3] ? `${s.mix[3]} ${s.mix[3] === 1 ? "træning" : "træninger"}` : "", s.mix, aim, "ingen gemte grupper endnu") +
+        section("Kampe til træning", s.mmix && s.mmix[3] ? `${s.mmix[3]} ${s.mmix[3] === 1 ? "kamp" : "kampe"}` : "", s.mmix, aim, "ingen gemte kampe endnu", alone) +
         (why ? `<p class="ov-line">${why}</p>` : "");
     return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
       body + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
@@ -3727,9 +3732,10 @@ function renderOverview() {
     `For hver spiller: med hvem de har været i grupper og kampe (de seneste 12 træninger), og målet for dem.</p>
     <details class="ov-how"><summary>Sådan regnes det</summary>
       <p><b>Niveau</b> er midten af båndet (Fra–Til 2–3 giver 2,5).</p>
-      <p><b>Grupper:</b> hver medspiller i gruppen tæller som mere øvede, samme niveau eller mindre øvede. <b>Kampe til træning:</b> hver af de andre spillere i kampen (begge hold) tæller som sværere, eget niveau eller lettere.</p>
-      <p><b>Samme niveau:</b> op til 0,25 fra spilleren tæller helt som samme niveau, 0,75 eller mere helt som mere/mindre øvede, og ind imellem delvist (0,5 fra: halvt af hver).</p>
-      <p><b>Målet</b> er 25 / 50 / 25. De mest øvede har ingen mere øvede at spille med (og de mindst øvede ingen mindre øvede), så den del går til samme niveau: 0 / 75 / 25 for den mest øvede, 25 / 75 / 0 for den mindst øvede.</p>
+      <p><b>↑ Spiller op</b> betyder med mere øvede spillere, <b>= samme niveau</b> med spillere på omtrent samme niveau, og <b>↓ spiller ned</b> med mindre øvede spillere.</p>
+      <p><b>Grupper:</b> hver medspiller i gruppen tæller som op, samme eller ned. <b>Kampe til træning:</b> hver af de andre spillere i kampen (begge hold) tæller som op, samme eller ned, så en kamp med mest mere øvede spillere er en kamp, hvor spilleren spiller op.</p>
+      <p><b>Samme niveau:</b> op til 0,25 fra spilleren tæller helt som samme niveau, 0,75 eller mere helt som op eller ned, og ind imellem delvist (0,5 fra: halvt af hver).</p>
+      <p><b>Målet</b> er ↑ 25 · = 50 · ↓ 25 %. De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så den del går til samme niveau: ↑ 0 · = 75 · ↓ 25 % for den mest øvede, ↑ 25 · = 75 · ↓ 0 % for den mindst øvede.</p>
       <p><b>Fremmøde</b> tæller kun træninger, hvor grupperne er gemt (også grupper lavet uden en træning).</p>
     </details>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
@@ -3737,7 +3743,7 @@ function renderOverview() {
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
         <button type="button" data-sort="times" aria-pressed="${OV_SORT === "times"}">Fremmøde</button>
       </div></div>
-    <p class="ov-key"><span class="ov-more"></span>mere øvede / sværere <span class="ov-same"></span>samme / eget niveau <span class="ov-less"></span>mindre øvede / lettere</p>
+    <p class="ov-key"><span class="ov-more"></span><i class="ov-up">↑</i> spiller op <span class="ov-same"></span><i class="ov-eq">=</i> samme niveau <span class="ov-less"></span><i class="ov-dn">↓</i> spiller ned</p>
     <p class="ov-key">Faktisk: det, spilleren har haft (de seneste 12 træninger) · Mål: det, grupperne og kampene sigter efter</p>
     <div class="ov-list">${rows || "<p>Fanen Spillere er tom.</p>"}</div>`;
 }
