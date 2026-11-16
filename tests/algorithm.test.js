@@ -161,3 +161,15 @@ test('Antal kampe: 4 groups can give 1, 2, 3 or 4 matches in both modes; Auto is
   const three = A.makeMatches(groups, p => p.lo, 1, 3);
   assert.ok(three[0].avg[0] <= three[1].avg[0] && three[1].avg[0] <= three[2].avg[0], 'Niveau: most experienced match first');
 });
+
+test('Chosen match sizes: used when they add up to the players, in both modes', () => {
+  const groups = A.sortedGroups(squad(), 4, p => p.lo, 1);
+  const sizes = ms => Array.from(ms, m => m.teams[0].length + m.teams[1].length);
+  assert.deepEqual(sizes(A.makeMatches(groups, p => p.lo, 1, 3, [4, 4, 8])), [4, 4, 8]);
+  assert.deepEqual(sizes(A.makeMixMatches(groups, p => p.lo, {}, 1, 3, [4, 4, 8])), [4, 4, 8]);
+  assert.deepEqual(sizes(A.makeMatches(groups, p => p.lo, 1, 2, [10, 6])), [10, 6]);
+  assert.equal(A.sizesFor(groups, 3, [5, 5, 5]), null, 'sizes that don\'t add up to 16 are not used');
+  assert.deepEqual(sizes(A.makeMatches(groups, p => p.lo, 1, 3, [5, 5, 5])), [6, 6, 4], 'even sizes instead');
+  const big = A.makeMatches(groups, p => p.lo, 1, 3, [4, 4, 8]);
+  assert.ok(big[0].avg[0] <= big[2].avg[0], 'Niveau: match 1 is still the most experienced');
+});

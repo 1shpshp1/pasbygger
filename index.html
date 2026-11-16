@@ -610,6 +610,13 @@
 
     /* "Kampe til sidst" */
     .grp-arrow { margin-right: 4px; color: var(--red); font-weight: bold; }
+    .grp-sizes { margin-top: 8px; }
+    .grp-sizerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0; }
+    .grp .grp-sizerow output { min-width: 9.5em; font-size: 15px; font-weight: normal; text-align: center; }
+    .grp .grp-off { color: #b00020; font-weight: bold; }
+    .grp-sizerow > span:first-child { white-space: nowrap; }
+    .grp-matchtools { margin-top: 10px; gap: 6px 8px; }
+    .grp-matchtools .grp-here { margin-top: 0; }
     .grp-matches { margin-top: 22px; }
     .grp-matches h3 { margin: 0 0 4px; }
     .grp-matches .grp-card { margin-top: 12px; }
@@ -706,7 +713,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026</p>
+<p class="build" id="build">App-version 16. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2733,6 +2740,8 @@ function makeGroups(opts) {
    possible, so everyone gets an opposite number.
    count: the number of matches, if chosen ("Antal kampe"); otherwise half the groups, rounded up. When it is
    not half the groups, all players are lined up as above and cut into that many matches.
+   sizes: the number of players in each match, if chosen ("Størrelse: Vælg selv"; they must add up to all the
+   players): the line is cut into those sizes, match 1 the most experienced.
    Each match is split into two teams player for player (see pairedSplit).
    level(p): a player's level, or null (counted as the average of everyone). Returns
    [{ groups: [group numbers], teams: [[players], [players]], avg: [a, b] }], most experienced match first;
@@ -2744,7 +2753,14 @@ function matchCount(groups, count) {
   return Math.max(1, Math.min(count || auto, Math.floor(players / 2) || 1));
 }
 
-function makeMatches(groups, level, seed, count) {
+/* Chosen match sizes, if they fit: one per match and adding up to the players; otherwise null (even sizes) */
+function sizesFor(groups, count, sizes) {
+  const players = groups.reduce((n, g) => n + g.length, 0);
+  return Array.isArray(sizes) && sizes.length === matchCount(groups, count) && sizes.every(x => x >= 2) &&
+         sizes.reduce((x, y) => x + y, 0) === players ? sizes.slice() : null;
+}
+
+function makeMatches(groups, level, seed, count, sizes) {
   const rand = seededRandom(seed || 1);
   const known = [].concat.apply([], groups).map(level).filter(v => v != null && isFinite(v));
   const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
@@ -2755,16 +2771,16 @@ function makeMatches(groups, level, seed, count) {
   const home = new Map();
   ranked.forEach(o => o.g.forEach(p => home.set(p, o.i + 1)));
 
-  const m = matchCount(groups, count);
+  const m = matchCount(groups, count), chosen = sizesFor(groups, count, sizes);
   let pools = [];
-  if (ranked.length % 2 === 0 && m === ranked.length / 2) {
+  if (!chosen && ranked.length % 2 === 0 && m === ranked.length / 2) {
     for (let r = 0; r < ranked.length; r += 2) pools.push([].concat(ranked[r].g, ranked[r + 1].g));
-  } else if (m === 1) {
+  } else if (m === 1 && !chosen) {
     pools = [[].concat.apply([], ranked.map(o => o.g))];
   } else {
     const line = [].concat.apply([], ranked.map(o => byLevel(o.g, lv, rand)));
     let at = 0;
-    poolSizes(line.length, m).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
+    (chosen || poolSizes(line.length, m)).forEach(n => { pools.push(line.slice(at, at + n)); at += n; });
   }
   return poolsToMatches(pools, lv, home, rand, known);
 }
@@ -2821,9 +2837,9 @@ function matchMix(earlier, level) {
 }
 
 /* mix: matchMix(...). Returns what makeMatches returns, plus cat: { name: 0 | 1 | 2 } for this time */
-function makeMixMatches(groups, level, mix, seed, count) {
+function makeMixMatches(groups, level, mix, seed, count, chosenSizes) {
   const used = groups.filter(g => g.length);
-  const m = matchCount(groups, count);
+  const m = matchCount(groups, count), chosen = sizesFor(groups, count, chosenSizes);
   if (m < 2) return makeMatches(groups, level, seed, 1);         // one match: nothing to place players between
   const rand = seededRandom(seed || 1);
   const all = [].concat.apply([], used);
@@ -2835,7 +2851,7 @@ function makeMixMatches(groups, level, mix, seed, count) {
   const own = all.map(p => { const v = level(p); return v != null && isFinite(v) ? v : NaN; });
   const had = all.map(p => mix[p.name] || [0, 0, 0, 0]);
   const n = all.length;
-  const sizes = poolSizes(n, m);
+  const sizes = chosen || poolSizes(n, m);
 
   let a;
   const sum = new Float64Array(m), cnt = new Float64Array(m);
@@ -2879,9 +2895,9 @@ function makeMixMatches(groups, level, mix, seed, count) {
   all.forEach(function (p, i) {
     if (own[i] === own[i] && cnt[a[i]] > 1) cat[p.name] = matchCategory(own[i], (sum[a[i]] - own[i]) / (cnt[a[i]] - 1));
   });
-  const pools = Array.from({ length: m }, (_, mi) => all.filter((p, i) => a[i] === mi))
-    .map(ps => ({ ps: ps, avg: ps.reduce((x, p) => x + lv(p), 0) / ps.length }))
-    .sort((x, y) => x.avg - y.avg).map(o => o.ps);
+  let pools = Array.from({ length: m }, (_, mi) => all.filter((p, i) => a[i] === mi));
+  if (!chosen) pools = pools.map(ps => ({ ps: ps, avg: ps.reduce((x, p) => x + lv(p), 0) / ps.length }))   // chosen sizes stay
+    .sort((x, y) => x.avg - y.avg).map(o => o.ps);                                                     // with their match
   const out = poolsToMatches(pools, lv, home, rand, known);
   out.cat = cat;
   return out;
@@ -3446,11 +3462,50 @@ const levelOfName = name => { const p = GRP.byName[name]; return p && isFinite(p
 function makeMatchesNow() {
   const seed = hashText(GRP.key + "|kampe|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1));
   const count = GRP.matchCount || undefined;            // 0: auto, half the groups
-  GRP.matches = byMix() ? makeMixMatches(GRP.groups, fraOf, matchMix(earlierMatches(), levelOfName), seed, count)
-                        : makeMatches(GRP.groups, fraOf, seed, count);
+  const sizes = GRP.sizeMode === "custom" ? chosenSizes() : null;
+  GRP.matches = byMix() ? makeMixMatches(GRP.groups, fraOf, matchMix(earlierMatches(), levelOfName), seed, count, sizes)
+                        : makeMatches(GRP.groups, fraOf, seed, count, sizes);
   GRP.matchesFor = groupsSignature();
   GRP.matchSel = null;
   GRP.matchesDirty = true;
+  renderGroups();
+}
+
+/* "Størrelse: Vælg selv": players per match, kept while the number of matches stays the same; starts even */
+const playersInGroups = () => (GRP.groups || []).reduce((n, g) => n + g.length, 0);
+function chosenSizes() {
+  const m = matchCount(GRP.groups, GRP.matchCount || undefined);
+  if (!Array.isArray(GRP.matchSizes) || GRP.matchSizes.length !== m) GRP.matchSizes = Array.from(poolSizes(playersInGroups(), m));
+  return GRP.matchSizes;
+}
+const sizesOff = () => GRP.sizeMode === "custom" ? playersInGroups() - chosenSizes().reduce((x, y) => x + y, 0) : 0;
+
+/* Moving players by hand: a match whose players changed loses its "gruppe 1 og 2" label (it shows its level) */
+function matchChanged(...mis) { mis.forEach(mi => { if (GRP.matches[mi]) GRP.matches[mi].groups = []; }); GRP.matchesDirty = true; }
+
+/* "Flyt hertil": the selected player to team ti of match mi (without swapping) */
+function matchMove(mi, ti) {
+  const [m1, t1, p1] = GRP.matchSel.split(":").map(Number);
+  const p = GRP.matches[m1].teams[t1].splice(p1, 1)[0];
+  GRP.matches[mi].teams[ti].push(p);
+  GRP.matchSel = null;
+  matchChanged(m1, mi);
+  GRP.matches = GRP.matches.filter(m => m.teams[0].length + m.teams[1].length > 0);   // a match left without players goes
+  renderGroups();
+}
+
+/* "Del holdene igen": one match's players into two equally strong teams again, player for player */
+function rebalanceMatch(mi) {
+  const m = GRP.matches[mi], players = m.teams[0].concat(m.teams[1]);
+  const known = players.map(fraOf).filter(v => v != null);
+  const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
+  const lv = p => fraOf(p) == null ? mean : fraOf(p);
+  const home = new Map();
+  GRP.groups.forEach((g, i) => g.forEach(p => home.set(p, i + 1)));
+  const allKnown = GRP.groups.flat().map(fraOf).filter(v => v != null);
+  const [again] = poolsToMatches([players], lv, home, seededRandom(hashText(GRP.key + "|igen|" + (GRP.matchNonce = (GRP.matchNonce || 0) + 1))), allKnown);
+  if (again) { m.teams = again.teams; GRP.matchesDirty = true; }
+  GRP.matchSel = null;
   renderGroups();
 }
 
@@ -3459,6 +3514,17 @@ function catInMatch(p, m) {
   if (!isFinite(p.lo)) return 1;
   const others = m.teams[0].concat(m.teams[1]).filter(q => q !== p && isFinite(q.lo)).map(q => q.lo);
   return others.length ? matchCategory(p.lo, others.reduce((x, y) => x + y, 0) / others.length) : 1;
+}
+
+function sizesHtml() {
+  const sizes = chosenSizes(), off = sizesOff();
+  const rows = sizes.map((x, i) => `<div class="grp-sizerow"><span>Kamp ${i + 1}</span><span class="grp-step">
+      <button type="button" data-msz="${i}:-1" aria-label="Færre i kamp ${i + 1}">−</button>
+      <output>${x} spillere (${Math.ceil(x / 2)}v${Math.floor(x / 2)})</output>
+      <button type="button" data-msz="${i}:1" aria-label="Flere i kamp ${i + 1}">+</button></span></div>`).join("");
+  return `<div class="grp-sizes">${rows}
+    <p class="grp-hint${off ? " grp-off" : ""}" role="status">${off > 0 ? `Fordel ${off} ${off === 1 ? "spiller" : "spillere"} mere.`
+      : off < 0 ? `Der er ${-off} ${off === -1 ? "plads" : "pladser"} for meget.` : `Alle ${playersInGroups()} spillere er fordelt.`}</p></div>`;
 }
 
 function matchesHtml() {
@@ -3485,8 +3551,13 @@ function matchesHtml() {
     let grid = head(0) + `<span></span>` + head(1);
     for (let i = 0; i < rows; i++) grid += chip(a[i], mi, 0, i) + `<span class="grp-vs" aria-hidden="true">–</span>` + chip(b[i], mi, 1, i);
     const from = byMix() || !m.groups.length ? "" : groupList(m.groups);
+    const sel = GRP.matchSel ? GRP.matchSel.split(":").map(Number) : null;
+    const who = sel ? ms[sel[0]].teams[sel[1]][sel[2]] : null;
+    const moves = who ? [0, 1].filter(ti => !(sel[0] === mi && sel[1] === ti)).map(ti =>
+      `<button type="button" class="clearbtn grp-here" data-mto="${mi}:${ti}">Flyt ${esc(who.name)} til Hold ${String.fromCharCode(65 + 2 * mi + ti)}</button>`).join(" ") : "";
     return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${mi + 1}</strong><small>${[kind(mi), from].filter(Boolean).join(" · ")}</small></div>
-      <div class="grp-pairs">${grid}</div></div>`;
+      <div class="grp-pairs">${grid}</div>
+      <div class="grp-row grp-matchtools">${moves}<button type="button" class="clearbtn" data-mrebal="${mi}">Del holdene igen</button></div></div>`;
   }).join("");
   const status = GRP.matchesDirty ? "Ikke gemt" : waiting("matches", GRP.key) ? "Gemt på telefonen · sendes, når der er forbindelse"
     : GRP.matchesSaved ? "Kampe gemt " + esc(GRP.matchesSaved) : "";
@@ -3505,30 +3576,38 @@ function matchesHtml() {
         ${[1, 2, 3, 4].map(c => `<button type="button" data-mcount="${c}" aria-pressed="${GRP.matchCount === c}">${c}</button>`).join("")}
       </div>
     </div>
+    <div class="grp-row">
+      <span class="grp-hint grp-label">Størrelse</span>
+      <div class="grp-mode" role="group" aria-label="Størrelse">
+        <button type="button" data-msize="even" aria-pressed="${GRP.sizeMode !== "custom"}">Lige store</button>
+        <button type="button" data-msize="custom" aria-pressed="${GRP.sizeMode === "custom"}">Vælg selv</button>
+      </div>
+    </div>
+    ${GRP.sizeMode === "custom" ? sizesHtml() : ""}
     <p class="grp-hint grp-explain">${byMix()
       ? "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d."
       : "De mere øvede spiller mod hinanden, og de mindre øvede mod hinanden. Med tre grupper deles den midterste, så der bliver to kampe. Vælger du et andet antal kampe, stilles alle op efter niveau og deles i så mange kampe."}
       I hver kamp får hver spiller en modspiller på samme niveau (eller så tæt på som muligt) på det andet hold, og derefter gøres holdene så lige som muligt.</p>
-    <div class="grp-row"><button type="button" class="login-go" data-act="matches">${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
+    <div class="grp-row"><button type="button" class="login-go" data-act="matches"${sizesOff() ? " disabled" : ""}>${ms.length ? "Lav nye kampe" : "Lav kampe"}</button></div>
     ${cards}
     ${ms.length ? `<p class="grp-legend">Spillerne på samme linje er hinandens modspillere.${byMix() ? " ↑ = en sværere kamp end eget niveau, ↓ = en lettere." : ""}${ms.some(m => m.teams[0].length !== m.teams[1].length)
-      ? " Når et hold har én spiller færre, får det lidt mere øvede spillere, så holdene samlet er lige stærke." : ""} Tryk på en spiller og derefter på en spiller på det andet hold for at bytte dem.</p>
+      ? " Når et hold har én spiller færre, får det lidt mere øvede spillere, så holdene samlet er lige stærke." : ""} Tryk på en spiller og derefter på en anden spiller for at bytte dem (også mellem kampene), eller på \u201cFlyt … til Hold …\u201d.</p>
       <div class="grp-save"><button type="button" class="login-go" data-act="savematches"${GRP.matchesDirty ? "" : " disabled"}>Gem kampe</button>
         <span class="grp-hint" role="status">${status}</span></div>` : ""}
   </section>`;
 }
 
-/* Tap a player in a match: select; tap one on the other team of the same match: swap them.
+/* Tap a player in a match: select; tap one on another team (this match or another): swap them.
    ("Antal kampe": Auto is half the groups, rounded up – see matchCount) */
 function matchTap(code) {
   const sel = GRP.matchSel;
   if (sel === code) { GRP.matchSel = null; renderGroups(); return; }
   const [m1, t1, p1] = (sel || "").split(":").map(Number), [m2, t2, p2] = code.split(":").map(Number);
-  if (sel && m1 === m2 && t1 !== t2) {
-    const teams = GRP.matches[m2].teams, x = teams[t1][p1];
-    teams[t1][p1] = teams[t2][p2]; teams[t2][p2] = x;
+  if (sel && !(m1 === m2 && t1 === t2)) {              // another team (in this match or another): swap
+    const a = GRP.matches[m1].teams[t1], b = GRP.matches[m2].teams[t2], x = a[p1];
+    a[p1] = b[p2]; b[p2] = x;
     GRP.matchSel = null;
-    GRP.matchesDirty = true;
+    if (m1 === m2) GRP.matchesDirty = true; else matchChanged(m1, m2);
   } else GRP.matchSel = code;
   renderGroups();
 }
@@ -3713,7 +3792,18 @@ function grpClick(e) {
   } else if (act === "signups") {
     saveSignupsNow(b);
   } else if (b.dataset.mcount != null) {
-    GRP.matchCount = +b.dataset.mcount; saveGrpSettings(); renderGroups();
+    GRP.matchCount = +b.dataset.mcount; GRP.matchSizes = null; saveGrpSettings(); renderGroups();
+  } else if (b.dataset.msize) {
+    GRP.sizeMode = b.dataset.msize; GRP.matchSizes = null; renderGroups();
+  } else if (b.dataset.msz) {
+    const [i, d] = b.dataset.msz.split(":").map(Number), sizes = chosenSizes();
+    sizes[i] = Math.max(2, sizes[i] + d);
+    renderGroups();
+  } else if (b.dataset.mto) {
+    const [mi, ti] = b.dataset.mto.split(":").map(Number);
+    matchMove(mi, ti);
+  } else if (b.dataset.mrebal != null) {
+    rebalanceMatch(+b.dataset.mrebal);
   } else if (b.dataset.mmode) {
     GRP.matchMode = b.dataset.mmode; saveGrpSettings(); renderGroups();
   } else if (act === "savematches") {
