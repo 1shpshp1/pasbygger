@@ -286,3 +286,22 @@ test('"Ingen modspiller" in turn: who had none is read from saved matches, and i
   const three = run(3, 8);                                // two left over each time
   assert.ok(Object.keys(three).length >= 4 && Math.max(...Object.values(three)) <= 4, 'three teams: ' + JSON.stringify(three));
 });
+
+test('Each player\'s own aim: what the most and least experienced can\'t get goes to "samme niveau", gradually', () => {
+  const aim = (me, others) => Array.from(A.playerAim(me, others), x => Math.round(x * 1000) / 1000);
+  assert.deepEqual(aim(2.5, [1, 2, 3, 4]), [0.25, 0.5, 0.25], 'room both ways: 25/50/25');
+  assert.deepEqual(aim(1, [2, 3, 4]), [0, 0.75, 0.25], 'the most experienced');
+  assert.deepEqual(aim(4, [1, 2, 3]), [0.25, 0.75, 0], 'the least experienced');
+  assert.deepEqual(aim(3, [2.6, 3.5, 4]), [0.075, 0.675, 0.25], 'only 0,4 above: "more experienced" partly possible');
+  assert.deepEqual(aim(NaN, [1, 2]), [0.25, 0.5, 0.25], 'no level: the usual aim');
+  // 25-50-25 matches over time: the second most and second least experienced play mostly at their own level
+  const P = [1, 1.5, 2, 2, 2.5, 2.5, 3, 3, 3.5, 3.5, 4, 4.5].map((lo, i) => ({ name: 'p' + i, lo: lo }));
+  const level = n => P.find(p => p.name === n).lo, saved = [];
+  for (let s = 1; s <= 16; s++) {
+    const ms = Array.from(A.makeMixMatches([P], p => p.lo, A.matchMix(saved, level), s, 3, [4, 4, 4]));
+    saved.unshift(ms.map(m => m.teams.map(t => t.map(p => p.name))));
+  }
+  const mix = A.matchMix(saved, level), share = (n, r) => mix[n][r] / mix[n][3];
+  assert.ok(share('p1', 1) >= 0.55 && share('p10', 1) >= 0.55, `near the ends: mostly own level (${share('p1', 1).toFixed(2)}, ${share('p10', 1).toFixed(2)})`);
+  assert.ok(Math.abs(share('p5', 0) - 0.25) <= 0.12 && Math.abs(share('p5', 2) - 0.25) <= 0.12, 'the middle: about 25/50/25');
+});

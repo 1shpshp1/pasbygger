@@ -163,6 +163,9 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; cards
   assert.match(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), /^2–4 · niveau 3$/);
   assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), /^1–2 · niveau 1,5$/);
   assert.match(await page.locator('#ov').innerText(), /midten af båndet/);
+  assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).innerText(), /Mål: 0 \/ 75 \/ 25 – der er ingen mere øvede at spille med/);
+  assert.match(await page.locator('#ov .ov-p', { hasText: 'Jonas' }).innerText(), /Mål: 25 \/ 75 \/ 0 – der er ingen mindre øvede/);
+  assert.doesNotMatch(await page.locator('#ov .ov-p', { hasText: 'Frida' }).innerText(), /Mål:/, 'room both ways: no special aim');
   assert.deepEqual(page.errors, []);
 });
 
