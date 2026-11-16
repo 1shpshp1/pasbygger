@@ -724,7 +724,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (8)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (9)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -880,12 +880,39 @@ function api(action, args) {
     .finally(function () { clearTimeout(timer); })
     .then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
+      return r.text();
     })
-    .then(function (res) {
-      if (res && res.error) throw new Error(res.error);
+    .then(function (text) {
+      let res;
+      try { res = JSON.parse(text); } catch (e) {       // not an answer from Code.gs: Google's error page (a script error, a
+        throw serverError(pageText(text) || "Serveren sendte et ugyldigt svar.");   // deployment that needs sign-in, …)
+      }
+      if (res && res.error) throw serverError(res.error);
       return res ? res.result : null;
     });
+}
+/* An error that came from the server (not a missing connection): err.server = true */
+function serverError(message) {
+  const err = new Error(String(message));
+  err.server = true;
+  return err;
+}
+/* The readable text of an HTML page (Google's error page says e.g. "SyntaxError: … (line 1, file "Grupper")") */
+function pageText(html) {
+  let t = "";
+  try {
+    const doc = new DOMParser().parseFromString(String(html), "text/html");
+    doc.querySelectorAll("script, style").forEach(el => el.remove());
+    const parts = [], walk = doc.createTreeWalker(doc.body || doc, NodeFilter.SHOW_TEXT);   // text pieces, with spaces
+    while (walk.nextNode()) parts.push(walk.currentNode.nodeValue);                            // between the blocks
+    t = parts.join(" ");
+  } catch (e) { t = String(html).replace(/<[^>]*>/g, " "); }
+  t = t.replace(/\s+/g, " ").trim().replace(/^Error\s+/, "");
+  return t.length > 220 ? t.slice(0, 220) + " …" : t;
+}
+/* For messages: "Ingen forbindelse" when the phone couldn't reach the server, otherwise the server's own error */
+function failText(err) {
+  return err && err.server && !/^LOGIN$/.test(err.message) ? "Fejl på serveren: " + err.message : "Ingen forbindelse";
 }
 
 /* ---- Start: show the last saved plan at once, then fetch the newest one ----
@@ -893,7 +920,7 @@ function api(action, args) {
    is fetched again when the app is brought back after more than a minute, and with the "Opdater" button. */
 const SESSIONS_KEY = "oevSessions";            // the plan is saved on the phone, so the app also opens offline
 const PLAN_VERSION_KEY = "oevSessionsVersion";
-let PLAN_AT = 0, PLAN_FETCH = null, PLAN_FAILED = false;
+let PLAN_AT = 0, PLAN_FETCH = null, PLAN_FAILED = false, PLAN_ERROR = null;
 let LATEST = null;                             // the newest plan we have
 let STARTED = false, SHOWN = false, PENDING_SESSIONS = false;
 
@@ -937,12 +964,12 @@ function firstRender() {
   if (saved) {
     try { gotSessions(JSON.parse(saved)); } catch (e) { saved = null; }
   }
-  fetchPlan().catch(function () {
+  fetchPlan().catch(function (err) {
     window.APP_STARTED = true;
-    if (saved) { showToast("Ingen forbindelse – viser den senest hentede plan."); return; }
+    if (saved) { showToast(failText(err) + " – viser den senest hentede plan."); return; }
     clearLoading();
     document.getElementById("sessions").innerHTML =
-      '<p style="grid-column:1/-1">Kunne ikke hente træningspas. Prøv igen om lidt.</p>';
+      '<p style="grid-column:1/-1">Kunne ikke hente træningspas. ' + (err && err.server ? esc(failText(err)) : "Prøv igen om lidt.") + '</p>';
   });
 })();
 
@@ -957,7 +984,7 @@ function fetchPlan() {
     }
     throw err;
   }).then(function (res) {
-    PLAN_FETCH = null; PLAN_AT = Date.now(); PLAN_FAILED = false;
+    PLAN_FETCH = null; PLAN_AT = Date.now(); PLAN_FAILED = false; PLAN_ERROR = null;
     if (!res.unchanged) {
       const text = JSON.stringify(res.sessions);
       let old = null;
@@ -970,7 +997,7 @@ function fetchPlan() {
     }
     updatePlanBar();
   }, function (err) {
-    PLAN_FETCH = null; PLAN_FAILED = true;
+    PLAN_FETCH = null; PLAN_FAILED = true; PLAN_ERROR = err;
     updatePlanBar();
     throw err;
   });
@@ -985,7 +1012,7 @@ function updatePlanBar() {
   const at = PLAN_AT ? new Date(PLAN_AT) : null;
   const clock = at ? ("0" + at.getHours()).slice(-2) + ":" + ("0" + at.getMinutes()).slice(-2) : "";
   time.textContent = PLAN_FETCH ? "Henter nyeste plan …"
-    : PLAN_FAILED ? (clock ? "Ingen forbindelse – viser planen fra kl. " + clock : "Ingen forbindelse – viser den gemte plan")
+    : PLAN_FAILED ? failText(PLAN_ERROR) + (clock ? " – viser planen fra kl. " + clock : " – viser den gemte plan")
     : clock ? "Opdateret kl. " + clock : "Viser den gemte plan";
   btn.disabled = !!PLAN_FETCH;
 }
@@ -1605,10 +1632,10 @@ function syncStarted() {
     if (!LIB && wait) wait.textContent = "Serveren svarer langsomt i dag. Øvelserne kommer, så snart den svarer …";
   }, 8000);
 }
-function syncEnded(failed) {
+function syncEnded(failed, err) {
   clearTimeout(SYNC_TIMER); clearTimeout(SYNC_SLOW_TIMER);
   if (failed && LIB) {
-    setSyncNote("Kunne ikke hente nyeste øvelser lige nu. Du ser den gemte udgave.");
+    setSyncNote(err && err.server ? failText(err) + ". Du ser den gemte udgave." : "Kunne ikke hente nyeste øvelser lige nu. Du ser den gemte udgave.");
     SYNC_TIMER = setTimeout(() => setSyncNote(""), 8000);
   } else setSyncNote("");
 }
@@ -1645,7 +1672,7 @@ function fetchLibrary(version, silent) {
   }
 
   function failedLibrary(err) {
-    syncEnded(true);
+    syncEnded(true, err);
     if (/LOGIN/.test(String(err && err.message))) {      // the login is no longer valid on the server
       const waiting = LIB_WAIT.splice(0);
       setSyncNote("");
@@ -1656,7 +1683,7 @@ function fetchLibrary(version, silent) {
       return;
     }
     if (!LIB) document.getElementById("drill-grid").innerHTML =       // a saved copy stays on screen
-      "<p>Kunne ikke hente øvelser. Prøv igen om lidt.</p>";
+      "<p>Kunne ikke hente øvelser. " + (err && err.server ? esc(failText(err)) : "Prøv igen om lidt.") + "</p>";
     libDone();
   }
 
@@ -3552,7 +3579,7 @@ function signupStatus() {
   if (!su) return "";
   const same = su.names.filter(n => GRP.byName[n]).length === GRP.present.size && su.names.every(n => !GRP.byName[n] || GRP.present.has(n));
   if (!same) return "Ændret siden de tilmeldte blev gemt";
-  return waiting("signups", GRP.key) ? "Tilmeldte gemt på telefonen · sendes, når der er forbindelse" : "Tilmeldte gemt " + su.saved;
+  return waiting("signups", GRP.key) ? "Tilmeldte " + queuedText().charAt(0).toLowerCase() + queuedText().slice(1) : "Tilmeldte gemt " + su.saved;
 }
 
 /* A player by name; a name that is no longer in the tab "Spillere" fits anywhere */
@@ -3896,7 +3923,7 @@ function matchesHtml() {
       <div class="grp-pairs${t === 3 ? " grp-three" : ""}">${grid}</div>
       <div class="grp-row grp-matchtools">${moves}<button type="button" class="clearbtn" data-mrebal="${mi}">Del holdene igen</button></div></div>`;
   }).join("");
-  const status = GRP.matchesDirty ? "Ikke gemt" : waiting("matches", GRP.key) ? "Gemt på telefonen · sendes, når der er forbindelse"
+  const status = GRP.matchesDirty ? "Ikke gemt" : waiting("matches", GRP.key) ? queuedText()
     : GRP.matchesSaved ? "Kampe gemt " + esc(GRP.matchesSaved) : "";
   return `<section class="grp-sec grp-matches"><h3>Kampe til sidst</h3>
     <div class="grp-row" style="margin-top:0">
@@ -4074,7 +4101,7 @@ function renderGroups() {
       <p class="grp-legend">${prev && !noSlider() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
       ${mixLine(players) ? `<p class="grp-mixline">${mixLine(players)}</p>` : ""}
       <div class="grp-save"><button type="button" class="login-go" data-act="save"${GRP.dirty ? "" : " disabled"}>Gem grupper</button>
-        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : waiting("groups", GRP.key) ? "Gemt på telefonen · sendes, når der er forbindelse"
+        <span class="grp-hint" role="status">${GRP.dirty ? "Ikke gemt" : waiting("groups", GRP.key) ? queuedText()
           : GRP.saved ? "Gemt " + esc(GRP.saved) : ""}</span></div>` +
       matchesHtml();
   }
@@ -4222,8 +4249,9 @@ function grpClick(e) {
 }
 
 /* ---- Saving with poor reception ----
-   A save that can't reach the server (no connection, or the connection drops) is kept on the phone
-   (localStorage "oevGrpQueue") and shown as "Gemt på telefonen". It is sent as soon as possible: when the phone
+   Every save ("Gem grupper", "Gem tilmeldte", "Gem kampe") is kept on the phone at once (localStorage
+   "oevGrpQueue"), so the screen is ready again straight away, and sent to the sheet in the background (a call to
+   Google takes a few seconds). Without a connection it stays as "Gemt på telefonen" and is sent as soon as possible: when the phone
    comes back online, when the app is opened or brought back, after a login, and every 30 seconds while one is
    waiting. Only the newest save per training and kind is kept. Until it is sent, the phone's copy of the groups
    already holds it, so reopening Grupper shows it and the next groups build on it. */
@@ -4238,10 +4266,13 @@ function writeQueue(q) {
   try { if (q.length) localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); else localStorage.removeItem(QUEUE_KEY); } catch (e) { /* storage full or blocked */ }
 }
 const waiting = (kind, key) => readQueue().some(x => x.kind === kind && x.key === key);
+/* The status of a save that is on the phone and not yet in the sheet */
+const queuedText = () => navigator.onLine && isAuthed() ? "Gemt på telefonen · sendes til arket …" : "Gemt på telefonen · sendes, når der er forbindelse";
 
 /* Did the call fail for lack of a connection (try again later), rather than an answer from the server? */
 function noConnection(err) {
   const m = String((err && err.message) || err);
+  if (err && err.server) return false;                  // the server answered (with an error)
   return !navigator.onLine || (err && (err.name === "AbortError" || err.name === "TypeError")) ||
          /failed to fetch|networkerror|load failed|network|abort|timed? ?out|HTTP 5\d\d/i.test(m);
 }
@@ -4294,10 +4325,23 @@ function sendQueue() {
     sendQueue();                                         // the next one, if any
   }, function (err) {
     QUEUE_SENDING = false;
-    if (/LOGIN/.test(String(err && err.message))) { AUTH.token = ""; AUTH.until = 0; saveAuth(); QUEUE_TOLD = false; sendQueue(); return; }
-    if (noConnection(err)) return;                       // tried again later
+    if (/LOGIN/.test(String(err && err.message))) {     // the login ran out on the server: ask for the code, then send
+      AUTH.token = ""; AUTH.until = 0; saveAuth(); QUEUE_TOLD = false;
+      if (GRP && GRP.box && GRP.box.isConnected) requireLogin(sendQueue, function () { if (GRP && GRP.data) renderGroups(); });
+      else sendQueue();
+      if (GRP && GRP.data) renderGroups();
+      return;
+    }
+    if (noConnection(err)) { if (GRP && GRP.data) renderGroups(); return; }   // tried again later
     writeQueue(readQueue().filter(y => y !== x && !(y.kind === x.kind && y.key === x.key && y.at === x.at)));   // the server said no: drop it
-    showToast("Kunne ikke gemme grupperne: " + String(err && err.message || err));
+    const what = { groups: "grupperne", signups: "de tilmeldte", matches: "kampene" }[x.kind];
+    const text = "Kunne ikke gemme " + what + ": " + String(err && err.message || err);
+    if (GRP && GRP.key === x.key && GRP.data) {           // on the screen: back to "Ikke gemt", so it can be saved again
+      if (x.kind === "groups") GRP.dirty = true;
+      if (x.kind === "matches") GRP.matchesDirty = true;
+      GRP.msg = text; GRP.bad = true;
+      renderGroups();
+    } else showToast(text);
     sendQueue();
   });
 }
@@ -4305,27 +4349,15 @@ window.addEventListener("online", sendQueue);
 document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") sendQueue(); });
 setInterval(function () { if (readQueue().length) sendQueue(); }, 30000);
 
-function saveGroupsNow(btn) {
+/* "Gem …": on the phone at once, then sent in the background (see above). Without a connection, no login is needed
+   now; with one, the code is asked for first if the login has run out. */
+function saveNow(kind, names) {
   const want = GRP;
-  const names = GRP.groups.filter(g => g.length).map(g => g.map(p => p.name));
-  if (!navigator.onLine) { keepForLater(want, "groups", names); return; }
-  if (!isAuthed()) { askCodeThenSave(want); return; }
-  btn.disabled = true; btn.textContent = "Gemmer…";
-  libCall("saveGroups", [AUTH.token, GRP.key, names]).then(function (res) {
-    writeQueue(readQueue().filter(x => !(x.kind === "groups" && x.key === want.key)));   // this one supersedes any waiting
-    want.data.history[want.key] = { saved: res.saved, groups: names };
-    want.groups = names.map(g => g.map(grpPlayer));
-    want.saved = res.saved; want.dirty = false; want.msg = ""; want.bad = false;
-    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();   // the phone's copy has the new groups too
-    if (GRP === want) renderGroups();
-  }, function (err) {
-    if (GRP !== want) return;
-    btn.disabled = false; btn.textContent = "Gem grupper";
-    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want);
-    else if (noConnection(err)) keepForLater(want, "groups", names);
-    else { GRP.msg = "Kunne ikke gemme: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
-  });
+  if (navigator.onLine && !isAuthed()) { askCodeThenSave(want, kind); return; }
+  keepForLater(want, kind, names);
+  sendQueue();
 }
+function saveGroupsNow() { saveNow("groups", GRP.groups.filter(g => g.length).map(g => g.map(p => p.name))); }
 
 /* The login has run out: the groups stay on the screen, the code is asked for, and then they are saved */
 function askCodeThenSave(want, kind) {
@@ -4345,49 +4377,10 @@ function askCodeThenSave(want, kind) {
 }
 
 /* Saves the ticks as this training's signups (in the tab "Tilmeldte"), so any phone can start from them */
-function saveSignupsNow(btn) {
-  const want = GRP;
-  const names = GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => p.name);
-  if (!navigator.onLine) { keepForLater(want, "signups", names); return; }
-  if (!isAuthed()) { askCodeThenSave(want, "signups"); return; }
-  btn.disabled = true; btn.textContent = "Gemmer…";
-  libCall("saveSignups", [AUTH.token, GRP.key, names]).then(function (res) {
-    writeQueue(readQueue().filter(x => !(x.kind === "signups" && x.key === want.key)));
-    want.data.signups = want.data.signups || {};
-    want.data.signups[want.key] = { saved: res.saved, names: names };
-    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
-    want.msg = ""; want.bad = false;
-    if (GRP === want) renderGroups();
-  }, function (err) {
-    if (GRP !== want) return;
-    btn.disabled = false; btn.textContent = "Gem tilmeldte";
-    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, "signups");
-    else if (noConnection(err)) keepForLater(want, "signups", names);
-    else { GRP.msg = "Kunne ikke gemme de tilmeldte: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
-  });
-}
+function saveSignupsNow() { saveNow("signups", GRP.data.players.filter(p => GRP.present.has(p.name)).map(p => p.name)); }
 
 /* Saves the matches on the screen (tab Kampe): 25-50-25 builds on the saved matches */
-function saveMatchesNow(btn) {
-  const want = GRP;
-  const names = GRP.matches.map(m => m.teams.map(t => t.map(p => p.name)));
-  if (!navigator.onLine) { keepForLater(want, "matches", names); return; }
-  if (!isAuthed()) { askCodeThenSave(want, "matches"); return; }
-  btn.disabled = true; btn.textContent = "Gemmer…";
-  libCall("saveMatches", [AUTH.token, GRP.key, names]).then(function (res) {
-    writeQueue(readQueue().filter(x => !(x.kind === "matches" && x.key === want.key)));
-    (want.data.matches = want.data.matches || {})[want.key] = { saved: res.saved, matches: names };
-    want.matchesSaved = res.saved; want.matchesDirty = false; want.msg = ""; want.bad = false;
-    if (GRP_CACHE && GRP_CACHE.data === want.data) storeGroups();
-    if (GRP === want) renderGroups();
-  }, function (err) {
-    if (GRP !== want) return;
-    btn.disabled = false; btn.textContent = "Gem kampe";
-    if (/LOGIN/.test(String(err && err.message))) askCodeThenSave(want, "matches");
-    else if (noConnection(err)) keepForLater(want, "matches", names);
-    else { GRP.msg = "Kunne ikke gemme kampene: " + String(err && err.message || err); GRP.bad = true; renderGroups(); }
-  });
-}
+function saveMatchesNow() { saveNow("matches", GRP.matches.map(m => m.teams.map(t => t.map(p => p.name)))); }
 
 prefetchGroups();                  // still logged in when the app opens: fetch the players ahead
 sendQueue();                       // saves that were waiting for a connection

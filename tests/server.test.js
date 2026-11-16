@@ -80,6 +80,29 @@ test('saveMatches keeps teams and the order of opposite numbers; saving again re
   assert.deepEqual(Object.keys(srv.call('getGroupData', t).result.matches), [a]);
 });
 
+test('a save updates the cached copy without reading the tabs again, and it matches a fresh read', () => {
+  const srv = testServer(), t = login(srv);
+  const [a, b] = SESSION_DATES;
+  const first = srv.call('getGroupData', t).result;               // the copy is now in the cache
+  const reads = { n: 0 };
+  const sheet = srv.book['Spillere'], getRange = sheet.getRange.bind(sheet);
+  sheet.getRange = (...x) => { reads.n++; return getRange(...x); };
+  sheet.getDataRange = () => { reads.n++; return getRange(1, 1, Math.max(1, sheet.getLastRow()), Math.max(1, sheet.getLastColumn())); };
+  srv.call('saveGroups', t, a, [['Alma', 'Bo'], ['Carl']]);
+  srv.call('saveSignups', t, a, ['Alma', 'Bo', 'Carl']);
+  srv.call('saveMatches', t, b, [[['Dina'], ['Emil'], ['Frida']]]);
+  srv.call('saveGroups', t, b, [['Dina']]);
+  srv.call('saveGroups', t, b, []);
+  assert.equal(reads.n, 0, 'the Spillere tab is not read when saving');
+  const patched = srv.call('getGroupData', t, '').result;
+  assert.notEqual(patched.version, first.version);
+  srv.ctx.clearGroupCache();
+  const fresh = srv.call('getGroupData', t, '').result;
+  delete patched.version; delete fresh.version;
+  assert.deepEqual(patched, fresh);
+  assert.deepEqual(fresh.history, { [a]: { saved: fresh.history[a].saved, groups: [['Alma', 'Bo'], ['Carl']] } });
+});
+
 test('an edit in the Spillere tab reaches the app (the cache is cleared)', () => {
   const srv = testServer(), t = login(srv);
   assert.equal(srv.call('getGroupData', t).result.players.length, 16);
