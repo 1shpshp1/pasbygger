@@ -145,6 +145,10 @@ test('Kampe 25-50-25: what counts as harder, own level and easier', () => {
   assert.equal(A.matchCategory(3, 2.7), 1);
   assert.equal(A.matchCategory(3, 3.5), 2);      // half a level less experienced: easier
   assert.equal(A.matchCategory(NaN, 2), 1);      // no level: counts as own level
+  // judged against each of the others: two much stronger and two much weaker is half harder, half easier (no arrow)
+  assert.deepEqual(Array.from(A.matchMix([[[['x', 'a', 'b'], ['c', 'd']]]], n => ({ x: 3, a: 1, b: 1, c: 5, d: 5 })[n]).x), [0.5, 0, 0.5, 1]);
+  assert.equal(A.matchCategory(3, [1, 1, 5, 5]), 1);
+  assert.equal(A.matchCategory(3, [2, 2, 3]), 0, 'mostly stronger: harder');
 });
 
 test('Antal kampe: 4 groups can give 1, 2, 3 or 4 matches in both modes; Auto is half the groups', () => {
@@ -302,6 +306,9 @@ test('Each player\'s own aim: what the most and least experienced can\'t get goe
     saved.unshift(ms.map(m => m.teams.map(t => t.map(p => p.name))));
   }
   const mix = A.matchMix(saved, level), share = (n, r) => mix[n][r] / mix[n][3];
-  assert.ok(share('p1', 1) >= 0.55 && share('p10', 1) >= 0.55, `near the ends: mostly own level (${share('p1', 1).toFixed(2)}, ${share('p10', 1).toFixed(2)})`);
+  // the most experienced: judged against each player, the match with the next best counts partly as own level
+  // (judged against the others' average it was always "easier"); it is the most there is in a match of four
+  assert.ok(share('p0', 1) >= 0.15 && share('p0', 0) === 0, `the most experienced: some own level (${share('p0', 1).toFixed(2)})`);
+  assert.ok(share('p11', 1) >= 0.15 && share('p11', 2) === 0, `the least experienced: some own level (${share('p11', 1).toFixed(2)})`);
   assert.ok(Math.abs(share('p5', 0) - 0.25) <= 0.12 && Math.abs(share('p5', 2) - 0.25) <= 0.12, 'the middle: about 25/50/25');
 });
