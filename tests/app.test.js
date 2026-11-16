@@ -299,3 +299,38 @@ test('Antal kampe: choosing 3 gives 3 matches from 4 groups', { skip }, async ()
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
+
+test('Kampe by hand: swap between matches, move a player, rebalance, and choose sizes', { skip }, async () => {
+  const page = await phone(testServer());
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-mcount="2"]');
+  await page.click('#grp-v [data-act="matches"]');
+  const name = sel => page.locator('#grp-v ' + sel + ' .grp-pname').innerText();
+  // swap a player in match 1 with one in match 2
+  const a = await name('[data-mp="0:0:0"]'), b = await name('[data-mp="1:1:0"]');
+  await page.click('#grp-v [data-mp="0:0:0"]'); await page.click('#grp-v [data-mp="1:1:0"]');
+  assert.equal(await name('[data-mp="0:0:0"]'), b);
+  assert.equal(await name('[data-mp="1:1:0"]'), a);
+  // move one player from match 2 to match 1 (match 1 gets bigger)
+  await page.click('#grp-v [data-mp="1:0:0"]');
+  await page.click('#grp-v [data-mto="0:0"]');
+  const count = mi => page.locator(`#grp-v [data-mp^="${mi}:"]`).count();
+  assert.equal(await count(0), 9); assert.equal(await count(1), 7);
+  // rebalance match 1: still 9 players, teams of 5 and 4
+  await page.click('#grp-v [data-mrebal="0"]');
+  assert.equal(await count(0), 9);
+  assert.equal(Math.abs(await page.locator('#grp-v [data-mp^="0:0:"]').count() - await page.locator('#grp-v [data-mp^="0:1:"]').count()), 1);
+  // choose sizes: 3 matches of 6, 4 and 6 players
+  await page.click('#grp-v [data-mcount="3"]');
+  await page.click('#grp-v [data-msize="custom"]');
+  assert.match(await page.locator('#grp-v .grp-sizes').innerText(), /Alle 16 spillere er fordelt/);
+  await page.click('#grp-v [data-msz="1:-1"]'); await page.click('#grp-v [data-msz="1:-1"]');
+  assert.match(await page.locator('#grp-v .grp-sizes').innerText(), /Fordel 2 spillere mere/);
+  assert.equal(await page.locator('#grp-v [data-act="matches"]').isDisabled(), true);
+  await page.click('#grp-v [data-msz="2:1"]'); await page.click('#grp-v [data-msz="2:1"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.deepEqual([await count(0), await count(1), await count(2)], [6, 4, 6]);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(page.errors, []);
+});
