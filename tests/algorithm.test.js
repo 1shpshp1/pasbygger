@@ -173,3 +173,43 @@ test('Chosen match sizes: used when they add up to the players, in both modes', 
   const big = A.makeMatches(groups, p => p.lo, 1, 3, [4, 4, 8]);
   assert.ok(big[0].avg[0] <= big[2].avg[0], 'Niveau: match 1 is still the most experienced');
 });
+
+test('Two levels first: sized by their number of groups, the most experienced in the first', () => {
+  const players = squad().concat([{ name: 'Q1', lo: 2, hi: 3 }, { name: 'Q2', lo: 3, hi: 4 }, { name: 'Q3', lo: 5, hi: 5 }, { name: 'Q4', lo: 1, hi: 2 }]);
+  const [top, low] = A.tierSplit(players, [2, 3], p => p.lo, 1);
+  assert.equal(top.length, 8); assert.equal(low.length, 12);
+  assert.ok(Math.max(...top.map(p => p.lo)) <= Math.min(...low.map(p => p.lo)));
+});
+
+test('Del kampene efter: Max-niveau, Bånd, Lige hold, Kaos and Niveauer', () => {
+  const P = squad(), opts = { level: p => p.lo, meet: A.bandsMeet };
+  const all = ms => Array.from(ms).reduce((n, m) => n + m.teams[0].length + m.teams[1].length, 0);
+  const avg = m => { const ps = m.teams[0].concat(m.teams[1]); return ps.reduce((x, p) => x + p.lo, 0) / ps.length; };
+  const max = A.makePoolMatches(P, [8, 8], 'max', 1, opts);
+  assert.equal(all(max), 16);
+  assert.ok(avg(max[0]) < avg(max[1]), 'Max-niveau: match 1 the more experienced');
+  const wide = Array.from({ length: 18 }, (_, i) => ({ name: 'w' + i, lo: 1 + (i % 3), hi: 3 + (i % 3) }));
+  const band = A.makePoolMatches(wide, [6, 6, 6], 'band', 1, opts);
+  Array.from(band).forEach(m => { const ps = m.teams[0].concat(m.teams[1]); ps.forEach((a, i) => ps.slice(i + 1).forEach(b => assert.ok(A.bandsMeet(a, b)))); });
+  const even = A.makePoolMatches(P, [8, 8], 'even', 1, opts);
+  assert.ok(Math.abs(avg(even[0]) - avg(even[1])) <= 0.125 + 1e-9, 'Lige hold: averages as equal as 16 players allow');
+  const sizes = ms => Array.from(ms, m => m.teams[0].length + m.teams[1].length);
+  assert.deepEqual(sizes(A.makePoolMatches(P, [4, 4, 8], 'even', 1, Object.assign({ keepOrder: true }, opts))), [4, 4, 8], 'chosen sizes kept');
+  const tiers = A.makePoolMatches(P, null, 'pools', 1, Object.assign({ pools: [P.slice(0, 6), P.slice(6)], keepOrder: true }, opts));
+  assert.deepEqual(sizes(tiers), [6, 10]);
+});
+
+test('Kaos matches are completely random: teams are not balanced, and differ from draw to draw', () => {
+  const P = squad(), opts = { level: p => p.lo };
+  const draws = new Set();
+  let unbalanced = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const [m] = A.makePoolMatches(P, [16], 'chaos', seed, opts);
+    assert.equal(m.teams[0].length, 8); assert.equal(m.teams[1].length, 8);
+    draws.add(m.teams[0].map(p => p.name).sort().join());
+    const sum = t => t.reduce((x, p) => x + p.lo, 0);
+    if (Math.abs(sum(m.teams[0]) - sum(m.teams[1])) >= 2) unbalanced++;
+  }
+  assert.ok(draws.size >= 18, 'different teams each time');
+  assert.ok(unbalanced >= 5, 'no balancing: often uneven teams');
+});
