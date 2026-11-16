@@ -60,7 +60,7 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
 }
 async function openGroups(page, i = 0) {
   await page.locator('#sessions .card').nth(i).locator('button, [onclick]').first().click();
-  await page.locator('#viewer button', { hasText: 'Grupper' }).click();
+  await page.locator('#viewer button', { hasText: 'Grupper til denne træning' }).click();
   await page.waitForSelector('#grp-v .grp-slide');
 }
 const cards = page => page.locator('#grp-v .grp-list .grp-card');
@@ -73,12 +73,14 @@ test('login box and the "no groups yet" message', { skip }, async () => {
   await page.click('#login-cancel');
   await page.evaluate(() => showView('sessions'));
   await page.locator('#sessions .card').first().locator('button, [onclick]').first().click();
-  await page.locator('#viewer button', { hasText: 'Grupper' }).click();
+  await page.locator('#viewer button', { hasText: 'Grupper til denne træning' }).click();
   assert.ok(await page.locator('#login').isVisible(), 'Grupper asks for the code first');
   await page.fill('#login-pw', CODE); await page.click('#login-go');
   await page.waitForSelector('#grp-v .grp-slide');
   assert.match(await page.locator('#grp-v .grp-none').innerText(), /ikke lavet grupper til denne træning/);
   assert.equal(await page.locator('#grp-v .grp-who .grp-band').count(), 0, 'no levels in "Hvem er med?"');
+  const xs = await page.locator('#grp-v .grp-who label').evaluateAll(ls => [...new Set(ls.map(l => Math.round(l.getBoundingClientRect().left)))]);
+  assert.equal(xs.length, 1, '"Hvem er med?" is one column');
   assert.deepEqual(page.errors, []);
 });
 
@@ -289,7 +291,8 @@ test('Antal kampe: choosing 3 gives 3 matches from 4 groups', { skip }, async ()
   const page = await phone(testServer());
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
-  assert.match(await page.locator('#grp-v [data-mcount="0"]').innerText(), /Auto \(2\)/);
+  assert.equal(await page.locator('#grp-v [data-mcount="0"]').count(), 0, 'no Auto button');
+  assert.equal(await page.locator('#grp-v [data-mcount="2"]').getAttribute('aria-pressed'), 'true', '4 groups: 2 matches until a number is chosen');
   await page.click('#grp-v [data-mcount="3"]');
   await page.click('#grp-v [data-act="matches"]');
   assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 3);

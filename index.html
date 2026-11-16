@@ -536,7 +536,7 @@
     .grp-sec { margin: 0 0 18px; padding: 14px; border: 1px solid #e3e3e3; border-radius: 12px; background: #fafafa; }
     .grp-sec > summary { cursor: pointer; font-weight: bold; color: var(--red); }
     .grp-sec[open] > summary { margin-bottom: 10px; }
-    .grp-who { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px; }
+    .grp-who { display: grid; grid-template-columns: 1fr; gap: 2px; }   /* one column: easy to run down when calling names */
     .grp-who label { display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 19px; cursor: pointer; }
     .grp-who input { width: 24px; height: 24px; flex: none; accent-color: var(--red); }
     .grp-band { color: #777777; font-size: 15px; white-space: nowrap; }
@@ -715,7 +715,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (3)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (4)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2508,7 +2508,7 @@ function sessionPages(s, index) {
       s.notes.map(p => libLink(p.url, p.text) || `<span>${escLines(p.text)}</span>`).join(" ") + `</section>`;
   }
   html += items.length ? `<div class="v-plan">${rows}</div>` : "<p>Intet planlagt.</p>";
-  if (sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper</button>`;
+  if (sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper til denne træning</button>`;
   return [{ title: s.focus || danishDate(s.iso, s.date), html: html }];
 }
 
@@ -3628,8 +3628,7 @@ function matchesHtml() {
     <div class="grp-row">
       <span class="grp-hint grp-label">Antal kampe</span>
       <div class="grp-mode" role="group" aria-label="Antal kampe">
-        <button type="button" data-mcount="0" aria-pressed="${!GRP.matchCount}">Auto (${matchCount(GRP.groups)})</button>
-        ${[1, 2, 3, 4].map(c => `<button type="button" data-mcount="${c}" aria-pressed="${GRP.matchCount === c}">${c}</button>`).join("")}
+        ${[1, 2, 3, 4].map(c => `<button type="button" data-mcount="${c}" aria-pressed="${(GRP.matchCount || matchCount(GRP.groups)) === c}">${c}</button>`).join("")}
       </div>
     </div>
     <div class="grp-row">
@@ -3654,7 +3653,7 @@ function matchesHtml() {
 }
 
 /* Tap a player in a match: select; tap one on another team (this match or another): swap them.
-   ("Antal kampe": Auto is half the groups, rounded up – see matchCount) */
+   ("Antal kampe": until a number is chosen, half the groups, rounded up – see matchCount) */
 function matchTap(code) {
   const sel = GRP.matchSel;
   if (sel === code) { GRP.matchSel = null; renderGroups(); return; }
