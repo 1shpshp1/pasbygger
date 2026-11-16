@@ -162,10 +162,16 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; cards
   await page.waitForSelector('#ov .ov-p');
   assert.match(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), /^2–4 · niveau 3$/);
   assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), /^1–2 · niveau 1,5$/);
-  assert.match(await page.locator('#ov').innerText(), /midten af båndet/);
-  assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).innerText(), /Mål: 0 \/ 75 \/ 25 – der er ingen mere øvede at spille med/);
-  assert.match(await page.locator('#ov .ov-p', { hasText: 'Jonas' }).innerText(), /Mål: 25 \/ 75 \/ 0 – der er ingen mindre øvede/);
-  assert.doesNotMatch(await page.locator('#ov .ov-p', { hasText: 'Frida' }).innerText(), /Mål:/, 'room both ways: no special aim');
+  assert.match(await page.locator('#ov .ov-how').textContent(), /midten af båndet/);
+  const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
+  for (const [name, aim, why] of [['Alma', '0 / 75 / 25', /Ingen er mere øvede/], ['Jonas', '25 / 75 / 0', /Ingen er mindre øvede/], ['Frida', '25 / 50 / 25', null]]) {
+    const c = card(name), goals = await c.locator('.ov-goal').allInnerTexts();
+    assert.deepEqual(goals, ['mål ' + aim, 'mål ' + aim], name + ': the aim for groups and matches, for everyone');
+    assert.equal(await c.locator('.ov-aim').count(), 2, name + ': an aim bar under both');
+    if (why) assert.match(await c.innerText(), why); else assert.doesNotMatch(await c.innerText(), /Ingen er|Få er/);
+  }
+  // the aim bar's parts are the aim (Alma: 0 / 75 / 25)
+  assert.deepEqual(await card('Alma').locator('.ov-aim').first().locator('span').evaluateAll(ss => ss.map(x => Math.round(parseFloat(x.style.width)))), [0, 75, 25]);
   assert.deepEqual(page.errors, []);
 });
 
@@ -259,8 +265,11 @@ test('Spilleroversigt: attendance, level mix and most frequent teammates', { ski
   const text = await alma.innerText();
   assert.match(text, /2 af 2/);
   assert.match(text, /Oftest med: Bo \(2\)/);
-  assert.match(text, /\d+ % med mere øvede · \d+ % samme niveau · \d+ % med mindre øvede/);
+  assert.match(text, /Grupper\s*2 træninger[\s\S]*\d+ \/ \d+ \/ \d+ %\s*mål \d+ \/ \d+ \/ \d+/);
+  assert.match(text, /Kampe til træning\s*ingen gemte kampe endnu/, 'the matches section is there even without saved matches');
+  assert.match(await alma.locator('.ov-bars').first().getAttribute('aria-label'), /^Grupper: \d+ % med mere øvede, \d+ % samme niveau, \d+ % med mindre øvede\. Mål: /);
   assert.match(await card('Frida').innerText(), /Ikke med i gemte grupper endnu/);
+  assert.equal(await card('Frida').locator('.ov-empty').count(), 2, 'no data: an empty bar, the aim still shown');
   await page.click('#ov [data-sort="times"]');
   const first = await page.locator('#ov .ov-p strong').first().innerText();
   assert.ok(['Alma', 'Bo', 'Carl', 'Dina', 'Emil'].includes(first), 'sorted by attendance: ' + first);
@@ -294,7 +303,8 @@ test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview'
   await page.click('#v-back');
   await page.click('#nav-groups'); await page.click('#grp-overview');
   await page.waitForSelector('#ov .ov-p');
-  assert.match(await page.locator('#ov').innerText(), /Kampe \(1\): \d+ % sværere · \d+ % eget niveau · \d+ % lettere/);
+  assert.match(await page.locator('#ov').innerText(), /Kampe til træning\s*1 kamp\s*\d+ \/ \d+ \/ \d+ %/);
+  assert.match(await page.locator('#ov .ov-bars').nth(1).getAttribute('aria-label'), /^Kampe til træning: \d+ % sværere, \d+ % eget niveau, \d+ % lettere\./);
   assert.deepEqual(page.errors, []);
 });
 
