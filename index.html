@@ -727,7 +727,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (13)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (15)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2640,6 +2640,21 @@ function groupLevel(players) {
    teammates count as shares (e.g. 1 better and 2 the same of 3 = 0.33 and 0.67), so a big group doesn't weigh
    more. skill: { name: number } – a lower number is more skilled (Fra, with 1 as the best level). */
 const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50 % the same, 25 % weaker
+
+/* Each player's own aim: 25/50/25 when there are players both more and less experienced, but the most experienced
+   can't play with more experienced players (nor the least experienced with less experienced), so the share they
+   can't get goes to "samme niveau", with the closest players: the most experienced 0/75/25, the least experienced
+   25/75/0. Gradually: how much "more experienced" is possible is how much the most experienced other player counts
+   as more experienced (levelWeights: 0,75 above or more: fully; 0,4 above: partly). me: the player's Niveau,
+   others: the other players' Niveau (those present, or the whole squad). Returns [more, same, less], adding up to 1. */
+function playerAim(me, others) {
+  if (!isFinite(me)) return MIX_GOAL.slice();
+  let up = 0, down = 0;
+  others.forEach(o => { if (isFinite(o)) { const w = levelWeights(me, o); up = Math.max(up, w[0]); down = Math.max(down, w[2]); } });
+  return [MIX_GOAL[0] * up, 1 - MIX_GOAL[0] * up - MIX_GOAL[2] * down, MIX_GOAL[2] * down];
+}
+/* The aims of a list of levels, each against the others */
+const aimsFor = levels => levels.map((v, i) => playerAim(v, levels.filter((o, j) => j !== i)));
 /* Another player's level (or the others' average in a match) seen from a player, for the 25/50/25 mix:
    [more experienced, the same level, less experienced], adding up to 1. A soft transition around half a level:
    up to 0,25 apart counts fully as the same level, 0,75 or more fully as more/less experienced, and in between
@@ -2726,10 +2741,12 @@ function makeGroups(opts) {
   const placedBefore = prevOf.filter(x => x >= 0).length;
   const useChange = placedBefore > 0 && opts.change < 1;
   const target = Math.round((opts.change || 0) * placedBefore);
-  // The skill-mix ambition: how far each player's mix (earlier trainings + this one) is from 25/50/25
+  // The skill-mix ambition: how far each player's mix (earlier trainings + this one) is from their aim (25/50/25,
+  // or less of what the most and least experienced can't get: playerAim)
   const useMix = !!opts.skill;
   const skill = P.map(p => useMix && isFinite((opts.skill || {})[p.name]) ? opts.skill[p.name] : NaN);
   const had = P.map(p => (opts.mix || {})[p.name] || [0, 0, 0, 0]);
+  const aim = aimsFor(skill);                                  // each player's own aim (playerAim), against those present
   const cnt = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];   // more, equally, less experienced now
   // "Lige hold": each player's level (a player without one counts as the average of everyone)
   const useEven = !!opts.strength;
@@ -2798,7 +2815,7 @@ function makeGroups(opts) {
       const tot = cnt[0][i] + cnt[1][i] + cnt[2][i];
       if (tot) {
         const h = had[i], t = h[3] + 1;
-        for (let r = 0; r < 3; r++) { const d = (h[r] + cnt[r][i] / tot) / t - MIX_GOAL[r]; c += W.mix * d * d; }
+        for (let r = 0; r < 3; r++) { const d = (h[r] + cnt[r][i] / tot) / t - aim[i][r]; c += W.mix * d * d; }
       }
       cnt[0][i] = cnt[1][i] = cnt[2][i] = 0;
     }
@@ -2939,26 +2956,28 @@ function poolsToMatches(pools, lv, home, rand, known, teamCount, spares) {
 /* ---- "Kampe" by 25-50-25 ----
    Instead of the more experienced against each other and the less experienced against each other, the players
    are placed in the matches so that, over time, each one plays about 25 % of the matches in a harder match,
-   50 % at their own level and 25 % in an easier one. A match is harder for a player when the other players'
-   average level is better than the player's own (a lower number), easier when it is weaker, with a soft
-   transition around half a level (matchWeights / levelWeights: 0,5 apart counts half as harder or easier). Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own
-   level. The matches may differ in average level; each match is then split into two teams player for player.
+   50 % at their own level and 25 % in an easier one. A match is judged against each of the other players in it
+   (teammates and opponents), as the groups are: each counts as more experienced, the same level or less
+   experienced (levelWeights, a soft transition around half a level), and the match is the average of those
+   (matchShare). So the most experienced player's match with the next best counts partly as their own level, and
+   a match with two much stronger and two much weaker players counts half harder, half easier – not "own level".
+   Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own level. The matches may differ in average level; each match is then split into two teams player for player.
    The number of matches is the same as for "Niveau": the one chosen, or half the groups (rounded up). */
 const MATCH_MAX_GAP = 1.5;
-const MATCH_GOAL = [0.25, 0.5, 0.25];                  // harder, own level, easier
 const MATCH_WEIGHTS = { mix: 1000, gap: 1e5 };
 
-/* The match for a player: [harder, own level, easier] (levelWeights: a soft transition around half a level) */
-function matchWeights(own, others) {
-  if (!isFinite(own) || !isFinite(others)) return [0, 1, 0];
-  return levelWeights(own, others);
+/* The match for a player: [harder, own level, easier], the average over the other players' levels (each by
+   levelWeights). Without a level (or nobody else with one): own level. */
+function matchShare(own, others) {
+  const w = [0, 0, 0];
+  let k = 0;
+  if (isFinite(own)) others.forEach(o => { if (isFinite(o)) { const x = levelWeights(own, o); w[0] += x[0]; w[1] += x[1]; w[2] += x[2]; k++; } });
+  return k ? w.map(x => x / k) : [0, 1, 0];
 }
-/* Mostly: 0 harder, 1 own level, 2 easier (for the ↑ ↓ on the screen; half a level apart or more is harder/easier) */
-function matchCategory(own, others) {
-  if (!isFinite(own) || !isFinite(others)) return 1;
-  const w = matchWeights(own, others);
-  return w[1] > 0.5 + 1e-9 ? 1 : w[0] > w[2] ? 0 : 2;
-}
+/* Mostly: 0 harder, 1 own level, 2 easier (for the ↑ ↓ on the screen; as much harder as easier: own level) */
+const shareCategory = w => w[1] > 0.5 + 1e-9 || Math.abs(w[0] - w[2]) < 1e-9 ? 1 : w[0] > w[2] ? 0 : 2;
+/* (others: one level or a list of the others' levels) */
+const matchCategory = (own, others) => shareCategory(matchShare(own, Array.isArray(others) ? others : [others]));
 
 /* What each player has had in earlier matches: { name: [harder, own level, easier, matches] }, from saved
    trainings (newest first; each a list of matches, each [[team A names], [team B names]]), the last 12 */
@@ -2972,7 +2991,7 @@ function matchMix(earlier, level) {
       const others = lv.filter((v, j) => j !== i && isFinite(v));
       if (!others.length) return;
       const m = mix[name] = mix[name] || [0, 0, 0, 0];
-      const w = matchWeights(lv[i], others.reduce((x, y) => x + y, 0) / others.length);
+      const w = matchShare(lv[i], others);
       for (let r = 0; r < 3; r++) m[r] += w[r];
       m[3]++;
     });
@@ -2986,7 +3005,18 @@ function matchMix(earlier, level) {
 function mixPools(all, sizes, level, lv, mix, rand) {
   const own = all.map(p => { const v = level(p); return v != null && isFinite(v) ? v : NaN; });
   const had = all.map(p => mix[p.name] || [0, 0, 0, 0]);
+  const aim = aimsFor(own);                                    // each player's own aim, against those in this division
   const n = all.length, m = sizes.length;
+  const pw = new Float64Array(n * n * 3);                      // levelWeights for every pair, worked out once
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j && own[i] === own[i] && own[j] === own[j]) {
+    const x = levelWeights(own[i], own[j]);
+    pw[(i * n + j) * 3] = x[0]; pw[(i * n + j) * 3 + 1] = x[1]; pw[(i * n + j) * 3 + 2] = x[2];
+  }
+  function shareOf(i) {                                        // matchShare for player i where they are now
+    let s0 = 0, s1 = 0, s2 = 0, k = 0;
+    for (let j = 0; j < n; j++) if (j !== i && a[j] === a[i] && own[j] === own[j]) { const b = (i * n + j) * 3; s0 += pw[b]; s1 += pw[b + 1]; s2 += pw[b + 2]; k++; }
+    return k ? [s0 / k, s1 / k, s2 / k] : [0, 1, 0];
+  }
 
   let a;
   const sum = new Float64Array(m), cnt = new Float64Array(m);
@@ -2996,8 +3026,8 @@ function mixPools(all, sizes, level, lv, mix, rand) {
     let c = 0;
     for (let i = 0; i < n; i++) {
       if (own[i] !== own[i] || cnt[a[i]] < 2) continue;
-      const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), w = matchWeights(own[i], others), h = had[i];
-      for (let r = 0; r < 3; r++) { const d = (h[r] + w[r]) / (h[3] + 1) - MATCH_GOAL[r]; c += MATCH_WEIGHTS.mix * d * d; }
+      const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), w = shareOf(i), h = had[i];
+      for (let r = 0; r < 3; r++) { const d = (h[r] + w[r]) / (h[3] + 1) - aim[i][r]; c += MATCH_WEIGHTS.mix * d * d; }
       const over = Math.abs(others - own[i]) - MATCH_MAX_GAP;
       if (over > 1e-9) c += MATCH_WEIGHTS.gap * (10 + over * over);   // a fixed step: never worth a better mix
     }
@@ -3028,7 +3058,7 @@ function mixPools(all, sizes, level, lv, mix, rand) {
   cost();                                                // (fills sum and cnt for the final placement)
   const cat = {};
   all.forEach(function (p, i) {
-    if (own[i] === own[i] && cnt[a[i]] > 1) cat[p.name] = matchCategory(own[i], (sum[a[i]] - own[i]) / (cnt[a[i]] - 1));
+    if (own[i] === own[i] && cnt[a[i]] > 1) cat[p.name] = shareCategory(shareOf(i));
   });
   return { pools: Array.from({ length: m }, (_, mi) => all.filter((p, i) => a[i] === mi)), cat: cat };
 }
@@ -3625,6 +3655,7 @@ function renderOverview() {
   const mKeys = Object.keys(data.matches || {}).sort().reverse();
   const mMix = matchMix(mKeys.map(k => data.matches[k].matches), name => skill[name] == null ? NaN : skill[name]);
   const spared = spareCounts(mKeys.map(k => data.matches[k].matches));
+  const squad = data.players.map(nivOf).filter(v => v != null);   // each player's aim against the whole squad
   const stats = data.players.map(function (p) {
     let times = 0, last = "";
     const mates = {};
@@ -3650,13 +3681,17 @@ function renderOverview() {
         `<span class="ov-more" style="width:${a}%"></span><span class="ov-same" style="width:${b}%"></span><span class="ov-less" style="width:${c}%"></span></div>` +
         `<p class="ov-line">${a} % med mere øvede · ${b} % samme niveau · ${c} % med mindre øvede</p>`;
     } else if (s.times && s.p.lo == null) mixHtml = `<p class="ov-line">Har intet niveau i fanen Spillere.</p>`;
+    const me = nivOf(s.p), others = squad.slice();
+    if (me != null) others.splice(others.indexOf(me), 1);          // everyone but the player
+    const aim = me == null ? null : playerAim(me, others);
+    const aimTxt = aim && Math.abs(aim[1] - 0.5) > 0.005 ? `<p class="ov-line">Mål: ${aim.map(x => Math.round(100 * x)).join(" / ")} – ${aim[0] < 0.005 ? "der er ingen mere øvede at spille med" : aim[2] < 0.005 ? "der er ingen mindre øvede at spille med" : "der er få " + (aim[0] < aim[2] ? "mere" : "mindre") + " øvede at spille med"}, så mere på eget niveau.</p>` : "";
     const alone = spared[s.p.name] ? ` · ${spared[s.p.name]} ${spared[s.p.name] === 1 ? "gang" : "gange"} uden modspiller` : "";
     const mm = s.mmix && s.mmix[3] ? `<p class="ov-line">Kampe (${s.mmix[3]}): ${pct(s.mmix, 0)} % sværere · ${pct(s.mmix, 1)} % eget niveau · ${pct(s.mmix, 2)} % lettere${alone}</p>` : "";
     return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
-      mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
+      mixHtml + mm + aimTxt + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. En spillers niveau er midten af båndet (Fra–Til 2–3 giver niveau 2,5). Op til 0,25 fra spilleren tæller som samme niveau og 0,75 eller mere som mere/mindre øvede; ind imellem tæller det delvist (0,5 fra: halvt af hver). Det gælder både grupper og kampe.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25 – for de mest og mindst øvede går den del, de ikke kan få, til samme niveau (fx 0 / 75 / 25 for den mest øvede). En spillers niveau er midten af båndet (Fra–Til 2–3 giver niveau 2,5). Op til 0,25 fra spilleren tæller som samme niveau og 0,75 eller mere som mere/mindre øvede; ind imellem tæller det delvist (0,5 fra: halvt af hver). Det gælder både grupper og kampe; en kamp vurderes ud fra hver af de andre spillere i den (begge hold).</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
@@ -3788,11 +3823,19 @@ function mixLine(players) {
   const skill = grpSkill();
   const now = GRP.groups.map(g => g.map(p => p.name));
   const mix = skillMix([now].concat(earlierGroups().map(e => e.groups)), skill);
-  const sum = [0, 0, 0]; let n = 0;
-  players.forEach(p => { const m = mix[p.name]; if (m && m[3]) { for (let r = 0; r < 3; r++) sum[r] += m[r] / m[3]; n++; } });
+  const sum = [0, 0, 0], goal = [0, 0, 0]; let n = 0;
+  const levels = players.map(p => skill[p.name] == null ? NaN : skill[p.name]);
+  players.forEach(function (p, i) {
+    const m = mix[p.name];
+    if (!m || !m[3]) return;
+    const a = playerAim(levels[i], levels.filter((o, j) => j !== i));
+    for (let r = 0; r < 3; r++) { sum[r] += m[r] / m[3]; goal[r] += a[r]; }
+    n++;
+  });
   if (!n) return "";
-  const pct = r => Math.round(100 * sum[r] / n) + " %";
-  return `Niveau-mix over tid (gennemsnit, med disse grupper): ${pct(0)} med mere øvede · ${pct(1)} samme niveau · ${pct(2)} med mindre øvede. Målet er 25 / 50 / 25.`;
+  const pct = r => Math.round(100 * sum[r] / n) + " %", g = r => Math.round(100 * goal[r] / n);
+  return `Niveau-mix over tid (gennemsnit, med disse grupper): ${pct(0)} med mere øvede · ${pct(1)} samme niveau · ${pct(2)} med mindre øvede. ` +
+    `Målet er ${g(0)} / ${g(1)} / ${g(2)} (25 / 50 / 25, men de mest og mindst øvede spiller mere på eget niveau).`;
 }
 
 function makeNewGroups() {
@@ -3982,7 +4025,7 @@ function rebalanceMatch(mi) {
 function catInMatch(p, m) {
   if (nivOf(p) == null) return 1;
   const others = [].concat(...m.teams).filter(q => q !== p && nivOf(q) != null).map(nivOf);
-  return others.length ? matchCategory(nivOf(p), others.reduce((x, y) => x + y, 0) / others.length) : 1;
+  return others.length ? shareCategory(matchShare(nivOf(p), others)) : 1;
 }
 
 /* 25-50-25 builds on the matches saved at earlier trainings: how many there are */
@@ -4125,7 +4168,7 @@ function matchesHtml() {
     </div>
     ${GRP.sizeMode === "custom" ? sizesHtml() : ""}
     <p class="grp-hint grp-explain">${{
-      mix: "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d.",
+      mix: "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. De mest øvede kan ikke få sværere kampe (og de mindst øvede ikke lettere), så de spiller mere på eget niveau i stedet. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d.",
       max: "Spillerne stilles op efter deres niveau (midten af båndet), så kamp 1 er de mest øvede.",
       band: "Spillere i samme kamp skal have bånd, der overlapper (som for grupperne).",
       even: "Kampene får så ens gennemsnitligt niveau som muligt.",
