@@ -40,7 +40,9 @@ async function phone(srv, { width = 390, loggedIn = true } = {}) {
     if ((srv.dropped || []).includes(action)) return r.abort('failed');   // the connection drops
     if ((srv.unknown || []).includes(action)) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ error: 'Unknown action: ' + action }) });
     if ((srv.broken || {})[action]) return r.fulfill({ contentType: 'text/html', body: srv.broken[action] });   // Google's error page
-    const answer = JSON.stringify(srv.post(body));
+    const reply = srv.post(body);
+    if (srv.oldServer && reply.result) delete reply.result.server;   // a deployed copy from before the version numbers
+    const answer = JSON.stringify(reply);
     if ((srv.slow || []).includes(action)) return setTimeout(() => r.fulfill({ contentType: 'application/json', body: answer }), 1500);
     r.fulfill({ contentType: 'application/json', body: answer });
   });
@@ -284,7 +286,9 @@ test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview'
   await page.click('#grp-v [data-act="matches"]');
   assert.match(await page.locator('#grp-v .grp-matches .grp-card .grp-head').first().innerText(), /mere øvede/);
   assert.match(await page.locator('#grp-v .grp-matches .grp-save').innerText(), /Ikke gemt/);
-  await page.click('#v-back'); await page.click('#v-back');
+  await page.click('#v-back');
+  await page.click('.leave-ask [data-leave="drop"]');              // the new matches aren't wanted
+  await page.click('#v-back');
   await page.click('#nav-groups'); await page.click('#grp-overview');
   await page.waitForSelector('#ov .ov-p');
   assert.match(await page.locator('#ov').innerText(), /Kampe \(1\): \d+ % sværere · \d+ % eget niveau · \d+ % lettere/);
@@ -486,6 +490,67 @@ test('Gem grupper / Gem tilmeldte / Gem kampe register at once and reach the she
   await page.click('#grp-v [data-act="save"]');
   await page.waitForFunction(() => /Kunne ikke gemme grupperne: Unknown action/.test(document.getElementById('grp-v').innerText));
   assert.equal(await page.locator('#grp-v [data-act="save"]').isDisabled(), false);
+  assert.deepEqual(page.errors, []);
+});
+
+test('An old server copy: coaches are told what to copy; players see nothing', { skip }, async () => {
+  const srv = testServer();
+  srv.oldServer = true;
+  const guest = await phone(srv, { loggedIn: false });
+  await guest.click('#plan-refresh');
+  await guest.waitForFunction(() => /Opdateret/.test(document.getElementById('plan-time').textContent));
+  assert.equal(await guest.locator('#server-note').isHidden(), true, 'not for players');
+  const page = await phone(srv);
+  await page.click('#plan-refresh');
+  await page.waitForFunction(() => !document.getElementById('server-note').hidden);
+  assert.match(await page.locator('#server-note').innerText(), /Serveren er ikke opdateret[\s\S]*Code\.gs/);
+  assert.deepEqual(await page.locator('#server-note a').evaluateAll(as => as.map(a => a.getAttribute('href'))),
+    ['Code.gs', 'Grupper.gs'].map(f => 'https://github.com/1shpshp1/pasbygger/blob/main/apps-script/' + f));
+  await openGroups(page);
+  await page.waitForFunction(() => /Grupper\.gs/.test(document.getElementById('grp-v').innerText));
+  srv.oldServer = false;                                           // updated: the note goes once both files have answered
+  await page.click('#v-back'); await page.click('#v-back');
+  await openGroups(page);
+  await page.waitForFunction(() => !/Grupper\.gs/.test(document.getElementById('grp-v').innerText));   // (Code.gs until the plan is fetched)
+  await page.click('#v-back'); await page.click('#v-back');
+  await page.click('#plan-refresh');
+  await page.waitForFunction(() => document.getElementById('server-note').hidden);
+  assert.deepEqual(page.errors, []);
+});
+
+test('Leaving unsaved groups or matches asks first: Bliv, Luk uden at gemme, Gem og luk', { skip }, async () => {
+  const srv = testServer();
+  const page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  await page.click('#v-back');
+  const ask = page.locator('.leave-ask');
+  assert.match(await ask.innerText(), /Grupperne er ikke gemt/);
+  await ask.locator('[data-leave="stay"]').click();
+  assert.equal(await page.locator('#grp-v').count(), 1, 'still on the groups');
+  await page.click('#grp-v [data-act="matches"]');
+  await page.keyboard.press('Escape');                             // Escape is "Tilbage" too
+  assert.match(await ask.innerText(), /Grupperne og kampene er ikke gemt/);
+  await ask.locator('[data-leave="save"]').click();
+  await page.waitForFunction(() => !document.getElementById('grp-v'));
+  await page.click('#v-back');                                     // from the training back to the list
+  const t = srv.call('login', CODE).result.token;
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  const d = srv.call('getGroupData', t).result;
+  assert.equal(Object.keys(d.history).length, 1, 'the groups were saved');
+  assert.equal(Object.keys(d.matches).length, 1, 'and the matches');
+  // saved: no question; changed again and dropped: closes without saving
+  await openGroups(page);
+  await page.click('#v-back');
+  assert.equal(await ask.count(), 0, 'nothing unsaved: no question');
+  await page.click('#v-back');
+  await openGroups(page);
+  await page.locator('#grp-v .grp-card .grp-p').first().click();
+  await page.locator('#grp-v .grp-card').nth(1).locator('.grp-p').first().click();
+  await page.click('#v-back');
+  await ask.locator('[data-leave="drop"]').click();
+  await page.waitForFunction(() => !document.getElementById('grp-v'));
+  assert.deepEqual(srv.call('getGroupData', t).result.history, d.history, 'not saved');
   assert.deepEqual(page.errors, []);
 });
 

@@ -27,6 +27,9 @@
    Speed: the players and groups are kept ready in the cache (cleared when a tab is edited by hand and built again
    by the next request or the 5-minute warm-up). A save from the app only writes that training's rows and updates
    the cached copy, without reading the other tabs. A phone that already has the newest copy only gets "unchanged". */
+/* The version of this file. Raise it by one whenever Grupper.gs changes: the app (index.html, SERVER_NEEDS) says
+   "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
+const GRUPPER_VERSION = 2;
 const PLAYERS_SHEET = 'Spillere';
 const GROUPS_SHEET = 'Grupper';
 const GROUPS_PASSWORD_PROPERTY = 'GROUPS_PASSWORD';
@@ -217,9 +220,10 @@ function warmGroupCache() {
 function getGroupData(token, version) {
   requireToken_(token);
   const part = cachedGroupData_() || buildGroupData_();
-  if (version && version === part.version) return { unchanged: true, version: part.version };
+  if (version && version === part.version) return { unchanged: true, version: part.version, server: GRUPPER_VERSION };
   const out = JSON.parse(part.json);
   out.version = part.version;
+  out.server = GRUPPER_VERSION;
   return out;
 }
 
