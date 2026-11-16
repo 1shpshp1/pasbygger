@@ -724,7 +724,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (10)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (11)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -3231,10 +3231,10 @@ function assignPools(players, sizes, kind, rand, lv, mean, opts) {
   return pools;
 }
 
-/* ---- "Del kampene efter" Bånd, Max-niveau, Kaos and Lige hold (who plays where: assignPools) ----
+/* ---- "Del kampene efter" Bånd, Niveau, Kaos and Lige hold (who plays where: assignPools) ----
    Decides who plays in which match (sizes: players per match, adding up to everyone), then splits each match
    into two teams:
-     "max"   – by best level (Fra): match 1 the most experienced;
+     "max"   – by level (the app passes Niveau): match 1 the most experienced;
      "band"  – players in a match must have bands that meet (opts.meet), as for groups;
      "even"  – the matches' average levels as equal as possible;
      "chaos" – completely at random: matches AND teams (for card games, quizzes and other social games);
@@ -3265,7 +3265,7 @@ function makePoolMatches(players, sizes, kind, seed, opts) {
   return poolsToMatches(pools.filter(ps => ps.length >= 2), lv, opts.home || new Map(), rand, known, opts.teams);
 }
 
-/* ---- "Max-niveau": sorted by level ----
+/* ---- "Niveau": sorted by level (the app passes Niveau, the middle of the band) ----
    The players ranked by their best level (Fra: the lowest number in the band, the most experienced first)
    and cut into k groups of even size, so group 1 holds the most experienced. Players with the same level come
    in random order (seed), so pressing again gives a new mix within each level without breaking the order.
@@ -3356,6 +3356,12 @@ function saveGrpSettings() {
 const sessionKey = s => String((s && (s.iso || s.date)) || "").trim();
 
 /* "2", "2–3" or "?" (no level) */
+/* "Niveau": a player's level, the middle of their band, (Fra + Til) / 2 (Fra 2, Til 3 → 2,5); null without a level.
+   Used everywhere a level is compared or averaged (statistics, Lige hold, 25-50-25, the Niveau rule, matches);
+   only "Bånd" uses the whole band. */
+const nivOf = p => p && isFinite(p.lo) && isFinite(p.hi) ? (p.lo + p.hi) / 2 : null;
+const nivText = x => String(Math.round(x * 100) / 100).replace(".", ",");
+
 function bandText(lo, hi) {
   const f = x => String(x).replace(".", ",");
   if (!isFinite(lo) && !isFinite(hi)) return "?";
@@ -3377,7 +3383,7 @@ const byMax = () => GRP.rule === "max";
 const byChaos = () => GRP.rule === "chaos";     // "Kaos": a random split, level and earlier groups don't count
 const byEven = () => GRP.rule === "even";       // "Lige hold": groups of equal strength; bands and the slider don't count
 const freeRule = () => byChaos() || byEven();   // anyone may be with anyone
-const noSlider = () => freeRule() || byMax();   // Max-niveau sorts by level, so the slider and earlier groups don't apply
+const noSlider = () => freeRule() || byMax();   // Niveau sorts by level, so the slider and earlier groups don't apply
 const NO_LEVEL = name => ({ name: name, lo: -Infinity, hi: Infinity });
 const HAIR = 1e-6;
 function strictBand(p) {
@@ -3388,21 +3394,21 @@ function strictBand(p) {
 function grpMeet(a, b) {
   if (freeRule()) return true;
   if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
-  return !isFinite(a.lo) || !isFinite(b.lo) || Math.abs(a.lo - b.lo) <= GRP.maxDiff;
+  return nivOf(a) == null || nivOf(b) == null || Math.abs(nivOf(a) - nivOf(b)) <= GRP.maxDiff + 1e-9;
 }
 function searchBand(p) {
   if (freeRule()) return NO_LEVEL(p.name);
   if (!byMax()) return strictBand(p);
-  return isFinite(p.lo) ? { name: p.name, lo: p.lo, hi: p.lo + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
+  return nivOf(p) != null ? { name: p.name, lo: nivOf(p), hi: nivOf(p) + GRP.maxDiff } : { name: p.name, lo: -Infinity, hi: Infinity };
 }
-const ruleNote = (a) => byMax() ? "max " + bandText(a.lo, a.lo) : bandText(a.lo, a.hi);
+const ruleNote = (a) => byMax() ? "niveau " + (nivOf(a) == null ? "?" : nivText(nivOf(a))) : bandText(a.lo, a.hi);
 /* The text after the size on a group card: the shared level, or the range of max levels */
 function groupLevelText(g) {
   if (!g.length || byChaos()) return "";
   if (byEven()) { const a = groupAverage(g); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); }
   if (byMax()) {
-    const m = g.map(p => p.lo).filter(isFinite);
-    return m.length ? "max " + bandText(Math.min.apply(null, m), Math.max.apply(null, m)) : "alle niveauer";
+    const m = g.map(nivOf).filter(v => v != null), lo = Math.min.apply(null, m), hi = Math.max.apply(null, m);
+    return m.length ? "niveau " + (lo === hi ? nivText(lo) : nivText(lo) + "–" + nivText(hi)) : "alle niveauer";
   }
   const lev = groupLevel(g);
   return "niveau " + bandText(lev.lo, lev.hi);
@@ -3454,7 +3460,7 @@ function keyLabel(key) {
 /* ---- Spilleroversigt: per player, from the saved groups ----
    Attendance: in how many of the saved trainings (and groups made in the tab) the player was in a group.
    Level mix: over the last 12 of those, the share of teammates who were more experienced, at the same level
-   and less experienced (by Fra, less than half a level apart counting as the same level, like the 25/50/25
+   and less experienced (by Niveau, the middle of the band, less than half a level apart counting as the same level, like the 25/50/25
    ambition: mateCategory). Most frequent teammates: over all of them. */
 let OV_SORT = "name";
 
@@ -3483,7 +3489,7 @@ function renderOverview() {
   const keys = Object.keys(data.history).sort().reverse();          // newest first
   const sessions = keys.map(k => data.history[k].groups);
   const skill = {};
-  data.players.forEach(p => { if (p.lo != null) skill[p.name] = p.lo; });
+  data.players.forEach(p => { if (nivOf(p) != null) skill[p.name] = nivOf(p); });
   const mix = skillMix(sessions, skill);                             // over the last 12, as the groups use it
   const mKeys = Object.keys(data.matches || {}).sort().reverse();
   const mMix = matchMix(mKeys.map(k => data.matches[k].matches), name => skill[name] == null ? NaN : skill[name]);
@@ -3503,7 +3509,7 @@ function renderOverview() {
                                  : (a, b) => a.p.name.localeCompare(b.p.name, "da"));
   const pct = (m, r) => Math.round(100 * m[r] / m[3]);
   const rows = stats.map(function (s) {
-    const band = s.p.lo == null ? "" : `<span class="grp-band">${bandText(s.p.lo, s.p.hi)}</span>`;
+    const band = s.p.lo == null ? "" : `<span class="grp-band">${bandText(s.p.lo, s.p.hi)}${s.p.lo !== s.p.hi ? " · niveau " + nivText(nivOf(s.p)) : ""}</span>`;
     const seen = s.times ? `${s.times} af ${keys.length} · sidst ${esc(shortDate(s.last.slice(0, 10)))}` : "Ikke med i gemte grupper endnu";
     let mixHtml = "";
     if (s.mix && s.mix[3]) {
@@ -3517,7 +3523,7 @@ function renderOverview() {
       mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. I niveau-mixet tæller en medspiller under et halvt niveau fra spilleren som samme niveau (fra 2,17 er 2,6 samme niveau, 2,67 mindre øvede), ligesom i kampene.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. En spillers niveau er midten af båndet (Fra–Til 2–3 giver niveau 2,5). En medspiller under et halvt niveau fra spilleren tæller som samme niveau (fra 2,5 er 2,9 samme niveau, 3 mindre øvede), ligesom i kampene.</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
@@ -3639,7 +3645,7 @@ function shownGroups() {
 /* Each player's skill for the 25/50/25 ambition: Fra (1 is the best level); none without a level */
 function grpSkill() {
   const skill = {};
-  GRP.data.players.forEach(p => { if (p.lo != null) skill[p.name] = p.lo; });
+  GRP.data.players.forEach(p => { if (nivOf(p) != null) skill[p.name] = nivOf(p); });
   return skill;
 }
 
@@ -3659,14 +3665,14 @@ function mixLine(players) {
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
-  if (byMax()) {                        // Max-niveau: sorted by the best level (Fra), group 1 the most experienced
-    GRP.groups = sortedGroups(players, groupCount(players.length), p => isFinite(p.lo) ? p.lo : null,
+  if (byMax()) {                        // Niveau: sorted by Niveau, group 1 the most experienced
+    GRP.groups = sortedGroups(players, groupCount(players.length), nivOf,
                               hashText(GRP.key + "|" + GRP.nonce++))
       .map(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));
     GRP.sel = null; GRP.dirty = true;
     const red = GRP.groups.filter(g => g.some((a, i) => g.slice(i + 1).some(b => !grpMeet(a, b)))).length;
     GRP.bad = red > 0;
-    GRP.msg = red ? `Max-niveauet spænder mere end ${GRP.maxDiff} i de røde grupper. Vælg flere grupper eller en større forskel.` : "";
+    GRP.msg = red ? `Niveauet spænder mere end ${nivText(GRP.maxDiff)} i de røde grupper. Vælg flere grupper eller en større forskel.` : "";
     renderGroups();
     return;
   }
@@ -3683,7 +3689,7 @@ function makeNewGroups() {
   GRP.groups = res.groups.map(g => g.map(p => grpPlayer(p.name))); GRP.sel = null; GRP.dirty = true;
   GRP.bad = res.conflicts > 0;
   GRP.msg = res.conflicts
-    ? (byMax() ? "Max-niveauerne" : "Niveauerne") + " kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
+    ? "Niveauerne kan ikke deles sådan uden brud – prøv et andet antal grupper (de røde grupper bryder reglen)."
     : res.target != null ? `${res.moved} ${res.moved === 1 ? "spiller" : "spillere"} skiftede gruppe siden sidst.`
     : byEven() ? evenText() : "";
   renderGroups();
@@ -3691,7 +3697,7 @@ function makeNewGroups() {
 
 /* "Lige hold": a group's average level (Fra; players without a level left out), and the gap between the groups */
 function groupAverage(g) {
-  const v = g.map(p => p.lo).filter(isFinite);
+  const v = g.map(nivOf).filter(v => v != null);
   return v.length ? v.reduce((x, y) => x + y, 0) / v.length : null;
 }
 function evenText() {
@@ -3709,7 +3715,7 @@ function evenText() {
    split into two equally strong teams player for player. The matches are made from the groups on the screen
    and disappear if those groups change; "Gem kampe" saves them (tab Kampe), which 25-50-25 builds on. */
 const groupsSignature = () => JSON.stringify((GRP.groups || []).map(g => g.map(p => p.name)));
-const fraOf = p => isFinite(p.lo) ? p.lo : null;
+const fraOf = nivOf;                                     // (the level used for the matches: Niveau)
 
 const byMix = () => GRP.matchMode === "mix";
 
@@ -3718,12 +3724,12 @@ function earlierMatches() {
   const m = GRP.data.matches || {};
   return Object.keys(m).filter(k => k < GRP.key).sort().reverse().map(k => m[k].matches);
 }
-const levelOfName = name => { const p = GRP.byName[name]; return p && isFinite(p.lo) ? p.lo : NaN; };
+const levelOfName = name => { const v = nivOf(GRP.byName[name]); return v == null ? NaN : v; };
 
-/* "Del kampene efter": Bånd, Max-niveau, Kaos, Lige hold, 25-50-25.
+/* "Del kampene efter": Bånd, Niveau, Kaos, Lige hold, 25-50-25.
    "Antal puljer" 2–4: the players are first split into pools (splitPools, by "Del puljerne efter", even sizes or
    chosen), and each pool is then divided into its own matches (its own number) by "Del kampene efter". */
-const MATCH_MODES = [["band", "Bånd"], ["max", "Max-niveau"], ["chaos", "Kaos"], ["even", "Lige hold"], ["mix", "25-50-25"]];
+const MATCH_MODES = [["band", "Bånd"], ["max", "Niveau"], ["chaos", "Kaos"], ["even", "Lige hold"], ["mix", "25-50-25"]];
 const matchMode = () => GRP.matchMode === "tiers" || GRP.matchMode === "level" ? "max" : GRP.matchMode;
 const strictMeet = (a, b) => bandsMeet(strictBand(a), strictBand(b));
 const playersInGroups = () => (GRP.groups || []).reduce((n, g) => n + g.length, 0);
@@ -3840,9 +3846,9 @@ function rebalanceMatch(mi) {
 
 /* 25-50-25: is this match harder (0), at the player's level (1) or easier (2) for them? */
 function catInMatch(p, m) {
-  if (!isFinite(p.lo)) return 1;
-  const others = [].concat(...m.teams).filter(q => q !== p && isFinite(q.lo)).map(q => q.lo);
-  return others.length ? matchCategory(p.lo, others.reduce((x, y) => x + y, 0) / others.length) : 1;
+  if (nivOf(p) == null) return 1;
+  const others = [].concat(...m.teams).filter(q => q !== p && nivOf(q) != null).map(nivOf);
+  return others.length ? matchCategory(nivOf(p), others.reduce((x, y) => x + y, 0) / others.length) : 1;
 }
 
 /* 25-50-25 builds on the matches saved at earlier trainings: how many there are */
@@ -3912,7 +3918,7 @@ function matchesHtml() {
          : c === 2 ? `<span class="grp-arrow" title="En lettere kamp end eget niveau">↓</span>` : "";
   };
   const chip = (p, mi, ti, pi) => p ? `<button type="button" class="grp-p" data-mp="${mi}:${ti}:${pi}" aria-pressed="${GRP.matchSel === mi + ":" + ti + ":" + pi}">` +
-    `<span class="grp-pname">${arrow(p, mi)}${esc(p.name)}</span> <span class="grp-band">${bandText(p.lo, p.lo)}</span></button>` : `<span class="grp-none-p">ingen modspiller</span>`;
+    `<span class="grp-pname">${arrow(p, mi)}${esc(p.name)}</span> <span class="grp-band">${nivOf(p) == null ? "?" : nivText(nivOf(p))}</span></button>` : `<span class="grp-none-p">ingen modspiller</span>`;
   const groupList = g => g.length === 1 ? "gruppe " + g[0] : "gruppe " + g.slice(0, -1).join(", ") + " og " + g[g.length - 1];
   const first = ms.map((m, mi) => ms.slice(0, mi).reduce((n, x) => n + x.teams.length, 0));   // the letter of each match's team A
   const letter = (mi, ti) => String.fromCharCode(65 + first[mi] + ti);
@@ -3956,7 +3962,7 @@ function matchesHtml() {
     </div>
     ${poolCustom() ? poolSizesHtml() : ""}
     <p class="grp-hint grp-explain">${{
-      max: "Spillerne stilles op efter deres bedste niveau, så pulje 1 er de mest øvede.",
+      max: "Spillerne stilles op efter deres niveau (midten af båndet), så pulje 1 er de mest øvede.",
       band: "Spillere i samme pulje skal have bånd, der overlapper.",
       even: "Puljerne får så ens gennemsnitligt niveau som muligt.",
       chaos: "Puljerne trækkes helt tilfældigt.",
@@ -3986,7 +3992,7 @@ function matchesHtml() {
     ${GRP.sizeMode === "custom" ? sizesHtml() : ""}
     <p class="grp-hint grp-explain">${{
       mix: "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. Kampene kan derfor have forskelligt niveau. Ingen kommer i en kamp, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d.",
-      max: "Spillerne stilles op efter deres bedste niveau, så kamp 1 er de mest øvede.",
+      max: "Spillerne stilles op efter deres niveau (midten af båndet), så kamp 1 er de mest øvede.",
       band: "Spillere i samme kamp skal have bånd, der overlapper (som for grupperne).",
       even: "Kampene får så ens gennemsnitligt niveau som muligt.",
       chaos: "Helt tilfældigt: både kampe og hold trækkes uden hensyn til niveau. Godt til kortspil, quiz og andre sociale aktiviteter."
@@ -4048,7 +4054,7 @@ function renderGroups() {
         <span class="grp-hint grp-label">Del efter</span>
         <div class="grp-mode" role="group" aria-label="Del efter">
           <button type="button" data-rule="band" aria-pressed="${GRP.rule === "band"}">Bånd</button>
-          <button type="button" data-rule="max" aria-pressed="${byMax()}">Max-niveau</button>
+          <button type="button" data-rule="max" aria-pressed="${byMax()}">Niveau</button>
           <button type="button" data-rule="chaos" aria-pressed="${byChaos()}">Kaos</button>
           <button type="button" data-rule="even" aria-pressed="${byEven()}">Lige hold</button>
         </div>
@@ -4056,7 +4062,7 @@ function renderGroups() {
       ${byMax() ? `<div class="grp-row">
         <span class="grp-hint">Forskel i en gruppe højst</span>
         <div class="grp-mode" role="group" aria-label="Forskel i en gruppe højst">
-          ${[0, 1, 2].map(d => `<button type="button" data-diff="${d}" aria-pressed="${GRP.maxDiff === d}">${d}</button>`).join("")}
+          ${[0, 0.5, 1, 1.5, 2].map(d => `<button type="button" data-diff="${d}" aria-pressed="${GRP.maxDiff === d}">${nivText(d)}</button>`).join("")}
         </div>
       </div>` : ""}
       <div class="grp-row">
@@ -4072,7 +4078,7 @@ function renderGroups() {
         <span class="grp-hint">${sizeText(n, k)}</span>
       </div>
       ${byChaos() ? `<p class="grp-hint grp-explain grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
-      : byMax() ? `<p class="grp-hint grp-explain grp-slide">Max-niveau: spillerne sorteres efter deres bedste niveau (det laveste tal i båndet), så gruppe 1 er de mest øvede. Spillere med samme niveau blandes, når du trykker igen. En gruppe bliver rød, hvis den spænder mere end den valgte forskel.</p>`
+      : byMax() ? `<p class="grp-hint grp-explain grp-slide">Niveau: spillerne sorteres efter deres niveau (midten af båndet, fx 2,5 for 2–3), så gruppe 1 er de mest øvede. Spillere med samme niveau blandes, når du trykker igen. En gruppe bliver rød, hvis den spænder mere end den valgte forskel.</p>`
       : byEven() ? `<p class="grp-hint grp-explain grp-slide">Lige hold: holdene får så ens gennemsnitligt niveau som muligt, og de mest og mindst øvede kan være på samme hold. Båndene tæller ikke med, men de samme makkere som sidst undgås.</p>`
       : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
@@ -4103,7 +4109,7 @@ function renderGroups() {
         <div class="grp-head"><strong>Gruppe ${gi + 1}</strong><small>${g.length} ${g.length === 1 ? "spiller" : "spillere"}${levelTxt ? " · " + levelTxt : ""}</small></div>
         <div class="grp-players">${chips || '<span class="grp-hint">Ingen spillere</span>'}</div>
         ${GRP.sel && !selHere ? `<button type="button" class="clearbtn grp-here" data-to="${gi}">Flyt ${esc(GRP.sel.name)} hertil</button>` : ""}
-        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i max-niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
+        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
       <p class="grp-legend">${prev && !noSlider() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>
