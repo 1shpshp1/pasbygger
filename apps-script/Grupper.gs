@@ -20,7 +20,8 @@
    They are only a starting point: they don't count as groups and don't change how groups are made.
 
    Tab "Kampe": written by the app's "Gem kampe" button, one row per player per training (Træning, Kamp, Hold,
-   Spiller, Gemt). Hold is A or B; within a match, the rows keep the order of the opposite numbers. The saved
+   Spiller, Gemt). Hold is A, B or C (C: a match with three teams, "vinderen bliver på"); within a match, the
+   rows keep the order of the opposite numbers. The saved
    matches are what "Del kampene efter 25-50-25" uses to vary who plays harder and easier matches.
 
    Speed: the players and groups are kept ready in the cache (cleared when either tab is edited, built again
@@ -141,11 +142,12 @@ function buildGroupData_() {
   const ms = ss.getSheetByName(MATCHES_SHEET);
   if (ms && ms.getLastRow() > 1) {
     ms.getRange(2, 1, ms.getLastRow() - 1, MATCHES_HEADERS.length).getDisplayValues().forEach(r => {
-      const key = String(r[0]).trim(), m = parseInt(r[1], 10), team = String(r[2]).trim().toUpperCase() === 'B' ? 1 : 0;
+      const key = String(r[0]).trim(), m = parseInt(r[1], 10), team = Math.max(0, 'ABC'.indexOf(String(r[2]).trim().toUpperCase()));
       const name = String(r[3]).trim();
       if (!key || !(m >= 1) || !name) return;
       const h = matches[key] = matches[key] || { saved: r[4], matches: [] };
       while (h.matches.length < m) h.matches.push([[], []]);
+      while (h.matches[m - 1].length <= team) h.matches[m - 1].push([]);
       h.matches[m - 1][team].push(name);
     });
   }
@@ -258,13 +260,14 @@ function saveSignups(token, key, names) {
   }
 }
 
-/* Saves one training's matches ([[[team A names], [team B names]], …]), replacing what was saved for it before.
+/* Saves one training's matches ([[[team A names], [team B names] (, [team C names])], …]), replacing what was
+   saved for it before.
    [] removes them. */
 function saveMatches(token, key, matches) {
   requireToken_(token);
   key = String(key || '').trim();
   if (!key || key.length > 40) throw new Error('No training given.');
-  if (!Array.isArray(matches) || matches.some(m => !Array.isArray(m) || m.length !== 2 || !Array.isArray(m[0]) || !Array.isArray(m[1]))) {
+  if (!Array.isArray(matches) || matches.some(m => !Array.isArray(m) || (m.length !== 2 && m.length !== 3) || !m.every(Array.isArray))) {
     throw new Error('The matches could not be read.');
   }
   const lock = LockService.getScriptLock();
@@ -275,7 +278,7 @@ function saveMatches(token, key, matches) {
     const rows = [];
     matches.forEach((m, i) => m.forEach((team, t) => team.forEach(name => {
       name = String(name).trim();
-      if (name) rows.push([key, String(i + 1), t ? 'B' : 'A', name, saved]);
+      if (name) rows.push([key, String(i + 1), 'ABC'.charAt(t), name, saved]);
     })));
     replaceTrainingRows_(appSheet_(MATCHES_SHEET, MATCHES_HEADERS), MATCHES_HEADERS.length, key, rows);
     clearGroupCache();

@@ -73,6 +73,9 @@ test('saveMatches keeps teams and the order of opposite numbers; saving again re
   assert.deepEqual(m[b].matches, [[['Dina'], ['Emil']]]);
   assert.deepEqual(rows(srv, 'Kampe').slice(0, 2).map(r => r.slice(0, 4)), [[a, '1', 'A', 'Carl'], [a, '1', 'A', 'Alma']]);
   assert.equal(srv.call('saveMatches', t, a, [['x']]).error, 'The matches could not be read.');
+  srv.call('saveMatches', t, b, [[['Dina'], ['Emil'], ['Frida']], [['Ida'], ['Jonas']]]);   // three teams: winner stays on
+  assert.deepEqual(srv.call('getGroupData', t).result.matches[b].matches, [[['Dina'], ['Emil'], ['Frida']], [['Ida'], ['Jonas']]]);
+  assert.deepEqual(rows(srv, 'Kampe').filter(r => r[0] === b).map(r => r[2]), ['A', 'B', 'C', 'A', 'B']);
   srv.call('saveMatches', t, b, []);
   assert.deepEqual(Object.keys(srv.call('getGroupData', t).result.matches), [a]);
 });

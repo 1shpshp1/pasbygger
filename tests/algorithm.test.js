@@ -211,6 +211,28 @@ test('Del kampene efter: Max-niveau, Bånd, Lige hold, Kaos and given pools', ()
   assert.deepEqual(sizes(tiers), [6, 10]);
 });
 
+test('Three teams (winner stays on): player for player, even sizes, near-equal averages; Kaos and 25-50-25 too', () => {
+  const P = squad(), opts = { level: p => p.lo, meet: A.bandsMeet, teams: 3 };
+  assert.deepEqual(Array.from(A.poolSizes(16, 2, 3)), [9, 7]);
+  assert.deepEqual(Array.from(A.poolSizes(16, 2)), [8, 8], 'two teams as before');
+  const avg = t => t.reduce((x, p) => x + p.lo, 0) / t.length;
+  for (const n of [9, 8, 7]) {
+    const [m] = A.makePoolMatches(P.slice(0, n), [n], 'even', 2, opts);
+    const sizes = m.teams.map(t => t.length);
+    assert.equal(m.teams.length, 3);
+    assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, n + ' players: sizes ' + sizes);
+    for (let i = 0; i < Math.min(...sizes); i++) {                // a line: three players of about the same level
+      const line = m.teams.map(t => t[i].lo);
+      assert.ok(Math.max(...line) - Math.min(...line) <= 2, 'line ' + i + ': ' + line);
+    }
+    if (n === 9) assert.ok(Math.max(...m.teams.map(avg)) - Math.min(...m.teams.map(avg)) <= 0.34, 'averages close');
+  }
+  const [k] = A.makePoolMatches(P, [16], 'chaos', 1, opts);
+  assert.deepEqual(Array.from(k.teams, t => t.length), [6, 5, 5]);
+  const mix = Array.from(A.makeMixMatches([P], p => p.lo, {}, 1, 2, [9, 7], 3));
+  assert.deepEqual(mix.map(m => m.teams.length), [3, 3]);
+});
+
 test('Kaos matches are completely random: teams are not balanced, and differ from draw to draw', () => {
   const P = squad(), opts = { level: p => p.lo };
   const draws = new Set();

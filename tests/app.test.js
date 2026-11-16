@@ -385,6 +385,41 @@ test('"Hvem er med?" is alphabetical, whatever the order in the Spillere tab', {
   assert.deepEqual(page.errors, []);
 });
 
+test('Three teams in a match (winner stays on): chosen per pulje, letters run on, saved', { skip }, async () => {
+  const srv = testServer();
+  const page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  const sec = page.locator('#grp-v .grp-matches');
+  await sec.locator('[data-mpools="2"]').click();
+  await sec.locator('[data-msub="1:-1"]').click();               // pulje 2: one match ...
+  await sec.locator('[data-mteams="1:3"]').click();              // ... with three teams
+  assert.match(await sec.locator('.grp-sizes').innerText(), /Pulje 2\s*−?\s*1 kamp · 8 spillere/);
+  await sec.locator('[data-act="matches"]').click();
+  const cards = sec.locator('.grp-card');
+  assert.equal(await cards.count(), 3);
+  assert.deepEqual(await cards.nth(2).locator('.grp-teamhead').evaluateAll(hs => hs.map(h => h.firstChild.textContent.trim())), ['Hold E', 'Hold F', 'Hold G']);
+  assert.match(await cards.nth(2).locator('.grp-head').innerText(), /3 hold · vinderen bliver på/);
+  assert.equal(await cards.nth(2).locator('.grp-p').count(), 8);
+  assert.match(await sec.innerText(), /vinderen bliver på banen mod det tredje/);
+  await cards.nth(2).locator('.grp-p').first().click();
+  assert.equal(await cards.nth(2).locator('[data-mto]').count(), 2, 'move to either other team');
+  await cards.nth(2).locator('.grp-p').first().click();
+  await sec.locator('[data-msize="custom"]').click();
+  assert.match(await sec.locator('.grp-sizes').last().innerText(), /Kamp 3 · pulje 2\s*−?\s*8 spillere \(3v3v2\)/);
+  await sec.locator('[data-mmode="mix"]').click();
+  assert.match(await sec.innerText(), /ingen gemte kampe fra tidligere træninger/);
+  await sec.locator('[data-act="matches"]').click();
+  assert.equal(await cards.nth(2).locator('.grp-teamhead').count(), 3);
+  await sec.locator('[data-act="savematches"]').click();
+  await page.waitForFunction(() => /Kampe gemt/.test(document.querySelector('#grp-v .grp-matches').innerText));
+  const saved = Object.values(srv.call('getGroupData', srv.call('login', CODE).result.token).result.matches)[0].matches;
+  assert.deepEqual(saved.map(m => m.length), [2, 2, 3]);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await cards.nth(2).screenshot({ path: process.env.SHOT || '/dev/null' }).catch(() => {});
+  assert.deepEqual(page.errors, []);
+});
+
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
