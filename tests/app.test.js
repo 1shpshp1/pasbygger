@@ -260,7 +260,7 @@ test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview'
   await page.click('#v-back'); await page.click('#v-back');
   await openGroups(page);
   assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 2, 'the saved matches come back');
-  await page.click('#grp-v [data-mmode="level"]');
+  await page.click('#grp-v [data-mmode="max"]');
   await page.click('#grp-v [data-act="matches"]');
   assert.match(await page.locator('#grp-v .grp-matches .grp-card .grp-head').first().innerText(), /mere øvede/);
   assert.match(await page.locator('#grp-v .grp-matches .grp-save').innerText(), /Ikke gemt/);
@@ -382,5 +382,33 @@ test('"Hvem er med?" is alphabetical, whatever the order in the Spillere tab', {
   assert.match(await page.locator('#grp-v summary').innerText(), /17 af 18/);
   await page.click('#grp-v [data-act="make"]');
   assert.equal(await page.locator('#grp-v .grp-p[data-p="Bertram"]').count(), 0, 'the right player was left out');
+  assert.deepEqual(page.errors, []);
+});
+
+test('Two levels first: groups per level, labelled; Kampe by Niveauer and Kaos', { skip }, async () => {
+  const page = await phone(testServer());
+  await openGroups(page);
+  await page.click('#grp-v [data-rule="max"]');
+  await page.click('#grp-v [data-tiers="1"]');
+  await page.click('#grp-v [data-tierc="1:1"]');                  // 2 + 3 groups
+  assert.match(await page.locator('#grp-v .grp-sizes').innerText(), /2 grupper · 6 spillere[\s\S]*3 grupper · 10 spillere/);
+  await page.click('#grp-v [data-act="make"]');
+  const heads = await page.locator('#grp-v .grp-list .grp-card .grp-head small').allInnerTexts();
+  assert.equal(heads.length, 5);
+  assert.deepEqual(heads.map(h => h.split(' · ')[0]), ['mere øvede', 'mere øvede', 'mindre øvede', 'mindre øvede', 'mindre øvede']);
+  const modes = await page.locator('#grp-v [data-mmode]').allInnerTexts();
+  assert.deepEqual(modes, ['Bånd', 'Max-niveau', 'Kaos', 'Lige hold', '25-50-25', 'Niveauer']);
+  await page.click('#grp-v [data-mmode="tiers"]');
+  assert.equal(await page.locator('#grp-v [data-mcount]').count(), 0, 'no number of matches for Niveauer');
+  await page.click('#grp-v [data-act="matches"]');
+  const sizes = await page.locator('#grp-v .grp-matches .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
+  assert.deepEqual(sizes, [6, 10]);
+  await page.click('#grp-v [data-mmode="chaos"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.match(await page.locator('#grp-v .grp-matches').innerText(), /Holdene er trukket helt tilfældigt/);
+  await page.click('#grp-v [data-mmode="band"]');
+  await page.click('#grp-v [data-act="matches"]');
+  assert.equal(await page.locator('#grp-v .grp-matches .grp-card').count(), 3, '5 groups: 3 matches until a number is chosen');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
