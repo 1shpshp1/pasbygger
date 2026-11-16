@@ -724,7 +724,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 16. nov. 2026 (11)</p>
+<p class="build" id="build">App-version 16. nov. 2026 (12)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2609,12 +2609,17 @@ function groupLevel(players) {
    teammates count as shares (e.g. 1 better and 2 the same of 3 = 0.33 and 0.67), so a big group doesn't weigh
    more. skill: { name: number } – a lower number is more skilled (Fra, with 1 as the best level). */
 const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50 % the same, 25 % weaker
-/* A teammate compared with a player for the 25/50/25 mix: 0 more experienced, 1 the same level, 2 less experienced.
-   The levels can be averages (e.g. 2,17 from several coaches' assessments), so a teammate less than half a level
-   from the player counts as the same level (as in the matches, MATCH_STEP): from 2,17, a 2,6 is the same level,
-   a 2,67 is less experienced and a 1,67 more experienced. */
-const LEVEL_SAME = 0.5;
-const mateCategory = (me, other) => other <= me - LEVEL_SAME + 1e-9 ? 0 : other >= me + LEVEL_SAME - 1e-9 ? 2 : 1;
+/* Another player's level (or the others' average in a match) seen from a player, for the 25/50/25 mix:
+   [more experienced, the same level, less experienced], adding up to 1. A soft transition around half a level:
+   up to 0,25 apart counts fully as the same level, 0,75 or more fully as more/less experienced, and in between
+   gradually (0,5 apart: half and half). The levels are averages of several coaches' assessments, so a few
+   hundredths either way hardly change anything: 0,49 and 0,51 apart count almost the same. */
+const SAME_FULL = 0.25, SAME_NONE = 0.75;
+function levelWeights(me, other) {
+  const d = other - me, a = Math.abs(d);
+  const same = a <= SAME_FULL + 1e-9 ? 1 : a >= SAME_NONE - 1e-9 ? 0 : 1 - (a - SAME_FULL) / (SAME_NONE - SAME_FULL);
+  return d < 0 ? [1 - same, same, 0] : [0, same, 1 - same];
+}
 
 function skillMix(earlier, skill) {
   const mix = {};
@@ -2625,7 +2630,7 @@ function skillMix(earlier, skill) {
       const others = g.filter(o => o !== name && isFinite(skill[o]));
       if (!others.length) return;
       const m = mix[name] = mix[name] || [0, 0, 0, 0];
-      others.forEach(o => { m[mateCategory(me, skill[o])] += 1 / others.length; });
+      others.forEach(o => { const w = levelWeights(me, skill[o]); for (let r = 0; r < 3; r++) m[r] += w[r] / others.length; });
       m[3]++;
     });
   }));
@@ -2745,8 +2750,8 @@ function makeGroups(opts) {
       for (let j = i + 1; j < n; j++) if (a[i] === a[j]) {
         c += pair[i][j];
         if (useMix && skill[i] === skill[i] && skill[j] === skill[j]) {   // (x === x: not NaN)
-          const r = mateCategory(skill[i], skill[j]);
-          cnt[r][i]++; cnt[2 - r][j]++;
+          const w = levelWeights(skill[i], skill[j]);            // j seen from i; i seen from j is the mirror
+          for (let r = 0; r < 3; r++) { cnt[r][i] += w[r]; cnt[2 - r][j] += w[r]; }
         }
       }
       if (prevOf[i] >= 0) { if (a[i] !== prevOf[i]) moved++; else c += stay[i]; }
@@ -2903,19 +2908,24 @@ function poolsToMatches(pools, lv, home, rand, known, teamCount) {
    Instead of the more experienced against each other and the less experienced against each other, the players
    are placed in the matches so that, over time, each one plays about 25 % of the matches in a harder match,
    50 % at their own level and 25 % in an easier one. A match is harder for a player when the other players'
-   average level is at least MATCH_STEP better than the player's own (a lower number), easier when it is at
-   least MATCH_STEP weaker. Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own
+   average level is better than the player's own (a lower number), easier when it is weaker, with a soft
+   transition around half a level (matchWeights / levelWeights: 0,5 apart counts half as harder or easier). Nobody is put in a match whose others average more than MATCH_MAX_GAP from their own
    level. The matches may differ in average level; each match is then split into two teams player for player.
    The number of matches is the same as for "Niveau": the one chosen, or half the groups (rounded up). */
-const MATCH_STEP = 0.5;
 const MATCH_MAX_GAP = 1.5;
 const MATCH_GOAL = [0.25, 0.5, 0.25];                  // harder, own level, easier
 const MATCH_WEIGHTS = { mix: 1000, gap: 1e5 };
 
-/* 0 harder, 1 own level, 2 easier */
+/* The match for a player: [harder, own level, easier] (levelWeights: a soft transition around half a level) */
+function matchWeights(own, others) {
+  if (!isFinite(own) || !isFinite(others)) return [0, 1, 0];
+  return levelWeights(own, others);
+}
+/* Mostly: 0 harder, 1 own level, 2 easier (for the ↑ ↓ on the screen; half a level apart or more is harder/easier) */
 function matchCategory(own, others) {
   if (!isFinite(own) || !isFinite(others)) return 1;
-  return others <= own - MATCH_STEP ? 0 : others >= own + MATCH_STEP ? 2 : 1;
+  const w = matchWeights(own, others);
+  return w[1] > 0.5 + 1e-9 ? 1 : w[0] > w[2] ? 0 : 2;
 }
 
 /* What each player has had in earlier matches: { name: [harder, own level, easier, matches] }, from saved
@@ -2930,7 +2940,8 @@ function matchMix(earlier, level) {
       const others = lv.filter((v, j) => j !== i && isFinite(v));
       if (!others.length) return;
       const m = mix[name] = mix[name] || [0, 0, 0, 0];
-      m[matchCategory(lv[i], others.reduce((x, y) => x + y, 0) / others.length)]++;
+      const w = matchWeights(lv[i], others.reduce((x, y) => x + y, 0) / others.length);
+      for (let r = 0; r < 3; r++) m[r] += w[r];
       m[3]++;
     });
   }));
@@ -2953,10 +2964,10 @@ function mixPools(all, sizes, level, lv, mix, rand) {
     let c = 0;
     for (let i = 0; i < n; i++) {
       if (own[i] !== own[i] || cnt[a[i]] < 2) continue;
-      const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), cat = matchCategory(own[i], others), h = had[i];
-      for (let r = 0; r < 3; r++) { const d = (h[r] + (r === cat ? 1 : 0)) / (h[3] + 1) - MATCH_GOAL[r]; c += MATCH_WEIGHTS.mix * d * d; }
+      const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), w = matchWeights(own[i], others), h = had[i];
+      for (let r = 0; r < 3; r++) { const d = (h[r] + w[r]) / (h[3] + 1) - MATCH_GOAL[r]; c += MATCH_WEIGHTS.mix * d * d; }
       const over = Math.abs(others - own[i]) - MATCH_MAX_GAP;
-      if (over > 0) c += MATCH_WEIGHTS.gap * over * over;
+      if (over > 1e-9) c += MATCH_WEIGHTS.gap * (10 + over * over);   // a fixed step: never worth a better mix
     }
     return c;
   }
@@ -3461,7 +3472,7 @@ function keyLabel(key) {
    Attendance: in how many of the saved trainings (and groups made in the tab) the player was in a group.
    Level mix: over the last 12 of those, the share of teammates who were more experienced, at the same level
    and less experienced (by Niveau, the middle of the band, less than half a level apart counting as the same level, like the 25/50/25
-   ambition: mateCategory). Most frequent teammates: over all of them. */
+   ambition: levelWeights, a soft transition around half a level). Most frequent teammates: over all of them. */
 let OV_SORT = "name";
 
 function openPlayerOverview() {
@@ -3523,7 +3534,7 @@ function renderOverview() {
       mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. En spillers niveau er midten af båndet (Fra–Til 2–3 giver niveau 2,5). En medspiller under et halvt niveau fra spilleren tæller som samme niveau (fra 2,5 er 2,9 samme niveau, 3 mindre øvede), ligesom i kampene.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. En spillers niveau er midten af båndet (Fra–Til 2–3 giver niveau 2,5). Op til 0,25 fra spilleren tæller som samme niveau og 0,75 eller mere som mere/mindre øvede; ind imellem tæller det delvist (0,5 fra: halvt af hver). Det gælder både grupper og kampe.</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
