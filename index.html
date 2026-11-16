@@ -2610,10 +2610,11 @@ function groupLevel(players) {
    more. skill: { name: number } – a lower number is more skilled (Fra, with 1 as the best level). */
 const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50 % the same, 25 % weaker
 /* A teammate compared with a player for the 25/50/25 mix: 0 more experienced, 1 the same level, 2 less experienced.
-   The levels are rounded to whole levels first, as they can be averages (e.g. 2,17 from several coaches' assessments):
-   2,17 and 2,33 are both level 2, the same level. (A level ending in ,5 rounds up: 2,5 counts as 3.) */
-const wholeLevel = v => Math.round(v + 1e-9);
-const mateCategory = (me, other) => { const a = wholeLevel(me), b = wholeLevel(other); return b < a ? 0 : b > a ? 2 : 1; };
+   The levels can be averages (e.g. 2,17 from several coaches' assessments), so a teammate less than half a level
+   from the player counts as the same level (as in the matches, MATCH_STEP): from 2,17, a 2,6 is the same level,
+   a 2,67 is less experienced and a 1,67 more experienced. */
+const LEVEL_SAME = 0.5;
+const mateCategory = (me, other) => other <= me - LEVEL_SAME + 1e-9 ? 0 : other >= me + LEVEL_SAME - 1e-9 ? 2 : 1;
 
 function skillMix(earlier, skill) {
   const mix = {};
@@ -3453,7 +3454,8 @@ function keyLabel(key) {
 /* ---- Spilleroversigt: per player, from the saved groups ----
    Attendance: in how many of the saved trainings (and groups made in the tab) the player was in a group.
    Level mix: over the last 12 of those, the share of teammates who were more experienced, at the same level
-   and less experienced (by Fra rounded to a whole level, like the 25/50/25 ambition: mateCategory). Most frequent teammates: over all of them. */
+   and less experienced (by Fra, less than half a level apart counting as the same level, like the 25/50/25
+   ambition: mateCategory). Most frequent teammates: over all of them. */
 let OV_SORT = "name";
 
 function openPlayerOverview() {
@@ -3515,7 +3517,7 @@ function renderOverview() {
       mixHtml + mm + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"} (også grupper lavet uden en træning). ` +
-    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. I niveau-mixet afrundes niveauerne til hele tal (2,17 og 2,33 er begge niveau 2), så spillere med næsten samme niveau tæller som samme niveau.</p>
+    `Fremmøde tæller kun træninger, hvor grupperne er gemt. Niveau-mixet og kampene er over de seneste 12, og målet er 25 / 50 / 25. I niveau-mixet tæller en medspiller under et halvt niveau fra spilleren som samme niveau (fra 2,17 er 2,6 samme niveau, 2,67 mindre øvede), ligesom i kampene.</p>
     <div class="grp-row" style="margin:0 0 12px"><span class="grp-hint">Sortér</span>
       <div class="grp-mode" role="group" aria-label="Sortér">
         <button type="button" data-sort="name" aria-pressed="${OV_SORT === "name"}">Navn</button>
