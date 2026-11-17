@@ -214,16 +214,16 @@
     /* ---------- Navigation and drill library ---------- */
     .view-hidden { display: none !important; }
 
-    .nav { display: flex; gap: 8px; margin-bottom: 18px; }
+    .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
     .navbtn {
       padding: 10px 18px; border: 0; border-radius: 99px;
       background: #ffffff; color: #333; font: inherit; font-weight: bold;
       box-shadow: 0 1px 4px rgba(0,0,0,0.12); cursor: pointer;
     }
     .navbtn[aria-current="page"] { background: var(--red); color: #ffffff; }
-    @media (max-width: 379px) {            /* small phones: three tabs in one row */
-      .nav { flex-wrap: wrap; gap: 6px; }
-      .navbtn { padding: 9px 13px; }
+    @media (max-width: 520px) {            /* phones: smaller tabs, wrapping onto a second row when needed */
+      .nav { gap: 6px; }
+      .navbtn { padding: 9px 12px; }
     }
 
     #lib-search {
@@ -598,7 +598,6 @@
     .grp-save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 16px; }
     .grp-legend { margin: 10px 0 0; color: #777777; font-size: 13px; }
     /* Spilleroversigt */
-    .grp-ovbtn { margin: 0 0 12px; }
     .ov-list { display: grid; gap: 10px; }
     .ov-p { padding: 10px 12px; border: 1px solid #e3e3e3; border-radius: 10px; background: #ffffff; }
     .ov-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
@@ -635,7 +634,7 @@
     .grp .ov-key span { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border-radius: 3px; }
     .grp .ov-key span:first-child { margin-left: 0; }
 
-    /* "Kampe til sidst" */
+    /* "Kampe til træning" */
     .grp-arrow { margin-right: 4px; color: var(--red); font-weight: bold; }
     .grp-mode.grp-wrap { flex-wrap: wrap; gap: 6px; border: 0; border-radius: 0; overflow: visible; }
     .grp-mode.grp-wrap button { border: 1px solid var(--red); border-radius: 99px; }
@@ -705,6 +704,7 @@
   <button type="button" class="navbtn" id="nav-sessions" aria-current="page" onclick="showView('sessions')">Træninger</button>
   <button type="button" class="navbtn" id="nav-library" aria-current="false" onclick="showView('library')">Øvelser</button>
   <button type="button" class="navbtn" id="nav-groups" aria-current="false" onclick="showView('groups')">Grupper</button>
+  <button type="button" class="navbtn" id="nav-overview" aria-current="false" onclick="showView('overview')">Spilleroversigt</button>
 </nav>
 
 <div id="sessions">
@@ -717,9 +717,15 @@
 <div id="groups" class="view-hidden">
   <div class="grp-page">
     <h2>Grupper</h2>
-    <button type="button" class="clearbtn grp-ovbtn" id="grp-overview">Spilleroversigt</button>
     <label class="grp-date"><span class="grp-hint">Grupper uden en træning – dato</span><input type="date" id="grp-date"></label>
     <div id="grp-tab" class="grp"></div>
+  </div>
+</div>
+
+<div id="overview" class="view-hidden">
+  <div class="grp-page">
+    <h2>Spilleroversigt</h2>
+    <div id="ov" class="grp"><p>Henter spillere …</p></div>
   </div>
 </div>
 
@@ -749,7 +755,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 17. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 17. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1452,13 +1458,14 @@ document.getElementById("login-form").addEventListener("keydown", function (e) {
 
 function showView(name) {
   if (name === "library" && !isAuthed()) { requireLogin(function () { showView("library"); }); return; }
-  if (name === "groups" && !canGroup()) { requireLogin(function () { if (canGroup()) showView("groups"); }); return; }
-  ["sessions", "library", "groups"].forEach(function (v) {
+  if ((name === "groups" || name === "overview") && !canGroup()) { requireLogin(function () { if (canGroup()) showView(name); }); return; }
+  ["sessions", "library", "groups", "overview"].forEach(function (v) {
     document.getElementById(v).classList.toggle("view-hidden", v !== name);
     document.getElementById("nav-" + v).setAttribute("aria-current", v === name ? "page" : "false");
   });
   if (name === "library" && !LIB) loadLibrary();
   if (name === "groups") openGroupsTab();
+  if (name === "overview") openPlayerOverview();
 }
 
 /* Cleans a cell value. Invisible and "blank-looking" characters are removed, and a value
@@ -2365,7 +2372,7 @@ document.addEventListener("click", function (e) {
 /* ===================== Full-screen drill viewer (swipe between pages) ===================== */
 const V = { n: 0, idx: 0, opener: null, drill: null, session: -1 };
 const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const INERT_IDS = ["nav-bar", "sessions", "library", "groups"];
+const INERT_IDS = ["nav-bar", "sessions", "library", "groups", "overview"];
 
 /* Drill pages: related elements are grouped on one scrolling page, so there is little swiping.
    1. Øvelsen: diagram, practical facts and all the red tags (the first thing you need on the pitch)
@@ -3477,13 +3484,15 @@ const GRP_SETTINGS_KEY = "oevGrpSettings";      // only the settings (number of 
 function grpSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(GRP_SETTINGS_KEY) || "null"); } catch (e) { /* ignore */ }
-  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "band", maxDiff: 1, matchMode: "max", matchCount: 0,
+  return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "mix", maxDiff: 1, matchMode: "mix", matchCount: 0,
                         matchPools: 1, poolMode: "max", poolSizeMode: "even", matchSub: [2, 2, 2, 2], matchTeams: [2, 2, 2, 2] }, s || {},
-                       s && (s.matchMode === "level" || s.matchMode === "tiers") ? { matchMode: "max" } : {});
+                       s && (s.matchMode === "level" || s.matchMode === "tiers") ? { matchMode: "max" } : {},
+                       s && s.rule === "even" ? { rule: "mix" } : {},                     // Lige hold is for the matches only now
+                       s && !(s.v >= 2) ? { rule: "mix", matchMode: "mix" } : {});         // 25-50-25 became the default (once)
 }
 function saveGrpSettings() {
   try {
-    localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
+    localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ v: 2, mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
                                                       rule: GRP.rule, maxDiff: GRP.maxDiff, matchMode: GRP.matchMode,
                                                       matchCount: GRP.matchCount, matchPools: GRP.matchPools, poolMode: GRP.poolMode,
                                                       poolSizeMode: GRP.poolSizeMode, matchSub: GRP.matchSub, matchTeams: GRP.matchTeams }));
@@ -3538,9 +3547,10 @@ function bandText(lo, hi) {
    levels are close enough, so the same search works for both. */
 const byMax = () => GRP.rule === "max";
 const byChaos = () => GRP.rule === "chaos";     // "Kaos": a random split, level and earlier groups don't count
-const byEven = () => GRP.rule === "even";       // "Lige hold": groups of equal strength; bands and the slider don't count
+const byEven = () => GRP.rule === "even";       // "Lige hold": only for the matches now (an old setting becomes 25-50-25)
+const groupsByMix = () => GRP.rule === "mix";   // "25-50-25": over time 25 % with more experienced, 50 % same level, 25 % less
 const freeRule = () => byChaos() || byEven();   // anyone may be with anyone
-const noSlider = () => freeRule() || byMax();   // Niveau sorts by level, so the slider and earlier groups don't apply
+const noSlider = () => freeRule() || byMax() || groupsByMix();   // these place by their own aim: the slider doesn't apply
 const NO_LEVEL = name => ({ name: name, lo: -Infinity, hi: Infinity });
 const HAIR = 1e-6;
 function strictBand(p) {
@@ -3549,7 +3559,7 @@ function strictBand(p) {
                        : { name: p.name, lo: p.lo + HAIR, hi: p.hi - HAIR };
 }
 function grpMeet(a, b) {
-  if (freeRule()) return true;
+  if (freeRule() || groupsByMix()) return true;
   if (!byMax()) return bandsMeet(strictBand(a), strictBand(b));
   return nivOf(a) == null || nivOf(b) == null || Math.abs(nivOf(a) - nivOf(b)) <= GRP.maxDiff + 1e-9;
 }
@@ -3562,7 +3572,7 @@ const ruleNote = (a) => bandText(a.lo, a.hi);
 /* The text after the size on a group card: the shared level, or the range of max levels */
 function groupLevelText(g) {
   if (!g.length || byChaos()) return "";
-  if (byEven()) { const a = groupAverage(g); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); }
+  if (byEven() || groupsByMix()) { const a = groupAverage(g); return a == null ? "" : "gns. niveau " + a.toFixed(2).replace(".", ","); }
   if (byMax()) {
     const m = g.map(nivOf).filter(v => v != null), lo = Math.min.apply(null, m), hi = Math.max.apply(null, m);
     return m.length ? "niveau " + (lo === hi ? nivText(lo) : nivText(lo) + "–" + nivText(hi)) : "alle niveauer";
@@ -3668,22 +3678,18 @@ function keyLabel(key) {
 let OV_SORT = "name";
 
 function openPlayerOverview() {
-  if (!canGroup()) { requireLogin(openPlayerOverview); return; }
-  openViewer("Spilleroversigt", [{ title: "Spilleroversigt", html: '<div id="ov" class="grp"><p>Henter spillere …</p></div>' }],
-             document.getElementById("grp-overview"), null);
-  const box = document.getElementById("ov");
-  box.addEventListener("click", function (e) {
-    const b = e.target.closest("[data-sort]");
-    if (b) { OV_SORT = b.dataset.sort; renderOverview(); }
-  });
-  readStoredGroups().then(function (c) { if (c) renderOverview(); });
+  if (!canGroup()) { requireLogin(function () { showView("overview"); }); return; }
+  readStoredGroups().then(function (c) { if (c) renderOverview(); });   // at once from the phone's copy, then the newest
   fetchGroupData().then(renderOverview, function (err) {
     if (GRP_CACHE) return;                              // the phone's copy is shown
-    if (/LOGIN/.test(String(err && err.message))) requireLogin(openPlayerOverview);
-    else if (document.getElementById("ov")) document.getElementById("ov").innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
+    if (/LOGIN/.test(String(err && err.message))) requireLogin(function () { showView("overview"); });
+    else document.getElementById("ov").innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
   });
 }
-document.getElementById("grp-overview").addEventListener("click", openPlayerOverview);
+document.getElementById("ov").addEventListener("click", function (e) {
+  const b = e.target.closest("[data-sort]");
+  if (b) { OV_SORT = b.dataset.sort; renderOverview(); }
+});
 
 function renderOverview() {
   const box = document.getElementById("ov");
@@ -3888,7 +3894,7 @@ function grpSkill() {
 
 /* The mix the present players have had (the saved trainings + the groups on the screen), on average */
 function mixLine(players) {
-  if (noSlider() || !GRP.groups) return "";
+  if ((noSlider() && !groupsByMix()) || !GRP.groups) return "";
   const skill = grpSkill();
   const now = GRP.groups.map(g => g.map(p => p.name));
   const mix = skillMix([now].concat(earlierGroups().map(e => e.groups)), skill);
@@ -3910,6 +3916,20 @@ function mixLine(players) {
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
+  if (groupsByMix()) {                  // 25-50-25: as the matches, from the saved groups (teammates one by one)
+    const rand = seededRandom(hashText(GRP.key + "|" + GRP.nonce++));
+    const known = players.map(nivOf).filter(v => v != null);
+    const mean = known.length ? known.reduce((x, y) => x + y, 0) / known.length : 0;
+    const lv = p => nivOf(p) == null ? mean : nivOf(p);
+    const mix = skillMix(earlierGroups().map(e => e.groups), grpSkill());
+    const k = Math.max(1, Math.min(groupCount(players.length), players.length));
+    GRP.groups = mixPools(players, Array.from(poolSizes(players.length, k, 1)), nivOf, lv, mix, rand).pools
+      .map(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));
+    GRP.sel = null; GRP.dirty = true; GRP.bad = false;
+    GRP.msg = earlierGroups().length ? "" : "Der er endnu ingen gemte grupper fra tidligere træninger, så første gang kommer alle så tæt på eget niveau som muligt. Husk \u201cGem grupper\u201d.";
+    renderGroups();
+    return;
+  }
   if (byMax()) {                        // Niveau: sorted by Niveau, group 1 the most experienced
     GRP.groups = sortedGroups(players, groupCount(players.length), nivOf,
                               hashText(GRP.key + "|" + GRP.nonce++))
@@ -3953,7 +3973,7 @@ function evenText() {
     : `Forskel mellem holdenes gennemsnitlige niveau: ${gap.toFixed(2).replace(".", ",")}.`;
 }
 
-/* ---- "Kampe til sidst": the matches at the end of a training ----
+/* ---- "Kampe til træning": the matches at the end of a training ----
    Two ways (Del kampene efter): "Niveau" – the more experienced groups play each other, and so do the less
    experienced (makeMatches); "25-50-25" – players are placed so that over time each plays about 25 % harder,
    50 % own level and 25 % easier matches (makeMixMatches, from the saved matches). Either way each match is
@@ -3974,7 +3994,7 @@ const levelOfName = name => { const v = nivOf(GRP.byName[name]); return v == nul
 /* "Del kampene efter": Bånd, Niveau, Kaos, Lige hold, 25-50-25.
    "Antal puljer" 2–4: the players are first split into pools (splitPools, by "Del puljerne efter", even sizes or
    chosen), and each pool is then divided into its own matches (its own number) by "Del kampene efter". */
-const MATCH_MODES = [["band", "Bånd"], ["max", "Niveau"], ["chaos", "Kaos"], ["even", "Lige hold"], ["mix", "25-50-25"]];
+const MATCH_MODES = [["mix", "25-50-25"], ["band", "Bånd"], ["max", "Niveau"], ["chaos", "Kaos"], ["even", "Lige hold"]];
 const matchMode = () => GRP.matchMode === "tiers" || GRP.matchMode === "level" ? "max" : GRP.matchMode;
 const strictMeet = (a, b) => bandsMeet(strictBand(a), strictBand(b));
 const playersInGroups = () => (GRP.groups || []).reduce((n, g) => n + g.length, 0);
@@ -4185,7 +4205,7 @@ function matchesHtml() {
   }).join("");
   const status = GRP.matchesDirty ? "Ikke gemt" : waiting("matches", GRP.key) ? queuedText()
     : GRP.matchesSaved ? "Kampe gemt " + esc(GRP.matchesSaved) : "";
-  return `<section class="grp-sec grp-matches"><h3>Kampe til sidst</h3>
+  return `<section class="grp-sec grp-matches"><h3>Kampe til træning</h3>
     <div class="grp-row" style="margin-top:0">
       <span class="grp-hint grp-label">Antal puljer</span>
       <div class="grp-mode" role="group" aria-label="Antal puljer">
@@ -4299,10 +4319,10 @@ function renderGroups() {
       <div class="grp-row" style="margin-top:0">
         <span class="grp-hint grp-label">Del efter</span>
         <div class="grp-mode" role="group" aria-label="Del efter">
+          <button type="button" data-rule="mix" aria-pressed="${groupsByMix()}">25-50-25</button>
           <button type="button" data-rule="band" aria-pressed="${GRP.rule === "band"}">Bånd</button>
           <button type="button" data-rule="max" aria-pressed="${byMax()}">Niveau</button>
           <button type="button" data-rule="chaos" aria-pressed="${byChaos()}">Kaos</button>
-          <button type="button" data-rule="even" aria-pressed="${byEven()}">Lige hold</button>
         </div>
       </div>
       ${byMax() ? `<div class="grp-row">
@@ -4325,7 +4345,7 @@ function renderGroups() {
       </div>
       ${byChaos() ? `<p class="grp-hint grp-explain grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
       : byMax() ? `<p class="grp-hint grp-explain grp-slide">Niveau: spillerne sorteres efter deres niveau (midten af båndet, fx 2,5 for 2–3), så gruppe 1 er de mest øvede. Spillere med samme niveau blandes, når du trykker igen. En gruppe bliver rød, hvis den spænder mere end den valgte forskel.</p>`
-      : byEven() ? `<p class="grp-hint grp-explain grp-slide">Lige hold: holdene får så ens gennemsnitligt niveau som muligt, og de mest og mindst øvede kan være på samme hold. Båndene tæller ikke med, men de samme makkere som sidst undgås.</p>`
+      : groupsByMix() ? `<p class="grp-hint grp-explain grp-slide">25-50-25: over tid er hver spiller ca. 25 % af tiden i en gruppe med mere øvede (spiller op), 50 % med spillere på samme niveau og 25 % med mindre øvede (spiller ned). De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så de er mere på samme niveau. Ingen kommer i en gruppe, der ligger mere end halvanden niveau fra deres eget. Det bygger på de gemte grupper (${earlierGroups().length} ${earlierGroups().length === 1 ? "træning" : "træninger"}), så husk \u201cGem grupper\u201d.</p>`
       : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
         <span class="grp-ends" aria-hidden="true"><span>Behold</span><span>Bland</span></span>

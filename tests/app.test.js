@@ -140,7 +140,7 @@ test('Gem tilmeldte: another phone starts from the saved signups', { skip }, asy
 test('Niveau (the middle of the band): group 1 holds the most experienced; the players show their bands', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
-  assert.deepEqual(await page.locator('#grp-v [data-rule]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold']);
+  assert.deepEqual(await page.locator('#grp-v [data-rule]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos'], '25-50-25 first, no Lige hold');
   await page.click('#grp-v [data-rule="max"]');
   assert.deepEqual(await page.locator('#grp-v [data-diff]').allInnerTexts(), ['0', '0,5', '1', '1,5', '2']);
   await page.click('#grp-v [data-act="make"]');
@@ -158,7 +158,7 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; the p
   await page.click('#viewer-close').catch(() => {});
   await page.goto(page.url());
   await page.waitForSelector('#sessions .card');
-  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.click('#nav-groups'); await page.click('#nav-overview');
   await page.waitForSelector('#ov .ov-p');
   assert.equal(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), '2–4');
   assert.equal(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), '1–2');
@@ -261,7 +261,7 @@ test('Spilleroversigt: attendance, level mix and most frequent teammates', { ski
   srv.call('saveGroups', t, '2026-10-01', [['Alma', 'Bo', 'Carl'], ['Dina', 'Emil']]);
   srv.call('saveGroups', t, '2026-10-08', [['Alma', 'Bo', 'Dina'], ['Carl', 'Emil']]);
   await page.click('#nav-groups');
-  await page.click('#grp-overview');
+  await page.click('#nav-overview');
   await page.waitForSelector('#ov .ov-p');
   const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
   const alma = card('Alma');
@@ -304,7 +304,7 @@ test('Kampe: Niveau and 25-50-25, saved, back on reopening, and in the overview'
   await page.click('#v-back');
   await page.click('.leave-ask [data-leave="drop"]');              // the new matches aren't wanted
   await page.click('#v-back');
-  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.click('#nav-groups'); await page.click('#nav-overview');
   await page.waitForSelector('#ov .ov-p');
   assert.match(await page.locator('#ov').innerText(), /Kampe til træning\s*1 kamp\s*Faktisk\s*↑\s*\d+ · =\s*\d+ · ↓\s*\d+ %/);
   assert.match(await page.locator('#ov .ov-bars').nth(1).getAttribute('aria-label'), /^Kampe til træning: \d+ % spiller op, \d+ % samme niveau, \d+ % spiller ned\./);
@@ -331,6 +331,7 @@ test('Antal kampe: choosing 3 gives 3 matches from 4 groups', { skip }, async ()
   const page = await phone(testServer());
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-mmode="max"]');                  // (the default is 25-50-25)
   assert.equal(await page.locator('#grp-v [data-mcount="0"]').count(), 0, 'no Auto button');
   assert.equal(await page.locator('#grp-v [data-mcount="2"]').getAttribute('aria-pressed'), 'true', '4 groups: 2 matches until a number is chosen');
   await page.click('#grp-v [data-mcount="3"]');
@@ -349,6 +350,7 @@ test('Kampe by hand: swap between matches, move a player, rebalance, and choose 
   const page = await phone(testServer());
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-mmode="max"]');                  // (the default is 25-50-25)
   await page.click('#grp-v [data-mcount="2"]');
   await page.click('#grp-v [data-act="matches"]');
   const name = sel => page.locator('#grp-v ' + sel + ' .grp-pname').innerText();
@@ -573,8 +575,7 @@ test('Leaving unsaved groups or matches asks first: Bliv, Luk uden at gemme, Gem
 test('Niveauer: Skjul hides every level next to the players, in the whole app, and is remembered', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
-  await page.click('#grp-v [data-rule="even"]');
-  await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-act="make"]');                  // (25-50-25 groups show "gns. niveau")
   await page.click('#grp-v [data-mmode="mix"]');
   await page.click('#grp-v [data-act="matches"]');
   const levelBits = () => page.evaluate(() => {
@@ -590,17 +591,60 @@ test('Niveauer: Skjul hides every level next to the players, in the whole app, a
   await page.click('#v-back');
   await page.click('.leave-ask [data-leave="drop"]').catch(() => {});
   await page.click('#v-back');
-  await page.click('#nav-groups'); await page.click('#grp-overview');           // the same in Spilleroversigt
+  await page.click('#nav-groups'); await page.click('#nav-overview');           // the same in Spilleroversigt
   await page.waitForSelector('#ov .ov-p');
   assert.equal(await page.locator('#ov .grp-band').count(), 0);
   assert.equal(await page.locator('#ov [data-levels="0"]').getAttribute('aria-pressed'), 'true');
   await page.reload();                                                          // remembered
   await page.waitForSelector('#sessions .card');
   assert.equal(await page.evaluate(() => showLevels()), false);
-  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.click('#nav-groups'); await page.click('#nav-overview');
   await page.waitForSelector('#ov .ov-p');
   await page.click('#ov [data-levels="1"]');
   assert.ok(await page.locator('#ov .grp-band').count() > 10, 'shown again');
+  assert.deepEqual(page.errors, []);
+});
+
+test('25-50-25 is the default for Grupper and Kampe til træning (also over an older saved choice, once)', { skip }, async () => {
+  const page = await phone(testServer());
+  await page.evaluate(() => localStorage.setItem('oevGrpSettings', JSON.stringify({ rule: 'band', matchMode: 'max', count: 4 })));
+  await openGroups(page);
+  assert.equal(await page.locator('#grp-v [data-rule="mix"]').getAttribute('aria-pressed'), 'true', 'an older choice switches once');
+  assert.match(await page.locator('#grp-v').innerText(), /25-50-25: over tid er hver spiller ca\. 25 %/);
+  assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider: it places by its own aim');
+  await page.click('#grp-v [data-act="make"]');
+  const sizes = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
+  assert.deepEqual(sizes, [4, 4, 4, 4]);
+  assert.match(await page.locator('#grp-v .grp-msg').innerText(), /ingen gemte grupper fra tidligere træninger/);
+  assert.match(await page.locator('#grp-v .grp-list .grp-head').first().innerText(), /gns\. niveau/);
+  assert.match(await page.locator('#grp-v .grp-matches h3').innerText(), /^Kampe til træning$/);
+  assert.equal(await page.locator('#grp-v [data-mmode="mix"]').getAttribute('aria-pressed'), 'true');
+  // a choice made after the switch is kept
+  await page.click('#grp-v [data-rule="band"]');
+  await page.click('#v-back'); await page.click('.leave-ask [data-leave="drop"]'); await page.click('#v-back');
+  await openGroups(page);
+  assert.equal(await page.locator('#grp-v [data-rule="band"]').getAttribute('aria-pressed'), 'true', 'remembered after the switch');
+  // an old "Lige hold" for the groups becomes 25-50-25
+  await page.evaluate(() => localStorage.setItem('oevGrpSettings', JSON.stringify({ v: 2, rule: 'even' })));
+  await page.click('#v-back'); await page.click('#v-back');
+  await openGroups(page);
+  assert.equal(await page.locator('#grp-v [data-rule="mix"]').getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(page.errors, []);
+});
+
+test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () => {
+  const guest = await phone(testServer(), { loggedIn: false });
+  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Spilleroversigt']);
+  await guest.click('#nav-overview');
+  await guest.waitForSelector('#login-pw');
+  const page = await phone(testServer());
+  await page.click('#nav-overview');
+  await page.waitForSelector('#ov .ov-p');
+  assert.equal(await page.locator('#overview h2').innerText(), 'Spilleroversigt');
+  assert.equal(await page.locator('#nav-overview').getAttribute('aria-current'), 'page');
+  assert.equal(await page.locator('#groups').isHidden(), true);
+  assert.equal(await page.locator('#grp-overview').count(), 0, 'no longer a button under Grupper');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'four tabs fit');
   assert.deepEqual(page.errors, []);
 });
 
@@ -609,11 +653,11 @@ test('Kampe til sidst in puljer: pools by one rule, matches per pool by another,
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
   const sec = page.locator('#grp-v .grp-matches');
-  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold', '25-50-25']);
+  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos', 'Lige hold']);
   assert.equal(await sec.locator('[data-pmode]').count(), 0, 'with 1 pulje: as before');
   assert.equal(await sec.locator('[data-mcount]').count(), 4);
   await sec.locator('[data-mpools="3"]').click();
-  assert.deepEqual(await sec.locator('[data-pmode]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold', '25-50-25']);
+  assert.deepEqual(await sec.locator('[data-pmode]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos', 'Lige hold']);
   assert.equal(await sec.locator('[data-mcount]').count(), 0, 'the counts per pool replace "Antal kampe"');
   // 16 players: even pools 6 + 6 + 4, 2 matches each (pulje 3 also 2: 4 players allow it)
   assert.match(await sec.locator('.grp-sizes').innerText(), /Pulje 1\s*−?\s*2 kampe · 6 spillere[\s\S]*Pulje 3\s*−?\s*2 kampe · 4 spillere/);
