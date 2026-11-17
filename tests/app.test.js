@@ -137,7 +137,7 @@ test('Gem tilmeldte: another phone starts from the saved signups', { skip }, asy
   assert.deepEqual(home.errors.concat(pitch.errors), []);
 });
 
-test('Niveau (the middle of the band): group 1 holds the most experienced; cards, matches and Spilleroversigt show Niveau', { skip }, async () => {
+test('Niveau (the middle of the band): group 1 holds the most experienced; the players show their bands', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
   assert.deepEqual(await page.locator('#grp-v [data-rule]').allInnerTexts(), ['Bånd', 'Niveau', 'Kaos', 'Lige hold']);
@@ -154,14 +154,14 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; cards
   assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider with Niveau');
   await page.click('#grp-v [data-act="matches"]');
   const chip = page.locator('#grp-v .grp-matches .grp-p', { hasText: 'Carl' });
-  assert.equal(await chip.locator('.grp-band').innerText(), '2', 'Carl (1–3) plays at niveau 2');
+  assert.equal(await chip.locator('.grp-band').innerText(), '1–3', 'the band, not Niveau, next to the player');
   await page.click('#viewer-close').catch(() => {});
   await page.goto(page.url());
   await page.waitForSelector('#sessions .card');
   await page.click('#nav-groups'); await page.click('#grp-overview');
   await page.waitForSelector('#ov .ov-p');
-  assert.match(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), /^2–4 · niveau 3$/);
-  assert.match(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), /^1–2 · niveau 1,5$/);
+  assert.equal(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), '2–4');
+  assert.equal(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), '1–2');
   assert.match(await page.locator('#ov .ov-how').textContent(), /midten af båndet/);
   assert.match(await page.locator('#ov .ov-key').first().innerText(), /↑\s*spiller op\s*=\s*samme niveau\s*↓\s*spiller ned/);
   const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
@@ -567,6 +567,40 @@ test('Leaving unsaved groups or matches asks first: Bliv, Luk uden at gemme, Gem
   await ask.locator('[data-leave="drop"]').click();
   await page.waitForFunction(() => !document.getElementById('grp-v'));
   assert.deepEqual(srv.call('getGroupData', t).result.history, d.history, 'not saved');
+  assert.deepEqual(page.errors, []);
+});
+
+test('Niveauer: Skjul hides every level next to the players, in the whole app, and is remembered', { skip }, async () => {
+  const page = await phone(testServer());
+  await openGroups(page);
+  await page.click('#grp-v [data-rule="even"]');
+  await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-mmode="mix"]');
+  await page.click('#grp-v [data-act="matches"]');
+  const levelBits = () => page.evaluate(() => {
+    const v = document.getElementById('grp-v');
+    return { bands: v.querySelectorAll('.grp-band').length, arrows: v.querySelectorAll('.grp-arrow').length, avg: /gns\. niveau/.test(v.innerText) };
+  });
+  const before = await levelBits();
+  assert.ok(before.bands > 16 && before.avg, 'shown to begin with');
+  await page.click('#grp-v [data-levels="0"]');
+  assert.deepEqual(await levelBits(), { bands: 0, arrows: 0, avg: false });
+  assert.doesNotMatch(await page.locator('#grp-v .grp-matches').innerText(), /↑ = en sværere kamp|spillere · $/m);
+  assert.equal(await page.locator('#grp-v .grp-list .grp-p').count(), 16, 'the players are still there');
+  await page.click('#v-back');
+  await page.click('.leave-ask [data-leave="drop"]').catch(() => {});
+  await page.click('#v-back');
+  await page.click('#nav-groups'); await page.click('#grp-overview');           // the same in Spilleroversigt
+  await page.waitForSelector('#ov .ov-p');
+  assert.equal(await page.locator('#ov .grp-band').count(), 0);
+  assert.equal(await page.locator('#ov [data-levels="0"]').getAttribute('aria-pressed'), 'true');
+  await page.reload();                                                          // remembered
+  await page.waitForSelector('#sessions .card');
+  assert.equal(await page.evaluate(() => showLevels()), false);
+  await page.click('#nav-groups'); await page.click('#grp-overview');
+  await page.waitForSelector('#ov .ov-p');
+  await page.click('#ov [data-levels="1"]');
+  assert.ok(await page.locator('#ov .grp-band').count() > 10, 'shown again');
   assert.deepEqual(page.errors, []);
 });
 
