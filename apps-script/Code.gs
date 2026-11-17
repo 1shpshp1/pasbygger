@@ -1,6 +1,6 @@
 /* The version of this file. Raise it by one whenever Code.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const CODE_VERSION = 2;
+const CODE_VERSION = 3;
 const SHEET_NAME = 'Træningspas Efterår \'26';
 const DRILLS_SHEET = 'Øvelser';   // tab with the drill library
 /* The password for the "Øvelser" tab is NOT written in this file.
@@ -242,16 +242,17 @@ function usedDrillIds_(rows) {
 /* Called with the password. Returns a code that is valid for 30 minutes. */
 function login(password) {
   const cache = CacheService.getScriptCache();
-  const pw = PropertiesService.getScriptProperties().getProperty(PASSWORD_PROPERTY);
+  const props = PropertiesService.getScriptProperties().getProperties();   // both codes in one read
+  const pw = props[PASSWORD_PROPERTY];
   if (!pw) return { ok: false, setup: true };                 // the password has not been set up yet
 
   const tries = +(cache.get('loginTries') || 0);
   if (tries >= LOGIN_MAX_TRIES) return { ok: false, locked: true };
 
   // The extra code GROUPS_PASSWORD (file Grupper), if set, logs in the same way
-  const groupsPw = PropertiesService.getScriptProperties().getProperty(GROUPS_PASSWORD_PROPERTY);
+  const groupsPw = props[GROUPS_PASSWORD_PROPERTY];
   if (groupsPw && String(password || '').trim() === String(groupsPw).trim()) {
-    countToday_({ 'Login til Øvelser': 1 });
+    countLater_({ 'Login til Øvelser': 1 });
     const token = Utilities.getUuid();
     cache.put('tok_' + token, 'g', LOGIN_SECONDS);
     return { ok: true, token: token, seconds: LOGIN_SECONDS, groups: true };
@@ -259,13 +260,43 @@ function login(password) {
 
   if (String(password || '').trim() !== String(pw).trim()) {
     cache.put('loginTries', String(tries + 1), LOGIN_LOCK_SECONDS);
-    countToday_({ 'Forkert kode': 1 });
+    countLater_({ 'Forkert kode': 1 });
     return { ok: false };
   }
-  countToday_({ 'Login til Øvelser': 1 });
+  countLater_({ 'Login til Øvelser': 1 });
   const token = Utilities.getUuid();
   cache.put('tok_' + token, '1', LOGIN_SECONDS);
   return { ok: true, token: token, seconds: LOGIN_SECONDS };
+}
+
+/* ---------- Counting logins without waiting for the sheet ----------
+   Writing to the tab "Statistik" takes a second or more (and waits for the lock if a save is running), so a login
+   only adds its count to the cache, and the 5-minute warm-up (warmDrillCache) writes the counts into the tab
+   (countToday_, file Statistik). The counts show in the tab within 5 minutes. */
+const PENDING_COUNTS = 'statsPending';
+function countLater_(add) {
+  const lock = LockService.getScriptLock();
+  const locked = lock.tryLock(200);                         // only a moment: a running save is not waited for
+  try {
+    const cache = CacheService.getScriptCache();
+    const pending = JSON.parse(cache.get(PENDING_COUNTS) || '{}');
+    Object.keys(add).forEach(k => { pending[k] = (pending[k] || 0) + add[k]; });
+    cache.put(PENDING_COUNTS, JSON.stringify(pending), 6 * 60 * 60);
+  } catch (e) {
+    /* statistics must never break the login */
+  } finally {
+    if (locked) lock.releaseLock();
+  }
+}
+function flushCounts_() {
+  const cache = CacheService.getScriptCache(), lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return '';
+  let pending;
+  try { pending = JSON.parse(cache.get(PENDING_COUNTS) || '{}'); cache.remove(PENDING_COUNTS); }
+  finally { lock.releaseLock(); }
+  if (!Object.keys(pending).length) return '';
+  countToday_(pending);                                     // (takes the lock itself)
+  return ' Counted: ' + JSON.stringify(pending) + '.';
 }
 
 /* ---------- The plan, kept ready ----------
@@ -514,6 +545,7 @@ function onEdit(e) {
    the cache is already filled; after an edit it builds the library again. */
 function warmDrillCache() {
   let groups = '';
+  try { groups += flushCounts_(); } catch (e) { groups += ' Counts: ' + e.message; }   // logins counted in the cache
   try { groups = ' ' + warmGroupCache(); } catch (e) { groups = ' Groups: ' + e.message; }   // file Grupper
   try { buildPlan_(); groups += ' The plan was built again.'; } catch (e) { groups += ' Plan: ' + e.message; }
   if (LIB_PARTS.every(name => cachedPart_(name))) return 'The library is already in the cache.' + groups;

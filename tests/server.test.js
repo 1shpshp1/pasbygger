@@ -148,3 +148,17 @@ test('getPlan: the plan from the cache, "unchanged" when the phone has it, new a
   srv.ctx.warmDrillCache();
   assert.equal(srv.call('getPlan', after.version).result.sessions[0].station2.text, 'Ændret af en formel');
 });
+
+test('login answers without writing to the Statistik tab; the 5-minute warm-up writes the counts', () => {
+  const srv = testServer();
+  srv.call('login', CODE); srv.call('login', CODE); srv.call('login', 'forkert');
+  assert.equal(srv.book['Statistik'], undefined, 'the login did not open the statistics tab');
+  srv.ctx.warmDrillCache();
+  const rows = srv.book['Statistik'].getDataRange().getDisplayValues();
+  const head = rows[0], today = rows.filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0])).pop();   // (the overview makes the tab longer)
+  assert.equal(today[head.indexOf('Login til Øvelser')], '2');
+  assert.equal(today[head.indexOf('Forkert kode')], '1');
+  srv.ctx.warmDrillCache();                                       // counted once, not again
+  const again = srv.book['Statistik'].getDataRange().getDisplayValues();
+  assert.equal(again.filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0])).pop()[head.indexOf('Login til Øvelser')], '2');
+});

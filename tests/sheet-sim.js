@@ -82,7 +82,7 @@ function makeServer(sheets, props) {
     SpreadsheetApp: { getActiveSpreadsheet: () => ss, newRichTextValue: builder, flush() {},
       CopyPasteType: { PASTE_FORMAT: 'format' } },
     CacheService: { getScriptCache: () => cache },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, getProperties: () => Object.assign({}, props), setProperty: (k, v) => { props[k] = v; } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
     ContentService: { createTextOutput: t => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     HtmlService: { createHtmlOutput: html => { const o = { html, title: '', setTitle(t) { o.title = t; return o; }, addMetaTag() { return o; } }; return o; } },

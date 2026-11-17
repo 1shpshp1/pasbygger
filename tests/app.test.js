@@ -81,7 +81,8 @@ test('login box and the "no groups yet" message', { skip }, async () => {
   await page.fill('#login-pw', CODE); await page.click('#login-go');
   await page.waitForSelector('#grp-v .grp-slide');
   assert.match(await page.locator('#grp-v .grp-none').innerText(), /ikke lavet grupper til denne træning/);
-  assert.equal(await page.locator('#grp-v .grp-who .grp-band').count(), 0, 'no levels in "Hvem er med?"');
+  assert.equal(await page.locator('#grp-v .grp-who .grp-band').count(), 16, 'the bands in "Hvem er med?" (levels shown)');
+  assert.equal(await page.locator('#grp-v .grp-who label', { hasText: 'Alma' }).locator('.grp-band').innerText(), '1–2');
   const xs = await page.locator('#grp-v .grp-who label').evaluateAll(ls => [...new Set(ls.map(l => Math.round(l.getBoundingClientRect().left)))]);
   assert.equal(xs.length, 1, '"Hvem er med?" is one column');
   assert.deepEqual(page.errors, []);
@@ -417,7 +418,7 @@ test('"Hvem er med?" is alphabetical, whatever the order in the Spillere tab', {
   srv.ctx.clearGroupCache();
   const page = await phone(srv);
   await openGroups(page);
-  const names = await page.locator('#grp-v .grp-who label').allInnerTexts();
+  const names = await page.locator('#grp-v .grp-who label > span:first-of-type').allInnerTexts();
   assert.deepEqual(names.slice(0, 3), ['Alma', 'Bertram', 'Bo']);
   assert.equal(names[names.length - 1], 'Ærø', 'Danish order: Æ after Z');
   await page.locator('#grp-v .grp-who label', { hasText: 'Bertram' }).locator('input').uncheck();
