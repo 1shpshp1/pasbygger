@@ -138,7 +138,7 @@ test('Gem tilmeldte: another phone starts from the saved signups', { skip }, asy
   assert.deepEqual(home.errors.concat(pitch.errors), []);
 });
 
-test('Niveau (the middle of the band): group 1 holds the most experienced; the players show their bands', { skip }, async () => {
+test('Niveau (by Fra, a narrower band first): group 1 holds the most experienced; the players show their bands', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
   assert.deepEqual(await page.locator('#grp-v [data-rule]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos'], '25-50-25 first, no Lige hold');
@@ -147,11 +147,11 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; the p
   await page.click('#grp-v [data-act="make"]');
   const names = i => cards(page).nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.p).sort());
   assert.deepEqual(await names(0), ['Alma', 'Bo', 'Carl', 'Noah']);          // niveau 1,5 1,5 2 1,5
-  // group 2: Dina, Emil and Lucas (2–3 → 2,5) and one of Frida (2–4 → 3) and Pelle (2–4 → 3); by Fra it would be the 2s
+  // group 2: of the five with Fra 2, Dina, Emil and Lucas (2–3) come before Frida and Pelle (2–4): the narrower band first
   const second = await names(1);
   assert.deepEqual(second.filter(n => ['Dina', 'Emil', 'Lucas'].includes(n)), ['Dina', 'Emil', 'Lucas']);
-  assert.match(await cards(page).nth(0).locator('.grp-head').innerText(), /niveau 1,5–2/);
-  assert.match(await cards(page).nth(1).locator('.grp-head').innerText(), /niveau 2,5–3/);
+  assert.match(await cards(page).nth(0).locator('.grp-head').innerText(), /Fra 1$/);
+  assert.match(await cards(page).nth(1).locator('.grp-head').innerText(), /Fra 2$/);
   assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider with Niveau');
   await page.click('#grp-v [data-act="matches"]');
   const chip = page.locator('#grp-v .grp-matches .grp-p', { hasText: 'Carl' });
@@ -163,10 +163,10 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; the p
   await page.waitForSelector('#ov .ov-p');
   assert.equal(await page.locator('#ov .ov-p', { hasText: 'Pelle' }).locator('.grp-band').innerText(), '2–4');
   assert.equal(await page.locator('#ov .ov-p', { hasText: 'Alma' }).locator('.grp-band').innerText(), '1–2');
-  assert.match(await page.locator('#ov .ov-how').textContent(), /midten af båndet/);
+  assert.match(await page.locator('#ov .ov-how').textContent(), /Niveau er spillerens Fra/);
   assert.match(await page.locator('#ov .ov-key').first().innerText(), /↑\s*spiller op\s*=\s*samme niveau\s*↓\s*spiller ned/);
   const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
-  for (const [name, aim, why] of [['Alma', '0 / 75 / 25', /Ingen er mere øvede/], ['Jonas', '25 / 75 / 0', /Ingen er mindre øvede/], ['Frida', '25 / 50 / 25', null]]) {
+  for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens nok, er på samme niveau/], ['Jonas', '25 / 75 / 0', /Ingen er mindre øvede/], ['Frida', '25 / 50 / 25', null]]) {
     const c = card(name), goals = await c.locator('.ov-val.ov-goal').allInnerTexts();
     const [u, e, d] = aim.split(' / '), want = `↑\u202f${u} · =\u202f${e} · ↓\u202f${d} %`;
     assert.deepEqual(goals, [want, want], name + ': the aim for groups and matches, for everyone, with arrows');
@@ -174,8 +174,8 @@ test('Niveau (the middle of the band): group 1 holds the most experienced; the p
     assert.equal(await c.locator('.ov-aim').count(), 2, name + ': an aim bar under both');
     if (why) assert.match(await c.innerText(), why); else assert.doesNotMatch(await c.innerText(), /Ingen er|Få er/);
   }
-  // the aim bar's parts are the aim (Alma: 0 / 75 / 25)
-  assert.deepEqual(await card('Alma').locator('.ov-aim').first().locator('span').evaluateAll(ss => ss.map(x => Math.round(parseFloat(x.style.width)))), [0, 75, 25]);
+  // the aim bar's parts are the aim (Jonas: 25 / 75 / 0)
+  assert.deepEqual(await card('Jonas').locator('.ov-aim').first().locator('span').evaluateAll(ss => ss.map(x => Math.round(parseFloat(x.style.width)))), [25, 75, 0]);
   assert.deepEqual(page.errors, []);
 });
 
@@ -616,7 +616,8 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
   await page.click('#grp-v [data-act="make"]');
   const sizes = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
   assert.deepEqual(sizes, [4, 4, 4, 4]);
-  assert.match(await page.locator('#grp-v .grp-msg').innerText(), /ingen gemte grupper fra tidligere træninger/);
+  // (the test squad's bands are only one level wide, so 4–5 has too few to overlap half a level with: then red, and said so)
+  assert.match(await page.locator('#grp-v .grp-msg').innerText(), /ingen gemte grupper fra tidligere træninger|overlapper ikke nok i de røde grupper/);
   assert.match(await page.locator('#grp-v .grp-list .grp-head').first().innerText(), /gns\. niveau/);
   assert.match(await page.locator('#grp-v .grp-matches h3').innerText(), /^Kampe til træning$/);
   assert.equal(await page.locator('#grp-v [data-mmode="mix"]').getAttribute('aria-pressed'), 'true');

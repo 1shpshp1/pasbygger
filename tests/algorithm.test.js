@@ -115,8 +115,8 @@ test('Pool sizes are even where possible', () => {
   assert.deepEqual(Array.from(A.poolSizes(16, 2)), [8, 8]);
 });
 
-test('Kampe 25-50-25: middle levels move towards the aim over time; nobody is far from their match', () => {
-  const P = squad(), level = name => (P.find(p => p.name === name) || {}).lo;
+test('Kampe 25-50-25: middle levels move towards the aim over time; bands always overlap half a level in a match', () => {
+  const P = squad().map(p => Object.assign(p, { hi: p.lo + 2.5 })), level = name => (P.find(p => p.name === name) || {}).lo;   // wide bands, as coaches set them
   const saved = [];
   for (let s = 0; s < 16; s++) {
     const present = P.filter((_, i) => (i * 5 + s) % 7);
@@ -126,10 +126,9 @@ test('Kampe 25-50-25: middle levels move towards the aim over time; nobody is fa
     ms.forEach(m => {
       assert.ok(Math.abs(m.teams[0].length - m.teams[1].length) <= 1);
       const ps = m.teams[0].concat(m.teams[1]);
-      ps.forEach(p => {
-        const o = ps.filter(q => q !== p).map(q => q.lo), avg = o.reduce((x, y) => x + y, 0) / o.length;
-        assert.ok(Math.abs(avg - p.lo) <= 1.5 + 1e-9, `${p.name} (${p.lo}) in a match averaging ${avg.toFixed(2)}`);
-      });
+      ps.forEach(p => ps.forEach(q => {
+        if (p !== q) assert.ok(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo) >= 0.5 - 1e-9, `${p.name} ${p.lo}–${p.hi} with ${q.name} ${q.lo}–${q.hi}`);
+      }));
     });
     saved.unshift(Array.from(ms, m => m.teams.map(t => t.map(p => p.name))));
   }
