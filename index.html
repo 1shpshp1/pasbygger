@@ -755,7 +755,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 17. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 17. nov. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -900,7 +900,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKx
 /* The server files this app was made for: each reports its version (CODE_VERSION in Code.gs with the plan,
    GRUPPER_VERSION in Grupper.gs with the players). An older deployed copy gives "Serveren er ikke opdateret" with
    what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
-const SERVER_NEEDS = { code: 2, grupper: 2 };
+const SERVER_NEEDS = { code: 3, grupper: 2 };
 const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
 const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
 function serverOutdated() {
@@ -2674,7 +2674,7 @@ const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50
    can't play with more experienced players (nor the least experienced with less experienced), so the share they
    can't get goes to "samme niveau", with the closest players: the most experienced 0/75/25, the least experienced
    25/75/0. Gradually: how much "more experienced" is possible is how much the most experienced other player counts
-   as more experienced (levelWeights: 0,75 above or more: fully; 0,4 above: partly). me: the player's Niveau,
+   as more experienced (levelWeights: a whole level above or more: fully; 0,75 above: half). me: the player's Niveau,
    others: the other players' Niveau (those present, or the whole squad). Returns [more, same, less], adding up to 1. */
 function playerAim(me, others) {
   if (!isFinite(me)) return MIX_GOAL.slice();
@@ -2686,10 +2686,11 @@ function playerAim(me, others) {
 const aimsFor = levels => levels.map((v, i) => playerAim(v, levels.filter((o, j) => j !== i)));
 /* Another player's level (or the others' average in a match) seen from a player, for the 25/50/25 mix:
    [more experienced, the same level, less experienced], adding up to 1. A soft transition around half a level:
-   up to 0,25 apart counts fully as the same level, 0,75 or more fully as more/less experienced, and in between
-   gradually (0,5 apart: half and half). The levels are averages of several coaches' assessments, so a few
-   hundredths either way hardly change anything: 0,49 and 0,51 apart count almost the same. */
-const SAME_FULL = 0.25, SAME_NONE = 0.75;
+   up to half a level apart counts fully as the same level, a whole level or more fully as more/less experienced, and in between
+   gradually (0,75 apart: half and half). The levels are averages of several coaches' assessments, so a few
+   hundredths either way hardly change anything: 0,74 and 0,76 apart count almost the same. */
+const SAME_FULL = 0.5, SAME_NONE = 1.0;   // (was 0,25 / 0,75: then groups close to a sort by level already met the
+                                          // aim; with these the groups mix more – see the simulation in the tests)
 function levelWeights(me, other) {
   const d = other - me, a = Math.abs(d);
   const same = a <= SAME_FULL + 1e-9 ? 1 : a >= SAME_NONE - 1e-9 ? 0 : 1 - (a - SAME_FULL) / (SAME_NONE - SAME_FULL);
@@ -3761,7 +3762,7 @@ function renderOverview() {
       <p><b>Niveau</b> er midten af båndet (Fra–Til 2–3 giver 2,5).</p>
       <p><b>↑ Spiller op</b> betyder med mere øvede spillere, <b>= samme niveau</b> med spillere på omtrent samme niveau, og <b>↓ spiller ned</b> med mindre øvede spillere.</p>
       <p><b>Grupper:</b> hver medspiller i gruppen tæller som op, samme eller ned. <b>Kampe til træning:</b> hver af de andre spillere i kampen (begge hold) tæller som op, samme eller ned, så en kamp med mest mere øvede spillere er en kamp, hvor spilleren spiller op.</p>
-      <p><b>Samme niveau:</b> op til 0,25 fra spilleren tæller helt som samme niveau, 0,75 eller mere helt som op eller ned, og ind imellem delvist (0,5 fra: halvt af hver).</p>
+      <p><b>Samme niveau:</b> op til et halvt niveau fra spilleren tæller helt som samme niveau, et helt niveau eller mere helt som op eller ned, og ind imellem delvist (0,75 fra: halvt af hver).</p>
       <p><b>Målet</b> er ↑ 25 · = 50 · ↓ 25 %. De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så den del går til samme niveau: ↑ 0 · = 75 · ↓ 25 % for den mest øvede, ↑ 25 · = 75 · ↓ 0 % for den mindst øvede.</p>
       <p><b>Fremmøde</b> tæller kun træninger, hvor grupperne er gemt (også grupper lavet uden en træning).</p>
     </details>
@@ -3926,7 +3927,7 @@ function makeNewGroups() {
     GRP.groups = mixPools(players, Array.from(poolSizes(players.length, k, 1)), nivOf, lv, mix, rand).pools
       .map(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));
     GRP.sel = null; GRP.dirty = true; GRP.bad = false;
-    GRP.msg = earlierGroups().length ? "" : "Der er endnu ingen gemte grupper fra tidligere træninger, så første gang kommer alle så tæt på eget niveau som muligt. Husk \u201cGem grupper\u201d.";
+    GRP.msg = earlierGroups().length ? "" : "Der er endnu ingen gemte grupper fra tidligere træninger, så grupperne blander efter 25-50-25 inden for denne ene træning. Husk \u201cGem grupper\u201d, så fordelingen kan rettes op over tid.";
     renderGroups();
     return;
   }
@@ -4121,7 +4122,7 @@ function catInMatch(p, m) {
 function mixHistoryText() {
   const n = earlierMatches().length;
   return n ? `Bygger på kampe gemt ved ${n} tidligere ${n === 1 ? "træning" : "træninger"} (kampe fra i dag tæller først fra næste træning).`
-    : "Der er endnu ingen gemte kampe fra tidligere træninger, så indtil da kommer alle så tæt på eget niveau som muligt.";
+    : "Der er endnu ingen gemte kampe fra tidligere træninger, så kampene blander efter 25-50-25 inden for denne ene træning.";
 }
 
 /* A stepper row: label, − value + (data-<attr>="i:-1" / "i:1") */
@@ -4299,7 +4300,7 @@ function renderGroups() {
   // alphabetical, whatever the order in the tab Spillere (data-who stays the player's place in the list from the sheet)
   const order = all.map((p, i) => i).sort((a, b) => all[a].name.localeCompare(all[b].name, "da"));
   const who = order.map(i => `<label><input type="checkbox" data-who="${i}"${GRP.present.has(all[i].name) ? " checked" : ""}>` +
-    `<span>${esc(all[i].name)}</span></label>`).join("");
+    `<span>${esc(all[i].name)}</span>${showLevels() && all[i].lo != null ? ` <span class="grp-band">${bandText(all[i].lo, all[i].hi)}</span>` : ""}</label>`).join("");
 
   const none = GRP.groups ? "" : /\sfri$/.test(GRP.key)
     ? "Der er ikke lavet grupper til denne dato endnu."

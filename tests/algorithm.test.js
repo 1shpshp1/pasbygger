@@ -141,9 +141,9 @@ test('Kampe 25-50-25: middle levels move towards the aim over time; nobody is fa
 });
 
 test('Kampe 25-50-25: what counts as harder, own level and easier', () => {
-  assert.equal(A.matchCategory(3, 2.5), 0);      // the others are half a level more experienced: harder
-  assert.equal(A.matchCategory(3, 2.7), 1);
-  assert.equal(A.matchCategory(3, 3.5), 2);      // half a level less experienced: easier
+  assert.equal(A.matchCategory(3, 2.25), 0);     // the others are 0,75 more experienced: half harder, so harder
+  assert.equal(A.matchCategory(3, 2.5), 1);      // half a level: still own level
+  assert.equal(A.matchCategory(3, 3.75), 2);     // 0,75 less experienced: easier
   assert.equal(A.matchCategory(NaN, 2), 1);      // no level: counts as own level
   // judged against each of the others: two much stronger and two much weaker is half harder, half easier (no arrow)
   assert.deepEqual(Array.from(A.matchMix([[[['x', 'a', 'b'], ['c', 'd']]]], n => ({ x: 3, a: 1, b: 1, c: 5, d: 5 })[n]).x), [0.5, 0, 0.5, 1]);
@@ -252,24 +252,23 @@ test('Kaos matches are completely random: teams are not balanced, and differ fro
   assert.ok(unbalanced >= 5, 'no balancing: often uneven teams');
 });
 
-test('Level mix: a soft transition around half a level (fully the same up to 0,25, fully different from 0,75)', () => {
+test('Level mix: a soft transition (fully the same up to half a level, fully different from a whole level)', () => {
   const w = (me, o) => Array.from(A.levelWeights(me, o), x => Math.round(x * 1000) / 1000);
   assert.deepEqual(w(2.5, 2.5), [0, 1, 0]);
-  assert.deepEqual(w(2.5, 2.75), [0, 1, 0], 'up to 0,25: the same level');
-  assert.deepEqual(w(2.5, 3), [0, 0.5, 0.5], '0,5: half the same, half less experienced');
-  assert.deepEqual(w(2.5, 2), [0.5, 0.5, 0], '… or half more experienced');
-  assert.deepEqual(w(2.5, 3.25), [0, 0, 1], '0,75 or more: fully less experienced');
+  assert.deepEqual(w(2.5, 3), [0, 1, 0], 'up to half a level: the same level');
+  assert.deepEqual(w(2.5, 3.25), [0, 0.5, 0.5], '0,75: half the same, half less experienced');
+  assert.deepEqual(w(2.5, 1.75), [0.5, 0.5, 0], '… or half more experienced');
+  assert.deepEqual(w(2.5, 3.5), [0, 0, 1], 'a whole level or more: fully less experienced');
   assert.deepEqual(w(2.5, 1.5), [1, 0, 0]);
-  assert.deepEqual(w(2, 2.49), [0, 0.52, 0.48], 'no jump at half a level …');
-  assert.deepEqual(w(2, 2.51), [0, 0.48, 0.52], '… 0,49 and 0,51 count almost the same');
-  const mix = A.skillMix([[['a', 'b', 'c']]], { a: 2.5, b: 3, c: 1.5 });
+  assert.deepEqual(w(2, 2.74), [0, 0.52, 0.48], 'no jump …');
+  assert.deepEqual(w(2, 2.76), [0, 0.48, 0.52], '… 0,74 and 0,76 count almost the same');
+  const mix = A.skillMix([[['a', 'b', 'c']]], { a: 2.5, b: 3.25, c: 1.5 });
   // a: b counts half same, half less; c fully more experienced (each teammate weighs 1/2)
   assert.deepEqual(Array.from(mix.a, x => Math.round(x * 1000) / 1000), [0.5, 0.25, 0.25, 1]);
-  // the matches use the same: the others' average 0,5 better is half harder, half own level
-  const hist = A.matchMix([[[['x', 'y'], ['z']]]], n => ({ x: 3, y: 2.5, z: 2.5 })[n]);
+  // the matches use the same: the others 0,75 better is half harder, half own level
+  const hist = A.matchMix([[[['x', 'y'], ['z']]]], n => ({ x: 3, y: 2.25, z: 2.25 })[n]);
   assert.deepEqual(Array.from(hist.x), [0.5, 0.5, 0, 1]);
 });
-
 test('"Ingen modspiller" in turn: who had none is read from saved matches, and it rotates', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(A.spareCounts([[[['a', 'b'], ['c']]], [[['d'], ['e'], ['f', 'g']], [['h', 'i'], ['j', 'k']]]]))), { b: 1, g: 1 });
   const P = [1, 1.5, 2, 2.5, 3, 3.5, 4.5].map((lo, i) => ({ name: 'p' + i, lo: lo }));
@@ -296,7 +295,7 @@ test('Each player\'s own aim: what the most and least experienced can\'t get goe
   assert.deepEqual(aim(2.5, [1, 2, 3, 4]), [0.25, 0.5, 0.25], 'room both ways: 25/50/25');
   assert.deepEqual(aim(1, [2, 3, 4]), [0, 0.75, 0.25], 'the most experienced');
   assert.deepEqual(aim(4, [1, 2, 3]), [0.25, 0.75, 0], 'the least experienced');
-  assert.deepEqual(aim(3, [2.6, 3.5, 4]), [0.075, 0.675, 0.25], 'only 0,4 above: "more experienced" partly possible');
+  assert.deepEqual(aim(3, [2.25, 3.5, 4]), [0.125, 0.625, 0.25], 'only 0,75 above: "more experienced" half possible');
   assert.deepEqual(aim(NaN, [1, 2]), [0.25, 0.5, 0.25], 'no level: the usual aim');
   // 25-50-25 matches over time: the second most and second least experienced play mostly at their own level
   const P = [1, 1.5, 2, 2, 2.5, 2.5, 3, 3, 3.5, 3.5, 4, 4.5].map((lo, i) => ({ name: 'p' + i, lo: lo }));
@@ -311,4 +310,24 @@ test('Each player\'s own aim: what the most and least experienced can\'t get goe
   assert.ok(share('p0', 1) >= 0.15 && share('p0', 0) === 0, `the most experienced: some own level (${share('p0', 1).toFixed(2)})`);
   assert.ok(share('p11', 1) >= 0.15 && share('p11', 2) === 0, `the least experienced: some own level (${share('p11', 1).toFixed(2)})`);
   assert.ok(Math.abs(share('p5', 0) - 0.25) <= 0.12 && Math.abs(share('p5', 2) - 0.25) <= 0.12, 'the middle: about 25/50/25');
+});
+
+test('25-50-25 groups really mix: not a sort by level, and the middle players get about 25/50/25 over 12 trainings', () => {
+  const LV = [1.4, 1.6, 1.8, 2.0, 2.1, 2.3, 2.5, 2.6, 2.8, 3.0, 3.1, 3.3, 3.5, 3.8, 4.1, 4.4];
+  const P = LV.map((v, i) => ({ name: 'p' + i, lv: v })), skill = {};
+  P.forEach(p => { skill[p.name] = p.lv; });
+  const sortedKeys = new Set([0, 1, 2, 3].map(k => P.slice(k * 4, k * 4 + 4).map(p => p.name).sort().join()));
+  const saved = [];
+  let spread = 0, sortedLike = 0;
+  for (let t = 0; t < 12; t++) {
+    const groups = Array.from(A.mixPools(P, [4, 4, 4, 4], p => p.lv, p => p.lv, A.skillMix(saved, skill), A.seededRandom(1000 + t)).pools, g => Array.from(g));
+    groups.forEach(g => { const v = g.map(p => p.lv); spread += Math.max(...v) - Math.min(...v); });
+    sortedLike += groups.filter(g => sortedKeys.has(g.map(p => p.name).sort().join())).length;
+    saved.unshift(groups.map(g => g.map(p => p.name)));
+  }
+  assert.ok(spread / 48 >= 1.0, `a group spans about a level or more on average (${(spread / 48).toFixed(2)})`);
+  assert.ok(sortedLike <= 5, `hardly ever the same as a sort by level (${sortedLike} of 48)`);
+  const mix = A.skillMix(saved, skill), mid = ['p5', 'p6', 'p7', 'p8', 'p9', 'p10'];
+  const avg = r => mid.reduce((x, n) => x + mix[n][r] / mix[n][3], 0) / mid.length;
+  assert.ok(Math.abs(avg(0) - 0.25) <= 0.07 && Math.abs(avg(2) - 0.25) <= 0.07, `the middle: ↑${avg(0).toFixed(2)} ↓${avg(2).toFixed(2)}`);
 });
