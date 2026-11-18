@@ -115,7 +115,7 @@ test('Pool sizes are even where possible', () => {
   assert.deepEqual(Array.from(A.poolSizes(16, 2)), [8, 8]);
 });
 
-test('Kampe 25-50-25: middle levels move towards the aim over time; bands always overlap half a level in a match', () => {
+test('Kampe 25-50-25: middle levels move towards the aim over time; bands always overlap in a match', () => {
   const P = squad().map(p => Object.assign(p, { hi: p.lo + 2.5 })), level = name => (P.find(p => p.name === name) || {}).lo;   // wide bands, as coaches set them
   const saved = [];
   for (let s = 0; s < 16; s++) {
@@ -127,7 +127,7 @@ test('Kampe 25-50-25: middle levels move towards the aim over time; bands always
       assert.ok(Math.abs(m.teams[0].length - m.teams[1].length) <= 1);
       const ps = m.teams[0].concat(m.teams[1]);
       ps.forEach(p => ps.forEach(q => {
-        if (p !== q) assert.ok(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo) >= 0.5 - 1e-9, `${p.name} ${p.lo}–${p.hi} with ${q.name} ${q.lo}–${q.hi}`);
+        if (p !== q) assert.ok(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo) > 1e-9, `${p.name} ${p.lo}–${p.hi} with ${q.name} ${q.lo}–${q.hi}`);
       }));
     });
     saved.unshift(Array.from(ms, m => m.teams.map(t => t.map(p => p.name))));
@@ -361,4 +361,13 @@ test('25-50-25 groups: more overlap means more often together; the social mix lo
   assert.ok(plain.low < plain.mid && plain.mid < plain.high, `more overlap, more often together: ${[plain.low, plain.mid, plain.high].map(x => x.toFixed(2))}`);
   assert.ok(mixed.low < mixed.mid && mixed.mid < mixed.high, `also with the social mix: ${[mixed.low, mixed.mid, mixed.high].map(x => x.toFixed(2))}`);
   assert.ok(mixed.repeat < plain.repeat - 0.03, `fewer teammates from last time again: ${plain.repeat.toFixed(2)} → ${mixed.repeat.toFixed(2)}`);
+});
+
+test('Bands must overlap to be together: touching is not enough; a band with one number fits a band holding it', () => {
+  const g = (bands, k) => Array.from(A.mixPools(bands.map((b, i) => ({ name: 'b' + i, lo: b[0], hi: b[1] })), Array(k).fill(bands.length / k),
+    p => p.lo + 0.02 * p.hi, p => p.lo + 0.02 * p.hi, {}, A.seededRandom(3)).pools, x => Array.from(x, p => p.lo + '–' + p.hi).sort().join(' '));
+  // 1–3 and 3–5 only touch: with room for both in separate groups they never share one
+  assert.deepEqual(g([[1, 3], [1.2, 3.2], [3, 5], [3.1, 5.1]], 2).sort(), ['1.2–3.2 1–3', '3.1–5.1 3–5']);
+  // a band with one number (3) fits 2–4 (holds 3) but not 4–6
+  assert.deepEqual(g([[3, 3], [2, 4], [4, 6], [4.5, 6]], 2).sort(), ['2–4 3–3', '4.5–6 4–6']);
 });

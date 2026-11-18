@@ -755,7 +755,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 18. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2670,15 +2670,17 @@ function groupLevel(players) {
    more. skill: { name: number } – a lower number is more skilled (Fra, with 1 as the best level). */
 const MIX_GOAL = [0.25, 0.5, 0.25];   // the ambition over time: 25 % better, 50 % the same, 25 % weaker
 
-/* 25-50-25: players are only together (a group or a match) if their bands overlap by at least half a level – or, when a
-   band is narrower than that, by its whole width (a band with one number, "3", fits any band that holds 3). No band:
-   fits all. bandShort: how much overlap is missing (0 when they fit). */
-const BAND_OVERLAP = 0.5;
+/* 25-50-25: players are only together (a group or a match) if their bands overlap – the less experienced one's Til is
+   higher than the other's Fra; bands that only touch (3–5 and 1–3) don't. A band with one number, "3", fits any band
+   that holds 3. No band: fits all. (Little overlap is already rare: it counts mostly as up or down, and overlap draws
+   players together.) bandShort: 0 when they fit, else how far apart the bands are (touching: just over 0). */
 const bandOverlap = (a, b) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo);
 function bandShort(a, b) {
   if (![a.lo, a.hi, b.lo, b.hi].every(Number.isFinite)) return 0;
-  const need = Math.min(BAND_OVERLAP, a.hi - a.lo, b.hi - b.lo), have = bandOverlap(a, b);
-  return have >= need - 1e-9 && (have > 1e-9 || need < 1e-9) ? 0 : Math.max(need - have, 1e-3);
+  const have = bandOverlap(a, b);
+  if (have > 1e-9) return 0;
+  if ((a.hi - a.lo < 1e-9 || b.hi - b.lo < 1e-9) && have >= -1e-9) return 0;   // one number inside the other band
+  return Math.max(-have, 0) + 1e-3;
 }
 const bandsFit = (a, b) => bandShort(a, b) === 0;
 
@@ -3065,8 +3067,8 @@ function matchMix(earlier, level) {
    Returns { pools: [[players]] in the order of sizes, cat: { name: 0 | 1 | 2 } for this time }.
    social (optional, for the groups): { pairs: pairHistory(...), weight } – pairs who were together lately cost. */
 /* How strongly overlap draws players together (see near[] in mixPools). With the coaches' 51 real bands over 40
-   trainings, pairs overlapping 25–49 / 50–74 / 75–100 % of a band are together 11 / 24 / 40 % of the times both are
-   there (13 / 27 / 37 % without it); it hardly changes the level mix. */
+   trainings (the social mix at 25 %), pairs overlapping 1–24 / 25–49 / 50–74 / 75–100 % of a band are together
+   7 / 13 / 24 / 36 % of the times both are there, and bands that don't overlap never; it hardly changes the level mix. */
 const OVERLAP_PULL = 10;
 function mixPools(all, sizes, level, lv, mix, rand, social) {
   const own = all.map(p => { const v = level(p); return v != null && isFinite(v) ? v : NaN; });
@@ -3805,7 +3807,7 @@ function renderOverview() {
     const me = nivOf(s.p), others = leveled.filter(o => o !== s.p && bandsFit(s.p, o)).map(o => isBand(o) ? o : nivOf(o));
     const aim = me == null ? null : playerAim(isBand(s.p) ? s.p : me, others);
     const why = !aim || Math.abs(aim[1] - 0.5) <= 0.005 ? ""
-      : aim[0] < 0.005 && aim[2] < 0.005 ? "Alle, hvis bånd overlapper spillerens nok, er på samme niveau, så målet er samme niveau."
+      : aim[0] < 0.005 && aim[2] < 0.005 ? "Alle, hvis bånd overlapper spillerens, er på samme niveau, så målet er samme niveau."
       : aim[0] < 0.005 ? "Ingen er mere øvede at spille op med, så målet er mere på samme niveau."
       : aim[2] < 0.005 ? "Ingen er mindre øvede at spille ned med, så målet er mere på samme niveau."
       : "Dem, spilleren kan spille op og ned med, overlapper spillerens bånd en del, så målet er lidt mere på samme niveau.";
@@ -3820,10 +3822,10 @@ function renderOverview() {
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"}. ` +
     `For hver spiller: med hvem de har været i grupper og kampe (de seneste 12 træninger), og målet for dem.</p>
     <details class="ov-how"><summary>Sådan regnes det</summary>
-      <p><b>Niveau</b> er spillerens Fra. Har to spillere samme Fra, tæller den med det smalleste bånd (lavest Til) som lidt mere øvet. Spillere kommer kun i gruppe eller kamp sammen, hvis deres bånd overlapper med mindst et halvt niveau.</p>
+      <p><b>Niveau</b> er spillerens Fra. Har to spillere samme Fra, tæller den med det smalleste bånd (lavest Til) som lidt mere øvet. Spillere kommer kun i gruppe eller kamp sammen, hvis deres bånd overlapper (bånd, der kun rører hinanden, er ikke nok).</p>
       <p><b>↑ Spiller op</b> betyder med mere øvede spillere, <b>= samme niveau</b> med spillere på omtrent samme niveau, og <b>↓ spiller ned</b> med mindre øvede spillere.</p>
       <p><b>Grupper:</b> hver medspiller i gruppen tæller som op, samme eller ned. <b>Kampe til træning:</b> hver af de andre spillere i kampen (begge hold) tæller som op, samme eller ned, så en kamp med mest mere øvede spillere er en kamp, hvor spilleren spiller op.</p>
-      <p><b>Samme niveau:</b> op til et halvt niveau fra spilleren tæller helt som samme niveau, et helt niveau eller mere helt som op eller ned, og ind imellem delvist (0,75 fra: halvt af hver).</p>
+      <p><b>Samme niveau</b> er den del af spillerens bånd, som den anden spillers bånd dækker: dækker B 80 % af A's bånd, tæller B 80 % som samme niveau for A, og resten som op eller ned efter Fra. Jo mere to bånd overlapper, jo oftere kommer spillerne i gruppe sammen.</p>
       <p><b>Målet</b> er ↑ 25 · = 50 · ↓ 25 %. De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så den del går til samme niveau: ↑ 0 · = 75 · ↓ 25 % for den mest øvede, ↑ 25 · = 75 · ↓ 0 % for den mindst øvede.</p>
       <p><b>Fremmøde</b> tæller kun træninger, hvor grupperne er gemt (også grupper lavet uden en træning).</p>
     </details>
@@ -4017,7 +4019,7 @@ function makeNewGroups() {
     GRP.sel = null; GRP.dirty = true;
     const red = GRP.groups.filter(g => g.some((x, i) => g.slice(i + 1).some(y => !grpMeet(x, y)))).length;
     GRP.bad = red > 0;
-    GRP.msg = red ? "Båndene overlapper ikke nok i de røde grupper: der er for få spillere, der passer sammen. Prøv et andet antal grupper." : earlierGroups().length ? "" : "Der er endnu ingen gemte grupper fra tidligere træninger, så grupperne blander efter 25-50-25 inden for denne ene træning. Husk \u201cGem grupper\u201d, så fordelingen kan rettes op over tid.";
+    GRP.msg = red ? "Båndene overlapper ikke i de røde grupper: der er for få spillere, der passer sammen. Prøv et andet antal grupper." : earlierGroups().length ? "" : "Der er endnu ingen gemte grupper fra tidligere træninger, så grupperne blander efter 25-50-25 inden for denne ene træning. Husk \u201cGem grupper\u201d, så fordelingen kan rettes op over tid.";
     renderGroups();
     return;
   }
@@ -4349,7 +4351,7 @@ function matchesHtml() {
     </div>
     ${GRP.sizeMode === "custom" ? sizesHtml() : ""}
     <p class="grp-hint grp-explain">${{
-      mix: "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. De mest øvede kan ikke få sværere kampe (og de mindst øvede ikke lettere), så de spiller mere på eget niveau i stedet. Kampene kan derfor have forskelligt niveau. Spillere kommer kun i kamp sammen, hvis deres bånd overlapper med mindst et halvt niveau. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d.",
+      mix: "Over tid spiller hver spiller ca. 25 % af kampene i en sværere kamp, 50 % på eget niveau og 25 % i en lettere kamp. De mest øvede kan ikke få sværere kampe (og de mindst øvede ikke lettere), så de spiller mere på eget niveau i stedet. Kampene kan derfor have forskelligt niveau. Spillere kommer kun i kamp sammen, hvis deres bånd overlapper. Det bygger på de gemte kampe, så husk at trykke \u201cGem kampe\u201d.",
       max: "Spillerne stilles op efter deres Fra, så kamp 1 er de mest øvede.",
       band: "Spillere i samme kamp skal have bånd, der overlapper (som for grupperne).",
       even: "Kampene får så ens gennemsnitligt niveau som muligt.",
@@ -4437,7 +4439,7 @@ function renderGroups() {
       </div>
       ${byChaos() ? `<p class="grp-hint grp-explain grp-slide">Kaos: spillerne fordeles helt tilfældigt. Niveau og tidligere grupper tæller ikke med.</p>`
       : byMax() ? `<p class="grp-hint grp-explain grp-slide">Niveau: spillerne sorteres efter deres Fra (ved samme Fra kommer det smalleste bånd først), så gruppe 1 er de mest øvede. Spillere med samme niveau blandes, når du trykker igen. En gruppe bliver rød, hvis den spænder mere end den valgte forskel.</p>`
-      : groupsByMix() ? `<p class="grp-hint grp-explain grp-slide">25-50-25: over tid er hver spiller ca. 25 % af tiden i en gruppe med mere øvede (spiller op), 50 % med spillere på samme niveau og 25 % med mindre øvede (spiller ned). De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så de er mere på samme niveau. Spillere kommer kun i gruppe sammen, hvis deres bånd overlapper med mindst et halvt niveau. Jo mere to spilleres bånd overlapper, jo oftere kommer de i gruppe sammen. Det bygger på de gemte grupper (${earlierGroups().length} ${earlierGroups().length === 1 ? "træning" : "træninger"}), så husk \u201cGem grupper\u201d.</p>
+      : groupsByMix() ? `<p class="grp-hint grp-explain grp-slide">25-50-25: over tid er hver spiller ca. 25 % af tiden i en gruppe med mere øvede (spiller op), 50 % med spillere på samme niveau og 25 % med mindre øvede (spiller ned). De mest øvede kan ikke spille op (og de mindst øvede ikke ned), så de er mere på samme niveau. Spillere kommer kun i gruppe sammen, hvis deres bånd overlapper (bånd, der kun rører hinanden, er ikke nok). Jo mere to spilleres bånd overlapper, jo oftere kommer de i gruppe sammen. Det bygger på de gemte grupper (${earlierGroups().length} ${earlierGroups().length === 1 ? "træning" : "træninger"}), så husk \u201cGem grupper\u201d.</p>
       <label class="grp-slide"><span>Socialt mix: ${GRP.social} %</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.social}" data-act="social" aria-label="Socialt mix">
         <span class="grp-ends" aria-hidden="true"><span>Samme makkere ok</span><span>Nye makkere</span></span>
@@ -4474,7 +4476,7 @@ function renderGroups() {
         <div class="grp-head"><strong>Gruppe ${gi + 1}</strong><small>${g.length} ${g.length === 1 ? "spiller" : "spillere"}${levelTxt ? " · " + levelTxt : ""}</small></div>
         <div class="grp-players">${chips || '<span class="grp-hint">Ingen spillere</span>'}</div>
         ${GRP.sel && !selHere ? `<button type="button" class="clearbtn grp-here" data-to="${gi}">Flyt ${esc(GRP.sel.name)} hertil</button>` : ""}
-        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i niveau" : groupsByMix() ? "Båndene overlapper ikke et halvt niveau" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
+        ${clash.length ? `<p class="grp-warn">⚠ ${byMax() ? "For stor forskel i niveau" : groupsByMix() ? "Båndene overlapper ikke" : "Niveauerne mødes ikke"}: ${esc(clash.slice(0, 2).join("; "))}${clash.length > 2 ? " …" : ""}</p>` : ""}
       </div>`;
     }).join("") + `</div>
       <p class="grp-legend">${prev && !noSlider() ? "Rød kant = ny gruppe siden sidst. " : ""}Tryk på en spiller for at flytte dem eller bytte med en anden.</p>

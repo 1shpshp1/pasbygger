@@ -168,7 +168,7 @@ test('Niveau (by Fra, a narrower band first): group 1 holds the most experienced
   const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
   // compared by overlap: Ida (3–5) covers all of Jonas's band (4–5), so for him she is the same level; Carl (1–3) and Ida
   // each cover half of Frida's band (2–4), so they count half as up and half as down for her
-  for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens nok, er på samme niveau/], ['Jonas', '0 / 100 / 0', /Alle, hvis bånd overlapper/], ['Frida', '13 / 75 / 13', /overlapper spillerens bånd en del/]]) {
+  for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens, er på samme niveau/], ['Jonas', '0 / 100 / 0', /Alle, hvis bånd overlapper/], ['Frida', '13 / 75 / 13', /overlapper spillerens bånd en del/]]) {
     const c = card(name), goals = await c.locator('.ov-val.ov-goal').allInnerTexts();
     const [u, e, d] = aim.split(' / '), want = `↑\u202f${u} · =\u202f${e} · ↓\u202f${d} %`;
     assert.deepEqual(goals, [want, want], name + ': the aim for groups and matches, for everyone, with arrows');
@@ -620,7 +620,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
   const sizes = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
   assert.deepEqual(sizes, [4, 4, 4, 4]);
   // (the test squad's bands are only one level wide, so 4–5 has too few to overlap half a level with: then red, and said so)
-  assert.match(await page.locator('#grp-v .grp-msg').innerText(), /ingen gemte grupper fra tidligere træninger|overlapper ikke nok i de røde grupper/);
+  assert.match(await page.locator('#grp-v .grp-msg').innerText(), /ingen gemte grupper fra tidligere træninger|overlapper ikke i de røde grupper/);
   assert.match(await page.locator('#grp-v .grp-list .grp-head').first().innerText(), /gns\. niveau/);
   assert.match(await page.locator('#grp-v .grp-matches h3').innerText(), /^Kampe til træning$/);
   assert.equal(await page.locator('#grp-v [data-mmode="mix"]').getAttribute('aria-pressed'), 'true');
