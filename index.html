@@ -755,7 +755,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 18. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 18. nov. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -4491,6 +4491,7 @@ function renderGroups() {
 
 /* A player ticked on after the groups were made goes into the smallest group their level fits */
 function addToGroups(p) {
+  if (groupsByMix()) { addByMix(p); return; }
   let best = -1;
   GRP.groups.forEach(function (g, gi) {
     const fits = g.every(q => grpMeet(p, q));
@@ -4498,6 +4499,43 @@ function addToGroups(p) {
     if (best === -1 || score < best.score) best = { gi: gi, score: score };
   });
   if (best !== -1) GRP.groups[best.gi].push(p);
+}
+
+/* 25-50-25: a player ticked on after the groups were made goes where it suits best, without making the sizes uneven:
+   only the smallest groups (one more if none of them fits the bands); among those, the group whose bands all overlap
+   the player's, then the least cost: the player's own aim and the others' (with what they have had), the social mix
+   (together lately) and the overlap pull – as when the groups are made (mixPools). */
+function addByMix(p) {
+  const lvl = q => isBand(q) ? q : nivOf(q) == null ? NaN : nivOf(q);
+  const present = GRP.groups.flat().concat([p]);
+  const had = skillMix(earlierGroups().map(e => e.groups), grpSkill());
+  const pairs = pairHistory(earlierGroups().map(e => e.groups)), socialW = socialWeight();
+  const aimOf = q => playerAim(lvl(q), present.filter(o => o !== q && bandsFit(q, o)).map(lvl));
+  const mixCost = (q, mates) => {                          // how far q's mix (earlier + with these mates) is from q's aim
+    if (!hasLevel(lvl(q))) return 0;
+    const others = mates.filter(o => o !== q && hasLevel(lvl(o)));
+    if (!others.length) return 0;
+    const w = [0, 0, 0];
+    others.forEach(o => { const x = levelWeights(lvl(q), lvl(o)); for (let r = 0; r < 3; r++) w[r] += x[r] / others.length; });
+    const h = had[q.name] || [0, 0, 0, 0], aim = aimOf(q);
+    let c = 0;
+    for (let r = 0; r < 3; r++) { const d = (h[r] + w[r]) / (h[3] + 1) - aim[r]; c += 1000 * d * d; }
+    return c;
+  };
+  const smallest = Math.min(...GRP.groups.map(g => g.length));
+  let best = null;
+  GRP.groups.forEach(function (g, gi) {
+    const fits = g.every(q => bandsFit(p, q));
+    const with_ = g.concat([p]);
+    let c = (fits ? 0 : 1e6) + (g.length - smallest) * 1e5;   // the bands first, then the sizes
+    c += mixCost(p, with_) + g.reduce((x, q) => x + mixCost(q, with_) - mixCost(q, g), 0);
+    g.forEach(q => {
+      c += socialW * (pairs[pairKey(p.name, q.name)] || 0);
+      if (isBand(p) && isBand(q)) c -= OVERLAP_PULL * (bandWeights(p, q)[1] + bandWeights(q, p)[1]) / 2;
+    });
+    if (!best || c < best.c) best = { gi: gi, c: c };
+  });
+  if (best) GRP.groups[best.gi].push(p);
 }
 
 function grpInput(e) {
@@ -4666,12 +4704,15 @@ function noConnection(err) {
 
 /* What is waiting, put into a copy of the players and groups (after a fresh copy has come from the server) */
 function applyQueue(data) {
-  readQueue().forEach(function (x) {
-    if (x.kind === "groups") data.history[x.key] = { saved: "", groups: x.names };
-    else if (x.kind === "matches") (data.matches = data.matches || {})[x.key] = { saved: "", matches: x.names };
-    else (data.signups = data.signups || {})[x.key] = { saved: "", names: x.names };
-  });
+  readQueue().forEach(x => putSaved(data, x.kind, x.key, x.names, ""));
   return data;
+}
+/* One training's saved groups, matches or signups into the phone's copy; an empty list removes them (as on the server) */
+function putSaved(data, kind, key, names, saved) {
+  const field = kind === "groups" ? "history" : kind === "matches" ? "matches" : "signups";
+  data[field] = data[field] || {};
+  if (!names || !names.length) { delete data[field][key]; return; }
+  data[field][key] = kind === "groups" ? { saved: saved, groups: names } : kind === "matches" ? { saved: saved, matches: names } : { saved: saved, names: names };
 }
 
 function keepForLater(want, kind, names) {
@@ -4700,9 +4741,7 @@ function sendQueue() {
     writeQueue(readQueue().filter(y => !(y.kind === x.kind && y.key === x.key && y.at === x.at)));
     if (GRP_CACHE) {
       const d = GRP_CACHE.data;
-      if (x.kind === "groups") d.history[x.key] = { saved: res.saved, groups: x.names };
-      else if (x.kind === "matches") (d.matches = d.matches || {})[x.key] = { saved: res.saved, matches: x.names };
-      else (d.signups = d.signups || {})[x.key] = { saved: res.saved, names: x.names };
+      putSaved(d, x.kind, x.key, x.names, res.saved);
       storeGroups();
     }
     if (GRP && GRP.key === x.key && x.kind === "groups" && !GRP.dirty) GRP.saved = res.saved;
@@ -4744,7 +4783,49 @@ function saveNow(kind, names) {
   keepForLater(want, kind, names);
   sendQueue();
 }
-function saveGroupsNow() { saveNow("groups", GRP.groups.filter(g => g.length).map(g => g.map(p => p.name))); }
+function saveGroupsNow() {
+  const names = GRP.groups.filter(g => g.length).map(g => g.map(p => p.name));
+  const twin = /^\d{4}-\d{2}-\d{2}$/.test(GRP.key) && (GRP.data.history || {})[GRP.key + " fri"] ? GRP.key + " fri" : null;
+  if (twin) askTwin(twin, function () { saveNow("groups", names); });
+  else saveNow("groups", names);
+}
+
+/* Groups saved in the Grupper tab for the same date as this training ("uden træning"): saving here as well would count
+   the day twice (attendance, the mix, the social mix). Ask whether to remove them (and any matches saved with them). */
+function askTwin(twin, save) {
+  if (document.querySelector(".leave-ask")) return;
+  const want = GRP;
+  const box = document.createElement("div");
+  box.className = "login leave-ask";
+  box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "twin-title");
+  box.innerHTML = `<div class="login-box"><h2 id="twin-title">Grupper fra samme dag</h2>
+    <p>Der er også gemt grupper i fanen Grupper for ${esc(keyLabel(twin).replace(/ \(uden træning\)$/, ""))} (uden træning). Gemmer du også her, tæller dagen to gange i statistikken.</p>
+    <div class="login-actions" style="flex-wrap:wrap">
+      <button type="button" class="clearbtn" data-twin="keep">Behold begge</button>
+      <button type="button" class="login-go" data-twin="drop">Slet dem fra fanen og gem</button></div></div>`;
+  document.body.appendChild(box);
+  box.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.stopPropagation(); box.remove(); } });
+  box.addEventListener("click", function (e) {
+    const b = e.target.closest("[data-twin]");
+    if (!b) return;
+    box.remove();
+    if (GRP !== want) return;
+    if (b.dataset.twin === "drop") {
+      queueRemove(want.data, "groups", twin);
+      if ((want.data.matches || {})[twin]) queueRemove(want.data, "matches", twin);
+    }
+    save();
+  });
+  box.querySelector('[data-twin="drop"]').focus();
+}
+/* Removes one training's saved groups or matches: on the phone at once, on the server through the queue */
+function queueRemove(data, kind, key) {
+  const q = readQueue().filter(x => !(x.kind === kind && x.key === key));
+  q.push({ kind: kind, key: key, names: [], at: Date.now() });
+  writeQueue(q);
+  putSaved(data, kind, key, [], "");
+  if (GRP_CACHE && GRP_CACHE.data === data) storeGroups();
+}
 
 /* The login has run out: the groups stay on the screen, the code is asked for, and then they are saved */
 function askCodeThenSave(want, kind) {
