@@ -115,7 +115,7 @@ test('Pool sizes are even where possible', () => {
   assert.deepEqual(Array.from(A.poolSizes(16, 2)), [8, 8]);
 });
 
-test('Kampe 25-50-25: middle levels move towards the aim over time; bands always overlap half a level in a match', () => {
+test('Kampe 25-50-25: middle levels move towards the aim over time; bands always overlap in a match', () => {
   const P = squad().map(p => Object.assign(p, { hi: p.lo + 2.5 })), level = name => (P.find(p => p.name === name) || {}).lo;   // wide bands, as coaches set them
   const saved = [];
   for (let s = 0; s < 16; s++) {
@@ -127,7 +127,7 @@ test('Kampe 25-50-25: middle levels move towards the aim over time; bands always
       assert.ok(Math.abs(m.teams[0].length - m.teams[1].length) <= 1);
       const ps = m.teams[0].concat(m.teams[1]);
       ps.forEach(p => ps.forEach(q => {
-        if (p !== q) assert.ok(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo) >= 0.5 - 1e-9, `${p.name} ${p.lo}–${p.hi} with ${q.name} ${q.lo}–${q.hi}`);
+        if (p !== q) assert.ok(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo) > 1e-9, `${p.name} ${p.lo}–${p.hi} with ${q.name} ${q.lo}–${q.hi}`);
       }));
     });
     saved.unshift(Array.from(ms, m => m.teams.map(t => t.map(p => p.name))));
@@ -135,7 +135,8 @@ test('Kampe 25-50-25: middle levels move towards the aim over time; bands always
   const mix = A.matchMix(saved, level);
   const fra2 = P.filter(p => p.lo === 2).map(p => mix[p.name]).filter(Boolean);
   const share = r => fra2.reduce((x, m) => x + m[r] / m[3], 0) / fra2.length;
-  assert.ok(share(0) >= 0.15 && share(2) >= 0.15, `level 2 gets harder (${share(0).toFixed(2)}) and easier (${share(2).toFixed(2)}) matches`);
+  // (compared by band overlap: most of those with a higher Fra overlap a Fra-2 band a lot, so they count largely as the same level)
+  assert.ok(share(0) >= 0.15 && share(2) >= 0.05, `level 2 gets harder (${share(0).toFixed(2)}) and easier (${share(2).toFixed(2)}) matches`);
   assert.ok(share(1) >= 0.3, `and mostly own level (${share(1).toFixed(2)})`);
 });
 
@@ -329,4 +330,44 @@ test('25-50-25 groups really mix: not a sort by level, and the middle players ge
   const mix = A.skillMix(saved, skill), mid = ['p5', 'p6', 'p7', 'p8', 'p9', 'p10'];
   const avg = r => mid.reduce((x, n) => x + mix[n][r] / mix[n][3], 0) / mid.length;
   assert.ok(Math.abs(avg(0) - 0.25) <= 0.07 && Math.abs(avg(2) - 0.25) <= 0.07, `the middle: ↑${avg(0).toFixed(2)} ↓${avg(2).toFixed(2)}`);
+});
+
+test('25-50-25 groups: more overlap means more often together; the social mix lowers repeated teammates', () => {
+  // bands like the coaches' (about two levels wide), 30 players, a steady core and some who come and go
+  const P = Array.from({ length: 30 }, (_, i) => { const lo = 1 + (i * 7 % 30) / 10; return { name: 'q' + i, lo: lo, hi: lo + 1.8 + (i % 4) * 0.25 }; });
+  const lvl = p => p.lo + 0.02 * p.hi, skill = {};
+  P.forEach(p => { skill[p.name] = p; });
+  const share = (a, b) => Math.max(0, Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo)) / (a.hi - a.lo);
+  function run(weight) {
+    const saved = [], together = {}, both = {};
+    let rep = 0, repN = 0, seed = 5;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let t = 0; t < 30; t++) {
+      const present = P.filter((p, i) => i % 2 === 0 || rand() < 0.3);
+      const pairs = A.pairHistory(saved.slice(0, 12));
+      const gs = Array.from(A.mixPools(present, Array.from(A.poolSizes(present.length, 4, 1)), lvl, lvl, A.skillMix(saved.slice(0, 12), skill), A.seededRandom(t + 1), { pairs: pairs, weight: weight }).pools, g => Array.from(g, p => p.name));
+      if (saved.length) {
+        const here = new Set(present.map(p => p.name));
+        gs.forEach(g => g.forEach(a => { const was = (saved[0].find(x => x.includes(a)) || []).filter(b => b !== a && here.has(b)); if (was.length) { rep += was.filter(b => g.includes(b)).length / was.length; repN++; } }));
+      }
+      present.forEach(a => present.forEach(b => { if (a !== b) both[a.name + '|' + b.name] = (both[a.name + '|' + b.name] || 0) + 1; }));
+      gs.forEach(g => g.forEach(a => g.forEach(b => { if (a !== b) together[a + '|' + b] = (together[a + '|' + b] || 0) + 1; })));
+      saved.unshift(gs);
+    }
+    const rate = (lo, hi) => { let t = 0, b = 0; P.forEach(a => P.forEach(c => { const k = a.name + '|' + c.name, s = share(a, c); if (a !== c && both[k] && s >= lo && s < hi) { t += together[k] || 0; b += both[k]; } })); return t / b; };
+    return { repeat: rep / repN, low: rate(0.25, 0.5), mid: rate(0.5, 0.75), high: rate(0.75, 1.01) };
+  }
+  const plain = run(0), mixed = run(1);                   // 1 = the slider at 25 %
+  assert.ok(plain.low < plain.mid && plain.mid < plain.high, `more overlap, more often together: ${[plain.low, plain.mid, plain.high].map(x => x.toFixed(2))}`);
+  assert.ok(mixed.low < mixed.mid && mixed.mid < mixed.high, `also with the social mix: ${[mixed.low, mixed.mid, mixed.high].map(x => x.toFixed(2))}`);
+  assert.ok(mixed.repeat < plain.repeat - 0.03, `fewer teammates from last time again: ${plain.repeat.toFixed(2)} → ${mixed.repeat.toFixed(2)}`);
+});
+
+test('Bands must overlap to be together: touching is not enough; a band with one number fits a band holding it', () => {
+  const g = (bands, k) => Array.from(A.mixPools(bands.map((b, i) => ({ name: 'b' + i, lo: b[0], hi: b[1] })), Array(k).fill(bands.length / k),
+    p => p.lo + 0.02 * p.hi, p => p.lo + 0.02 * p.hi, {}, A.seededRandom(3)).pools, x => Array.from(x, p => p.lo + '–' + p.hi).sort().join(' '));
+  // 1–3 and 3–5 only touch: with room for both in separate groups they never share one
+  assert.deepEqual(g([[1, 3], [1.2, 3.2], [3, 5], [3.1, 5.1]], 2).sort(), ['1.2–3.2 1–3', '3.1–5.1 3–5']);
+  // a band with one number (3) fits 2–4 (holds 3) but not 4–6
+  assert.deepEqual(g([[3, 3], [2, 4], [4, 6], [4.5, 6]], 2).sort(), ['2–4 3–3', '4.5–6 4–6']);
 });
