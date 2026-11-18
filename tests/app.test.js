@@ -166,7 +166,9 @@ test('Niveau (by Fra, a narrower band first): group 1 holds the most experienced
   assert.match(await page.locator('#ov .ov-how').textContent(), /Niveau er spillerens Fra/);
   assert.match(await page.locator('#ov .ov-key').first().innerText(), /↑\s*spiller op\s*=\s*samme niveau\s*↓\s*spiller ned/);
   const card = name => page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + name + '$') }) });
-  for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens nok, er på samme niveau/], ['Jonas', '25 / 75 / 0', /Ingen er mindre øvede/], ['Frida', '25 / 50 / 25', null]]) {
+  // compared by overlap: Ida (3–5) covers all of Jonas's band (4–5), so for him she is the same level; Carl (1–3) and Ida
+  // each cover half of Frida's band (2–4), so they count half as up and half as down for her
+  for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens nok, er på samme niveau/], ['Jonas', '0 / 100 / 0', /Alle, hvis bånd overlapper/], ['Frida', '13 / 75 / 13', /overlapper spillerens bånd en del/]]) {
     const c = card(name), goals = await c.locator('.ov-val.ov-goal').allInnerTexts();
     const [u, e, d] = aim.split(' / '), want = `↑\u202f${u} · =\u202f${e} · ↓\u202f${d} %`;
     assert.deepEqual(goals, [want, want], name + ': the aim for groups and matches, for everyone, with arrows');
@@ -174,8 +176,8 @@ test('Niveau (by Fra, a narrower band first): group 1 holds the most experienced
     assert.equal(await c.locator('.ov-aim').count(), 2, name + ': an aim bar under both');
     if (why) assert.match(await c.innerText(), why); else assert.doesNotMatch(await c.innerText(), /Ingen er|Få er/);
   }
-  // the aim bar's parts are the aim (Jonas: 25 / 75 / 0)
-  assert.deepEqual(await card('Jonas').locator('.ov-aim').first().locator('span').evaluateAll(ss => ss.map(x => Math.round(parseFloat(x.style.width)))), [25, 75, 0]);
+  // the aim bar's parts are the aim (Frida: 12,5 / 75 / 12,5)
+  assert.deepEqual(await card('Frida').locator('.ov-aim').first().locator('span').evaluateAll(ss => ss.map(x => Math.round(parseFloat(x.style.width)))), [13, 75, 13]);
   assert.deepEqual(page.errors, []);
 });
 
@@ -612,7 +614,8 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
   await openGroups(page);
   assert.equal(await page.locator('#grp-v [data-rule="mix"]').getAttribute('aria-pressed'), 'true', 'an older choice switches once');
   assert.match(await page.locator('#grp-v').innerText(), /25-50-25: over tid er hver spiller ca\. 25 %/);
-  assert.equal(await page.locator('#grp-v input[type=range]').count(), 0, 'no slider: it places by its own aim');
+  assert.equal(await page.locator('#grp-v input[type=range]').count(), 1, 'one slider: Socialt mix');
+  assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="social"]') }).innerText(), /Socialt mix: 25 %/);
   await page.click('#grp-v [data-act="make"]');
   const sizes = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
   assert.deepEqual(sizes, [4, 4, 4, 4]);
@@ -647,6 +650,26 @@ test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () =
   assert.equal(await page.locator('#groups').isHidden(), true);
   assert.equal(await page.locator('#grp-overview').count(), 0, 'no longer a button under Grupper');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'four tabs fit');
+  assert.deepEqual(page.errors, []);
+});
+
+test('Socialt mix: a slider for 25-50-25 groups (25 % to begin with), remembered; it says how many teammates are together again', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  const t = srv.call('login', CODE).result.token;
+  const N = ['Alma','Bo','Carl','Dina','Emil','Frida','Gustav','Hjalte','Ida','Jonas','Karla','Lucas','Malou','Noah','Olivia','Pelle'];
+  srv.call('saveGroups', t, '2026-10-01', [N.slice(0, 4), N.slice(4, 8), N.slice(8, 12), N.slice(12)]);   // an earlier training
+  await openGroups(page);
+  const slider = page.locator('#grp-v [data-act="social"]');
+  assert.equal(await slider.inputValue(), '25');
+  await slider.fill('60');
+  assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="social"]') }).innerText(), /Socialt mix: 60 %/);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('oevGrpSettings')).social), 60);
+  await page.click('#grp-v [data-act="make"]');
+  assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="social"]') }).innerText(),
+    /Med disse grupper er \d+ % af makkerne fra sidste træning sammen igen \(ved ren tilfældighed ca\. 25 %\)/);
+  await page.click('#grp-v [data-rule="band"]');                    // Bånd keeps its own slider
+  assert.equal(await page.locator('#grp-v [data-act="social"]').count(), 0);
+  assert.equal(await page.locator('#grp-v [data-act="change"]').count(), 1);
   assert.deepEqual(page.errors, []);
 });
 
