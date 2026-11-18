@@ -673,6 +673,57 @@ test('Socialt mix: a slider for 25-50-25 groups (25 % to begin with), remembered
   assert.deepEqual(page.errors, []);
 });
 
+test('25-50-25: a player who turns up late goes into a group whose bands all overlap theirs, sizes kept even', { skip }, async () => {
+  const page = await phone(testServer());
+  await openGroups(page);                                            // ("Hvem er med?" is open before any groups)
+  const pelle = page.locator('#grp-v .grp-who label', { hasText: 'Pelle' }).locator('input');
+  await pelle.uncheck();                                             // not signed up
+  await page.locator('#grp-v .grp-who label', { hasText: 'Olivia' }).locator('input').uncheck();
+  await page.click('#grp-v [data-act="make"]');                      // 14 players: 4 + 4 + 3 + 3
+  await page.click('#grp-v details summary');
+  await pelle.check();                                               // turns up after all
+  const groups = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => [...c.querySelectorAll('.grp-p')].map(b => b.dataset.p)));
+  const sizes = groups.map(g => g.length);
+  assert.equal(sizes.reduce((x, y) => x + y), 15);
+  assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, 'sizes kept even: ' + sizes);
+  const band = { Alma: [1, 2], Bo: [1, 2], Carl: [1, 3], Dina: [2, 3], Emil: [2, 3], Frida: [2, 4], Gustav: [3, 4], Hjalte: [3, 4], Ida: [3, 5], Jonas: [4, 5], Karla: [4, 5], Lucas: [2, 3], Malou: [3, 4], Noah: [1, 2], Olivia: [3, 4], Pelle: [2, 4] };
+  const mine = groups.find(g => g.includes('Pelle'));
+  assert.ok(mine.length === Math.min(...sizes.map((n, i) => groups[i].includes('Pelle') ? n - 1 : n)) + 1, 'into one of the smallest groups');
+  mine.filter(n => n !== 'Pelle').forEach(n => assert.ok(Math.min(band.Pelle[1], band[n][1]) - Math.max(band.Pelle[0], band[n][0]) > 0, 'Pelle (2–4) overlaps ' + n));
+  assert.match(await page.locator('#grp-v .grp-save').first().innerText(), /Ikke gemt/);
+  assert.deepEqual(page.errors, []);
+});
+
+test('Saving groups for a training when the Grupper tab has groups for the same date: ask, and remove them if wanted', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  const t = srv.call('login', CODE).result.token;
+  const key = await page.evaluate(() => SESSIONS[0].iso);
+  srv.call('saveGroups', t, key + ' fri', [['Alma', 'Bo'], ['Carl', 'Dina']]);   // made at home in the Grupper tab
+  srv.call('saveMatches', t, key + ' fri', [[['Alma'], ['Bo']]]);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="make"]');
+  await page.click('#grp-v [data-act="save"]');
+  const ask = page.locator('.leave-ask');
+  assert.match(await ask.innerText(), /Grupper fra samme dag[\s\S]*tæller dagen to gange/);
+  await ask.locator('[data-twin="drop"]').click();
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  const d = srv.call('getGroupData', t).result;
+  assert.deepEqual(Object.keys(d.history), [key], 'only the training\'s groups count');
+  assert.deepEqual(Object.keys(d.matches), [], 'the matches from the tab went too');
+  // "Behold begge" keeps both
+  srv.call('saveGroups', t, key + ' fri', [['Alma', 'Bo']]);
+  await page.click('#v-back'); await page.click('#v-back');
+  await page.reload(); await page.waitForSelector('#sessions .card');
+  await openGroups(page);
+  await page.locator('#grp-v .grp-list .grp-card .grp-p').first().click();
+  await page.locator('#grp-v .grp-list .grp-card').nth(1).locator('.grp-p').first().click();
+  await page.click('#grp-v [data-act="save"]');
+  await ask.locator('[data-twin="keep"]').click();
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  assert.deepEqual(Object.keys(srv.call('getGroupData', t).result.history).sort(), [key, key + ' fri']);
+  assert.deepEqual(page.errors, []);
+});
+
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
