@@ -724,12 +724,42 @@ test('Saving groups for a training when the Grupper tab has groups for the same 
   assert.deepEqual(page.errors, []);
 });
 
+test('Kampe til træning "Grupperne": each group plays its own match, split into two (or three) teams; saved', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  await openGroups(page);
+  await page.click('#grp-v [data-act="minus"]');                   // 3 groups, as at training today
+  await page.click('#grp-v [data-act="make"]');
+  const groups = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => [...c.querySelectorAll('.grp-p')].map(b => b.dataset.p).sort()));
+  assert.equal(groups.length, 3);
+  const sec = page.locator('#grp-v .grp-matches');
+  await sec.locator('[data-mmode="groups"]').click();
+  assert.equal(await sec.locator('[data-mpools]').count(), 0, 'no puljer, number of matches or sizes: the groups decide');
+  assert.equal(await sec.locator('[data-mcount]').count(), 0);
+  assert.equal(await sec.locator('[data-msize]').count(), 0);
+  assert.equal(await sec.locator('[data-pmode="groups"]').count(), 0);
+  await sec.locator('[data-act="matches"]').click();
+  const cards = sec.locator('.grp-card');
+  assert.equal(await cards.count(), 3, 'one match per group');
+  const matches = await cards.evaluateAll(cs => cs.map(c => [...c.querySelectorAll('.grp-p .grp-pname')].map(x => x.textContent.replace(/[↑↓]/g, '').trim()).sort()));
+  assert.deepEqual(matches.map(m => m.join()).sort(), groups.map(g => g.join()).sort(), 'each match is exactly one group');
+  assert.match(await cards.first().locator('.grp-head').innerText(), /gruppe \d/);
+  assert.deepEqual(await cards.first().locator('.grp-teamhead').evaluateAll(hs => hs.length), 2);
+  await sec.locator('[data-mteams="0:3"]').click();                  // three teams per group
+  await sec.locator('[data-act="matches"]').click();
+  assert.equal(await cards.first().locator('.grp-teamhead').count(), 3);
+  await sec.locator('[data-act="savematches"]').click();
+  await page.waitForFunction(() => /Kampe gemt/.test(document.querySelector('#grp-v .grp-matches').innerText));
+  const t = srv.call('login', CODE).result.token;
+  assert.deepEqual(Object.values(srv.call('getGroupData', t).result.matches)[0].matches.map(m => m.length), [3, 3, 3]);
+  assert.deepEqual(page.errors, []);
+});
+
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
   await page.click('#grp-v [data-act="make"]');
   const sec = page.locator('#grp-v .grp-matches');
-  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos', 'Lige hold']);
+  assert.deepEqual(await sec.locator('[data-mmode]').allInnerTexts(), ['25-50-25', 'Bånd', 'Niveau', 'Kaos', 'Lige hold', 'Grupperne']);
   assert.equal(await sec.locator('[data-pmode]').count(), 0, 'with 1 pulje: as before');
   assert.equal(await sec.locator('[data-mcount]').count(), 4);
   await sec.locator('[data-mpools="3"]').click();
