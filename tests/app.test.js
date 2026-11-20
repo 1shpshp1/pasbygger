@@ -640,7 +640,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
 
 test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () => {
   const guest = await phone(testServer(), { loggedIn: false });
-  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe', 'Spilleroversigt']);
+  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe (beta)', 'Spilleroversigt']);
   await guest.click('#nav-overview');
   await guest.waitForSelector('#login-pw');
   const page = await phone(testServer());
