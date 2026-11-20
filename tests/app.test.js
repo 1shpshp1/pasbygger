@@ -772,7 +772,11 @@ test('Kampe tab: a set of named matches, who can play each, a 25-50-25 draft onl
   await page.click('#fix [data-flevel="1:3"]');
   // who can play: the first match only five, the second everyone
   for (const n of ['Alma', 'Bo', 'Carl', 'Noah', 'Dina']) await page.click(`#fix [data-fav="0|${n}"]`);
+  assert.equal(await page.locator('#fix [data-favall="0"]').count(), 0, '"Sæt alle" only for a match nobody is ticked for: never undoes work');
   await page.click('#fix [data-favall="1"]');
+  assert.equal(await page.locator('#fix [data-favall]').count(), 0);
+  assert.deepEqual(await page.locator('#fix .fix-av thead th').allInnerTexts(), ['Spiller', '1', '2'], 'numbered columns');
+  assert.match(await page.locator('#fix .fix-legend').innerText(), /1\s*U13 mod Brøndby[\s\S]*niveau 1[\s\S]*2\s*U13 mod KB[\s\S]*niveau 3/, 'the full names in the list');
   assert.match(await page.locator('#fix .fix-av tfoot').innerText(), /Til rådighed\s*5\/4\s*16\/4/);
   await page.click('#fix [data-fact="draft"]');
   const cards = page.locator('#fix .grp-list .grp-card');
@@ -782,11 +786,21 @@ test('Kampe tab: a set of named matches, who can play each, a 25-50-25 draft onl
   const first = await names(0);
   assert.ok(first.every(n => ['Alma', 'Bo', 'Carl', 'Noah', 'Dina'].includes(n)), 'only those who can play it: ' + first);
   assert.match(await cards.nth(2).locator('.grp-head').innerText(), /Reserver\s*8 spillere til rådighed uden en kamp/);
+  assert.equal(await page.locator('#fix .fix-multi').count(), 0, 'enough players: nobody on two matches, no warning');
   // a swap that isn't allowed: someone only free for the second match into the first
   const second = await names(1), outsider = second.find(n => !['Alma', 'Bo', 'Carl', 'Noah', 'Dina'].includes(n));
   await cards.nth(1).locator(`[data-fp="1|${outsider}"]`).click();
   await cards.nth(0).locator('.grp-p').first().click();
   assert.match(await page.locator('#fix .grp-msg').innerText(), new RegExp(outsider + ' er ikke til rådighed for U13 mod Brøndby'));
+  // a player put on a second match by hand: a warning
+  const twice = first[0];
+  await cards.nth(0).locator(`[data-fp="0|${twice}"]`).click();
+  await cards.nth(1).locator('[data-falso="1"]').click();
+  assert.match(await page.locator('#fix .fix-multi').innerText(), new RegExp('En spiller skal spille mere end én kamp i kampsættet: ' + twice + ' \\(U13 mod Brøndby og U13 mod KB\\)'));
+  assert.match(await cards.nth(1).locator(`[data-fp="1|${twice}"]`).innerText(), /⚠ 2 kampe/);
+  await cards.nth(1).locator(`[data-fp="1|${twice}"]`).click();
+  await cards.nth(1).locator('[data-fout="1"]').click();                    // back to one match: the warning goes
+  assert.equal(await page.locator('#fix .fix-multi').count(), 0);
   await page.click('#fix [data-fact="save"]');
   await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
   const t = srv.call('login', CODE).result.token;
