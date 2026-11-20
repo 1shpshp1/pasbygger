@@ -372,31 +372,39 @@ test('Bands must overlap to be together: touching is not enough; a band with one
   assert.deepEqual(g([[3, 3], [2, 4], [4, 6], [4.5, 6]], 2).sort(), ['2–4 3–3', '4.5–6 4–6']);
 });
 
-test('Kampe (real matches): ideal match level, the band limit, one match each, reserves in turn, 25-50-25 over time', () => {
+test('Kampsæt: only matches a player can play, everyone one before anyone two, the band limit, reserves in turn, 25-50-25', () => {
   assert.equal(Math.round(A.idealLevel({ lo: 1, hi: 3 }) * 100) / 100, 1.67);
   assert.equal(A.idealLevel({ lo: 1, hi: 4 }), 2);
   assert.equal(A.fixtureFits({ lo: 2, hi: 4 }, 1.5), true, 'half a level outside the band: allowed');
   assert.equal(A.fixtureFits({ lo: 2, hi: 4 }, 1), false);
-  assert.equal(A.fixtureFits({ lo: 2, hi: 4 }, 4.5), true);
-  // 14 available, two matches of 6: two reserves; everyone once; nobody outside their band when it can be helped
   const P = Array.from({ length: 14 }, (_, i) => { const lo = 1 + (i % 7) * 0.4; return { name: 'k' + i, lo: lo, hi: lo + 2 }; });
-  const games = [{ level: 2, size: 6 }, { level: 4, size: 6 }];
-  const r = A.draftFixtures(P, games, {}, 1);
-  assert.deepEqual(Array.from(r.games, g => g.length), [6, 6]);
-  assert.equal(r.reserves.length, 2);
-  assert.equal(new Set([...r.games.flat(), ...r.reserves].map(p => p.name)).size, 14, 'each player once');
-  Array.from(r.games).forEach((g, gi) => g.forEach(p => assert.ok(A.fixtureFits(p, games[gi].level), `${p.name} ${p.lo}–${p.hi} on level ${games[gi].level}`)));
-  // fewer players than places: the biggest match gives up places
-  assert.deepEqual(Array.from(A.draftFixtures(P.slice(0, 9), [{ level: 2, size: 6 }, { level: 3, size: 4 }], {}, 1).games, g => g.length), [5, 4]);
-  // over 12 dates (saved): reserves go in turn, and those in the middle play up and down
-  const saved = [], byName = n => P.find(p => p.name === n);
+  const names = P.map(p => p.name), fits = (p, l) => A.fixtureFits(p, l);
+  // a weekend: three matches; each player can play some of them
+  const games = [{ level: 2, size: 6, avail: names.filter((n, i) => i % 3 !== 2) },
+                 { level: 3, size: 6, avail: names.filter((n, i) => i % 3 !== 0) },
+                 { level: 4, size: 4, avail: names.filter((n, i) => i % 2 === 1) }];
+  const r = A.draftFixtureSet(P, games, {}, 1);
+  const got = Array.from(r.games, g => Array.from(g));
+  got.forEach((g, gi) => g.forEach(p => {
+    assert.ok(games[gi].avail.includes(p.name), `${p.name} only on matches they can play`);
+    assert.ok(fits(p, games[gi].level), `${p.name} ${p.lo}–${p.hi} on level ${games[gi].level}`);
+  }));
+  assert.deepEqual(got.map(g => g.length), [6, 6, 4], 'every place filled');
+  const count = {}; got.flat().forEach(p => { count[p.name] = (count[p.name] || 0) + 1; });
+  assert.ok(Math.max(...Object.values(count)) <= 2);
+  if (Object.values(count).some(c => c > 1)) assert.equal(r.reserves.filter(p => games.some(g => g.avail.includes(p.name) && fits(p, g.level))).length, 0,
+    'nobody who could play gets none while someone gets two');
+  // not enough who can play: the match is short, nobody is put on a match they can't play
+  const few = A.draftFixtureSet(P, [{ level: 2, size: 6, avail: ['k0', 'k1'] }], {}, 1);
+  assert.deepEqual(Array.from(few.games[0], p => p.name).sort(), ['k0', 'k1']);
+  // over 12 weekends (saved): reserves go in turn, and a middle player gets harder and easier matches
+  const byName = n => P.find(p => p.name === n), week = [{ level: 2, size: 6, avail: names }, { level: 4, size: 6, avail: names }];
+  const saved = [];
   for (let d = 0; d < 12; d++) {
-    const x = A.draftFixtures(P, games, A.fixtureHistory(saved, byName), d + 1);
-    saved.unshift({ games: games.map((g, gi) => ({ level: g.level, players: x.games[gi].map(p => p.name) })), reserves: x.reserves.map(p => p.name) });
+    const x = A.draftFixtureSet(P, week, A.fixtureHistory(saved, byName), d + 1);
+    saved.unshift({ games: week.map((g, gi) => ({ level: g.level, avail: g.avail, players: Array.from(x.games[gi], p => p.name) })) });
   }
-  const h = A.fixtureHistory(saved, byName);
-  const res = P.map(p => (h[p.name] || {}).reserves || 0);
+  const h = A.fixtureHistory(saved, byName), res = P.map(p => (h[p.name] || {}).reserves || 0);
   assert.ok(Math.max(...res) - Math.min(...res) <= 1, 'reserve turns spread evenly: ' + res);
-  const mid = h.k3.mix;                                    // band 2,2–4,2: ideal 2,87 – level 2 is up, level 4 down
-  assert.ok(mid[0] > 0 && mid[2] > 0, 'a middle player gets both harder and easier matches: ' + Array.from(mid).map(v => v.toFixed(2)));
+  assert.ok(h.k3.mix[0] > 0 && h.k3.mix[2] > 0, 'a middle player gets both: ' + Array.from(h.k3.mix).map(v => v.toFixed(2)));
 });

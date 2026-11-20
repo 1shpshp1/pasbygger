@@ -621,9 +621,21 @@
     .grp .ov-key i { margin-right: -2px; }
     .grp .lvl-toggle { margin: 0 0 12px; }
     .fix-game { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-top: 1px solid #e6e1da; }
-    .fix-game:first-of-type { border-top: 0; }
-    .fix-game .fix-gname { flex: 1 0 auto; font-weight: bold; }
     .fix-game .fix-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: 100%; }
+    .grp .fix-game input, .grp .fix-sname, .grp .fix-sets select, .grp .fix-game select { padding: 8px 10px; border: 1px solid #cccccc; border-radius: 10px; font: inherit; font-size: 16px; background: #ffffff; }
+    .grp .fix-game .fix-gname { flex: 1 1 10em; min-width: 0; font-weight: bold; }
+    .grp .fix-sname { flex: 1 1 12em; min-width: 0; font-weight: bold; }
+    .grp .fix-sets select { flex: 1 1 12em; min-width: 0; }
+    .fix-av { overflow-x: auto; margin: 8px 0; }
+    .fix-av table { border-collapse: collapse; font-size: 15px; }
+    .fix-av th, .fix-av td { padding: 3px 4px; text-align: center; border-bottom: 1px solid #eee9e2; }
+    .fix-av tbody th, .fix-av tfoot th { text-align: left; font-weight: normal; white-space: nowrap; padding-right: 10px; }
+    .fix-av tfoot td, .fix-av tfoot th { color: #555555; font-size: 14px; border-bottom: 0; }
+    .grp .fix-tog { width: 40px; height: 34px; border: 1px solid #cccccc; border-radius: 8px; background: #ffffff; color: #ffffff; font: inherit; font-weight: bold; cursor: pointer; }
+    .grp .fix-tog[aria-pressed="true"] { background: var(--red); border-color: var(--red); }
+    .grp .fix-colbtn { display: flex; flex-direction: column; align-items: center; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--red); font: inherit; font-size: 14px; font-weight: bold; cursor: pointer; }
+    .grp .fix-colbtn small { color: #555555; font-size: 12px; font-weight: normal; }
+    .grp .fix-x { color: #555555; font-size: 12px; }
     .grp .fix-out { border-color: var(--red); }
     .grp .fix-warn { color: var(--red); font-weight: bold; margin-left: 2px; }
     .ov-bars .ov-aim .ov-less { background: #b3b3b3; }
@@ -732,7 +744,6 @@
 <div id="fixtures" class="view-hidden">
   <div class="grp-page">
     <h2>Kampe</h2>
-    <label class="grp-date"><span class="grp-hint">Dato</span><input type="date" id="fix-date"></label>
     <div id="fix" class="grp"><p>Henter spillere …</p></div>
   </div>
 </div>
@@ -770,7 +781,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 20. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -915,7 +926,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKx
 /* The server files this app was made for: each reports its version (CODE_VERSION in Code.gs with the plan,
    GRUPPER_VERSION in Grupper.gs with the players). An older deployed copy gives "Serveren er ikke opdateret" with
    what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
-const SERVER_NEEDS = { code: 4, grupper: 3 };
+const SERVER_NEEDS = { code: 5, grupper: 4 };
 const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
 const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
 function serverOutdated() {
@@ -3515,86 +3526,79 @@ const fixtureWeights = (p, level) => idealLevel(p) == null ? [0, 1, 0] : levelWe
 /* The player's aim over the season: what the levels 1–4 they may play allow (playerAim) */
 const fixtureAim = p => idealLevel(p) == null ? MIX_GOAL.slice() : playerAim(idealLevel(p), [1, 2, 3, 4].filter(l => fixtureFits(p, l)));
 
-/* From saved drafts (newest first, each { games: [{ level, players }], reserves }), the last 12 dates: per player
-   { mix: [up, same, down, matches], reserves: n }. byName(name): the player (with their band) or null. */
+/* From saved sets (newest first, each { games: [{ level, avail, players }] }), the last 12: per player { mix: [up, same,
+   down, matches], reserves: sets where they could play but played none }. byName(name): the player or null. */
 function fixtureHistory(earlier, byName) {
   const out = {};
   const of = name => out[name] = out[name] || { mix: [0, 0, 0, 0], reserves: 0 };
-  earlier.slice(0, GROUP_HISTORY).forEach(function (f) {
-    (f.games || []).forEach(g => g.players.forEach(function (name) {
-      const p = byName(name), w = fixtureWeights(p, g.level), m = of(name).mix;
-      if (idealLevel(p) == null) { m[3]++; return; }
-      for (let r = 0; r < 3; r++) m[r] += w[r];
-      m[3]++;
-    }));
-    (f.reserves || []).forEach(name => { of(name).reserves++; });
+  earlier.slice(0, GROUP_HISTORY).forEach(function (set) {
+    const could = new Set(), played = new Set();
+    (set.games || []).forEach(function (g) {
+      (g.avail || []).forEach(n => could.add(n));
+      g.players.forEach(function (name) {
+        played.add(name);
+        const p = byName(name), w = fixtureWeights(p, g.level), m = of(name).mix;
+        if (idealLevel(p) != null) for (let r = 0; r < 3; r++) m[r] += w[r];
+        m[3]++;
+      });
+    });
+    could.forEach(n => { if (!played.has(n)) of(n).reserves++; });
   });
   return out;
 }
 
-/* The cheapest assignment in a square cost matrix (rows to columns, one each): the Hungarian method, O(n³).
-   Returns, for each row, its column. */
-function assignMin(c) {
-  const n = c.length, INF = 1e18, u = new Array(n + 1).fill(0), v = new Array(n + 1).fill(0), p = new Array(n + 1).fill(0), way = new Array(n + 1).fill(0);
-  for (let i = 1; i <= n; i++) {
-    p[0] = i;
-    let j0 = 0;
-    const minv = new Array(n + 1).fill(INF), used = new Array(n + 1).fill(false);
-    do {
-      used[j0] = true;
-      const i0 = p[j0];
-      let delta = INF, j1 = 0;
-      for (let j = 1; j <= n; j++) if (!used[j]) {
-        const cur = c[i0 - 1][j - 1] - u[i0] - v[j];
-        if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
-        if (minv[j] < delta) { delta = minv[j]; j1 = j; }
-      }
-      for (let j = 0; j <= n; j++) { if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta; }
-      j0 = j1;
-    } while (p[j0] !== 0);
-    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
-  }
-  const ans = new Array(n);
-  for (let j = 1; j <= n; j++) if (p[j]) ans[p[j] - 1] = j - 1;
-  return ans;
-}
-
-/* players: the available ones ({ name, lo, hi }); games: [{ level, size }]; history: fixtureHistory(...).
-   Returns { games: [[players]], reserves: [players] }. With fewer players than places, the biggest matches give up
-   places first. A cost per player and place: how far their mix would be from their aim, a big cost for a level
-   outside their band (more, the farther), and for a reserve place the reserve turns and matches they have had; then
-   the cheapest assignment of all players to the places, exactly (assignMin), with a little randomness so "Lav ny
-   udtagelse" can differ between equally good drafts. */
-function draftFixtures(players, games, history, seed) {
-  const rand = seededRandom(seed || 1), n = players.length, k = games.length;
-  const sizes = games.map(g => Math.max(0, g.size | 0));
-  while (sizes.reduce((x, y) => x + y, 0) > n) { const big = sizes.indexOf(Math.max(...sizes)); sizes[big]--; }
-  const slots = [];                                          // each place: a match index, or -1 for a reserve
-  sizes.forEach((s, g) => { for (let j = 0; j < s; j++) slots.push(g); });
-  while (slots.length < n) slots.push(-1);
-  const h = name => (history || {})[name] || { mix: [0, 0, 0, 0], reserves: 0 };
-  const cost = players.map(function (p) {                    // cost[i][g] for g = 0..k-1, and cost[i][k] for a reserve place
-    const hist = h(p.name), aim = fixtureAim(p), noise = () => rand() * 1e-3;
-    const row = games.map(function (g) {
-      let c = noise();
+/* A set of matches (e.g. a weekend): who plays which. players: everyone who can play at least one ({ name, lo, hi });
+   games: [{ level, size, avail: [names who can play it] }]; history: fixtureHistory(...). A player only on matches
+   they can play, and on as many as needed – but everyone gets one before anyone gets two. Returns { games: [[players]],
+   reserves: [players] } (reserves: could play, but play none).
+   Solved exactly as a minimum-cost flow: each place filled is worth far more than anything else (so every place that
+   can be filled is); a player on a match costs how far it takes their mix from their aim (25-50-25 over the last 12
+   sets; of several matches the one that suits them best is chosen), and a level more than half a level outside their
+   band costs a lot (more, the farther: a second match for someone who fits is cheaper); a player's first match is
+   cheaper the more reserve turns they have had, and every further match costs more than any difference in the mix. */
+function draftFixtureSet(players, games, history, seed) {
+  const rand = seededRandom(seed || 1), n = players.length, G = games.length;
+  const S = 0, T = G + n + 1, gNode = g => 1 + g, pNode = i => 1 + G + i;
+  const to = [], cap = [], cost = [], next = [], head = new Array(T + 1).fill(-1);
+  const edge = (u, v, c, w) => {
+    to.push(v); cap.push(c); cost.push(w); next.push(head[u]); head[u] = to.length - 1;
+    to.push(u); cap.push(0); cost.push(-w); next.push(head[v]); head[v] = to.length - 1;
+  };
+  const FILL = 1e7, h = name => (history || {})[name] || { mix: [0, 0, 0, 0], reserves: 0 };
+  const placeEdges = games.map(() => []);                   // (edge, player) for each match
+  games.forEach((g, gi) => edge(S, gNode(gi), Math.max(0, g.size | 0), 0));
+  players.forEach(function (p, i) {
+    const hist = h(p.name), aim = fixtureAim(p);
+    games.forEach(function (g, gi) {
+      if ((g.avail || []).indexOf(p.name) === -1) return;    // can't play this one
+      let c = rand() * 1e-3;
       if (idealLevel(p) != null) {
         const w = fixtureWeights(p, g.level);
         for (let r = 0; r < 3; r++) { const d = (hist.mix[r] + w[r]) / (hist.mix[3] + 1) - aim[r]; c += 1000 * d * d; }
       }
-      if (!fixtureFits(p, g.level)) {                        // outside the band: never worth a better mix, and a big miss
-        const far = Math.max(p.lo - FIX_SLACK - g.level, g.level - p.hi - FIX_SLACK);   // far worse than a few small ones
-        c += 2e5 + 4e5 * far * far;
-      }
-      return c;
+      if (!fixtureFits(p, g.level)) { const far = Math.max(p.lo - FIX_SLACK - g.level, g.level - p.hi - FIX_SLACK); c += 2e5 + 4e5 * far * far; }
+      edge(gNode(gi), pNode(i), 1, c - FILL);
+      placeEdges[gi].push([to.length - 2, i]);
     });
-    // a reserve place: each earlier reserve turn weighs more than any match's mix (in turn first), fewer matches a little
-    row.push(2000 * hist.reserves - 200 * hist.mix[3] + noise());
-    return row;
+    const first = -2000 * hist.reserves + 200 * hist.mix[3];  // reserve turns: sooner a match; many matches lately: a little later
+    for (let k = 1; k <= G; k++) edge(pNode(i), T, 1, first + 3000 * (k - 1));
   });
-  // the best assignment of players to places, exactly (each player's cost depends only on their own place)
-  const pick = assignMin(players.map((p, i) => slots.map(sl => cost[i][sl < 0 ? k : sl])));
-  const best = pick.map(j => slots[j]);
-  return { games: games.map((g, gi) => players.filter((p, i) => best[i] === gi)), reserves: players.filter((p, i) => best[i] === -1) };
+  for (;;) {                                                 // successive shortest paths while one lowers the cost
+    const dist = new Array(T + 1).fill(Infinity), inQ = new Array(T + 1).fill(false), prev = new Array(T + 1).fill(-1), q = [S];
+    dist[S] = 0;
+    while (q.length) {
+      const u = q.shift(); inQ[u] = false;
+      for (let e = head[u]; e !== -1; e = next[e]) if (cap[e] > 0 && dist[u] + cost[e] < dist[to[e]] - 1e-9) {
+        dist[to[e]] = dist[u] + cost[e]; prev[to[e]] = e;
+        if (!inQ[to[e]]) { inQ[to[e]] = true; q.push(to[e]); }
+      }
+    }
+    if (!(dist[T] < -1e-9)) break;
+    for (let v = T; v !== S; v = to[prev[v] ^ 1]) { cap[prev[v]]--; cap[prev[v] ^ 1]++; }
+  }
+  const plays = new Array(n).fill(false);
+  const out = placeEdges.map(list => list.filter(([e]) => cap[e] === 0).map(([, i]) => { plays[i] = true; return players[i]; }));
+  return { games: out, reserves: players.filter((p, i) => !plays[i]) };
 }
 
 /* ===================== Training groups (for everyone logged in) =====================
@@ -3839,7 +3843,7 @@ function leaveGroups(proceed) {
   box.querySelector('[data-leave="save"]').focus();
 }
 window.addEventListener("beforeunload", function (e) {   // closing or reloading the app: the browser asks
-  if (unsavedText() || (FIX && FIX.dirty && FIX.draft)) { e.preventDefault(); e.returnValue = ""; }
+  if (unsavedText() || (FIX && FIX.dirty && FIX.touched)) { e.preventDefault(); e.returnValue = ""; }
 });
 
 /* "Tirsdag den 3. november 2026", with "(uden træning)" for groups made in the Grupper tab */
@@ -3882,7 +3886,7 @@ function renderOverview() {
   const mMix = matchMix(mKeys.map(k => data.matches[k].matches), name => skill[name] == null ? NaN : skill[name]);
   const spared = spareCounts(mKeys.map(k => data.matches[k].matches));
   const byNameOv = {}; data.players.forEach(p => { byNameOv[p.name] = p; });
-  const fixHist = fixtureHistory(Object.keys(data.fixtures || {}).sort().reverse().map(k => data.fixtures[k]), name => byNameOv[name] || null);
+  const fixHist = fixtureHistory(setsInOrder(data).map(e => e[1]), name => byNameOv[name] || null);
   const leveled = data.players.filter(p => nivOf(p) != null);   // each player's aim against those in the squad they may be with
   const stats = data.players.map(function (p) {
     let times = 0, last = "";
@@ -4815,7 +4819,7 @@ function grpClick(e) {
    waiting. Only the newest save per training and kind is kept. Until it is sent, the phone's copy of the groups
    already holds it, so reopening Grupper shows it and the next groups build on it. */
 const QUEUE_KEY = "oevGrpQueue";
-const SAVE_ACTIONS = { groups: "saveGroups", signups: "saveSignups", matches: "saveMatches", fixtures: "saveFixtures" };
+const SAVE_ACTIONS = { groups: "saveGroups", signups: "saveSignups", matches: "saveMatches", fixtures: "saveFixtureSet" };
 let QUEUE_SENDING = false, QUEUE_TOLD = false;
 
 function readQueue() {
@@ -4843,11 +4847,10 @@ function applyQueue(data) {
 }
 /* One training's saved groups, matches or signups into the phone's copy; an empty list removes them (as on the server) */
 function putSaved(data, kind, key, names, saved) {
-  if (kind === "fixtures") {                               // the Kampe tab: { games: [{ level, players }], reserves }
+  if (kind === "fixtures") {                               // the Kampe tab: a set { name, games: [{ name, date, level, size, avail, players }] }
     data.fixtures = data.fixtures || {};
-    const anyone = names && ((names.games || []).some(g => g.players.length) || (names.reserves || []).length);
-    if (!anyone) delete data.fixtures[key];
-    else data.fixtures[key] = { saved: saved, games: names.games.map(g => ({ level: g.level, players: g.players.slice() })), reserves: (names.reserves || []).slice() };
+    if (!names || !(names.games || []).length) delete data.fixtures[key];
+    else data.fixtures[key] = { saved: saved, name: names.name || "", games: names.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: g.avail.slice(), players: g.players.slice() })) };
     return;
   }
   const field = kind === "groups" ? "history" : kind === "matches" ? "matches" : "signups";
@@ -4887,7 +4890,7 @@ function sendQueue() {
     }
     if (GRP && GRP.key === x.key && x.kind === "groups" && !GRP.dirty) GRP.saved = res.saved;
     if (GRP && GRP.key === x.key && x.kind === "matches" && !GRP.matchesDirty) GRP.matchesSaved = res.saved;
-    if (x.kind === "fixtures" && FIX && FIX.key === x.key && !FIX.dirty) FIX.saved = res.saved;
+    if (x.kind === "fixtures" && FIX && FIX.id === x.key && !FIX.dirty) FIX.saved = res.saved;
     if (FIX) renderFixtures();
     if (GRP && GRP.data) renderGroups();
     QUEUE_SENDING = false;
@@ -4906,7 +4909,7 @@ function sendQueue() {
     const what = { groups: "grupperne", signups: "de tilmeldte", matches: "kampene", fixtures: "udtagelsen" }[x.kind];
     const text = "Kunne ikke gemme " + what + ": " + String(err && err.message || err);
     if (x.kind === "fixtures") {
-      if (FIX && FIX.key === x.key) { FIX.dirty = true; FIX.msg = text; FIX.bad = true; renderFixtures(); } else showToast(text);
+      if (FIX && FIX.id === x.key) { FIX.dirty = true; FIX.msg = text; FIX.bad = true; renderFixtures(); } else showToast(text);
     } else if (GRP && GRP.key === x.key && GRP.data) {           // on the screen: back to "Ikke gemt", so it can be saved again
       if (x.kind === "groups") GRP.dirty = true;
       if (x.kind === "matches") GRP.matchesDirty = true;
@@ -4995,210 +4998,298 @@ function saveSignupsNow() { saveNow("signups", GRP.data.players.filter(p => GRP.
 /* Saves the matches on the screen (tab Kampe): 25-50-25 builds on the saved matches */
 function saveMatchesNow() { saveNow("matches", GRP.matches.map(m => m.teams.map(t => t.map(p => p.name)))); }
 
-/* ===================== Kampe: players drafted to real matches on a date =====================
-   The Kampe tab: tick who is available on the chosen date ("Hvem er til rådighed?"), set the date's matches (each a
-   level 1–4 and a number of players), and "Lav udtagelse" puts the players on the matches by 25-50-25 (draftFixtures):
-   each player compared with the match by their ideal match level, Fra + a third of the band; only matches at most half
-   a level outside the band; one match each, the rest reserves in turn. Tap a player and then another to swap them (also
-   with a reserve), or "Flyt … hertil". "Gem udtagelse" saves it (tab Holdkampe), and the next drafts build on it. */
-const FIX_GAMES_KEY = "oevFixGames";                       // the matches last set up, as the start for a new date
-function fixDefaultGames() {
-  try {
-    const g = JSON.parse(localStorage.getItem(FIX_GAMES_KEY) || "null");
-    if (Array.isArray(g) && g.length && g.every(x => x.level >= 1 && x.level <= 4 && x.size >= 1)) return g.map(x => ({ level: x.level, size: x.size }));
-  } catch (e) { /* not remembered */ }
-  return [{ level: 2, size: 10 }];
+/* ===================== Kampe: sets of real matches, who can play, who plays =====================
+   The Kampe tab works on a "kampsæt": matches that belong together, e.g. a weekend. Each match has a name, a date, a
+   level 1–4 and a number of players. "Hvem er til rådighed?" is a table: tap a player's box under a match when they
+   can play it. "Lav udtagelse" puts players on the matches by 25-50-25 (draftFixtureSet): only on matches they can play
+   and at most half a level outside their band, as many matches as needed but everyone one before anyone two, and
+   those who can play but get none are the set's reserves (in turn over the season). Players can be swapped, moved or
+   added by hand. "Gem kampsæt" saves the matches, who can play and who plays (tab Kampsæt); a match can be moved to
+   another set. */
+const FIX_GAME_KEY = "oevFixGame";                         // the last match set up, as the start for a new one
+function fixDefaultGame(n) {
+  let g = null;
+  try { g = JSON.parse(localStorage.getItem(FIX_GAME_KEY) || "null"); } catch (e) { /* not remembered */ }
+  return { name: "Kamp " + n, date: todayIso(), level: g && g.level >= 1 && g.level <= 4 ? g.level : 2, size: g && g.size >= 1 ? g.size : 10, avail: new Set(), players: [] };
 }
-function rememberFixGames() {
-  try { localStorage.setItem(FIX_GAMES_KEY, JSON.stringify(FIX.games.map(g => ({ level: g.level, size: g.size })))); } catch (e) { /* not remembered */ }
+function rememberFixGame(g) {
+  try { localStorage.setItem(FIX_GAME_KEY, JSON.stringify({ level: g.level, size: g.size })); } catch (e) { /* not remembered */ }
 }
 
+/* The saved sets, each { saved, name, games: [{ name, date, level, size, avail: [], players: [] }] } (a one-date draft
+   from the app of 20 Nov 2026 still in the phone's copy: shown as a set, as the server does) */
+function fixtureSets(data) {
+  const out = {};
+  Object.keys(data.fixtures || {}).forEach(function (id) {
+    const f = data.fixtures[id];
+    if (f.games && f.games.length && !Array.isArray(f.games[0].avail)) {
+      const date = id.replace(/^d-/, "");
+      out[/^d-/.test(id) ? id : "d-" + id] = { saved: f.saved, name: "Kampe " + date, games: f.games.map((g, i) => ({
+        name: "Kamp " + (i + 1), date: date, level: g.level, size: Math.max(g.players.length, 1), avail: g.players.concat(f.reserves || []), players: g.players.slice() })) };
+    } else out[id] = f;
+  });
+  return out;
+}
+const setFirstDate = s => (s.games.map(g => g.date).filter(Boolean).sort()[0] || "");
+/* Newest first (by the first match's date) */
+function setsInOrder(data) {
+  const sets = fixtureSets(data);
+  return Object.keys(sets).map(id => [id, sets[id]]).sort((a, b) => setFirstDate(b[1]).localeCompare(setFirstDate(a[1])) || b[0].localeCompare(a[0]));
+}
+const setDates = s => { const d = [...new Set(s.games.map(g => g.date).filter(Boolean))].sort(); return d.map(x => shortDate(x)).join(" og "); };
+
 function openFixtures() {
-  const date = document.getElementById("fix-date");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date.value)) date.value = todayIso();
-  readStoredGroups().then(function (c) { if (c) startFixtures(date.value); });
-  fetchGroupData().then(function () { startFixtures(date.value); }, function (err) {
+  readStoredGroups().then(function (c) { if (c) startFixtures(); });
+  fetchGroupData().then(function () { startFixtures(); }, function (err) {
     if (GRP_CACHE) return;                                  // the phone's copy is shown
     if (/LOGIN/.test(String(err && err.message))) requireLogin(function () { showView("fixtures"); });
     else document.getElementById("fix").innerHTML = `<p>Kunne ikke hente spillerne: ${esc(String(err && err.message || err))}</p>`;
   });
 }
-document.getElementById("fix-date").addEventListener("change", function () {
-  if (FIX && FIX.dirty && FIX.draft && !confirm("Udtagelsen er ikke gemt. Skift dato alligevel?")) { this.value = FIX.key; return; }
-  FIX = null;
-  openFixtures();
-});
 
-/* The date's saved draft, if any (else the matches last set up); work already started on this date is kept */
-function startFixtures(key) {
+/* The set on the screen: the one already open (kept while being worked on), else the newest, else a new one */
+function startFixtures(id) {
   if (!GRP_CACHE) return;
   const data = GRP_CACHE.data;
-  if (FIX && FIX.key === key) {
-    if (FIX.data !== data && !FIX.touched) { FIX = null; return startFixtures(key); }   // a newer copy, nothing done yet
+  if (id === undefined && FIX) {
+    if (FIX.data !== data && !FIX.touched) return loadSet(FIX.id, data);
     FIX.data = data; renderFixtures(); return;
   }
-  const saved = (data.fixtures || {})[key];
-  FIX = {
-    key: key, data: data, sel: null, dirty: false, touched: false, msg: "", bad: false, nonce: 0,
-    games: saved ? saved.games.map(g => ({ level: g.level, size: Math.max(g.players.length, 1) })) : fixDefaultGames(),
-    draft: saved ? { games: saved.games.map(g => g.players.slice()), reserves: saved.reserves.slice() } : null,
-    saved: saved ? saved.saved : "",
-    avail: new Set(saved ? [].concat(...saved.games.map(g => g.players), saved.reserves) : [])
-  };
+  const order = setsInOrder(data);
+  if (id === undefined || id === null) id = order.length ? order[0][0] : null;
+  if (id) loadSet(id, data); else newSet(data);
+}
+function loadSet(id, data) {
+  const s = fixtureSets(data)[id];
+  if (!s) return newSet(data);
+  FIX = { id: id, data: data, name: s.name, saved: s.saved, sel: null, dirty: false, touched: false, msg: "", bad: false, nonce: 0,
+          games: s.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: new Set(g.avail), players: g.players.slice() })) };
   renderFixtures();
 }
-const fixPlayers = () => { const by = {}; FIX.data.players.forEach(p => { by[p.name] = p; }); return by; };
+function newSet(data) {
+  FIX = { id: "k" + Date.now().toString(36), data: data, name: "Kampsæt " + shortDate(todayIso()), saved: "", sel: null,
+          dirty: true, touched: false, msg: "", bad: false, nonce: 0, games: [fixDefaultGame(1)] };
+  renderFixtures();
+}
+
+const fixAll = () => { const by = {}; FIX.data.players.forEach(p => { by[p.name] = p; }); return by; };
+const fixAvailAny = () => { const s = new Set(); FIX.games.forEach(g => g.avail.forEach(n => s.add(n))); return s; };
+const fixReserves = () => { const plays = new Set([].concat(...FIX.games.map(g => g.players))); return [...fixAvailAny()].filter(n => !plays.has(n)).sort((a, b) => a.localeCompare(b, "da")); };
+const fixHasDraft = () => FIX.games.some(g => g.players.length);
 
 function makeDraft() {
-  const players = FIX.data.players.filter(p => FIX.avail.has(p.name));
-  if (!players.length) { FIX.msg = "Sæt flueben ved de spillere, der er til rådighed."; FIX.bad = true; renderFixtures(); return; }
-  const by = fixPlayers();
-  const earlier = Object.keys(FIX.data.fixtures || {}).filter(k => k < FIX.key).sort().reverse().map(k => FIX.data.fixtures[k]);
-  const r = draftFixtures(players, FIX.games, fixtureHistory(earlier, name => by[name] || null), hashText(FIX.key + "|udtag|" + (++FIX.nonce)));
-  FIX.draft = { games: r.games.map(g => g.map(p => p.name)), reserves: r.reserves.map(p => p.name) };
+  const by = fixAll(), names = [...fixAvailAny()];
+  if (!names.length) { FIX.msg = "Sæt spillerne til rådighed for kampene først (tabellen ovenfor)."; FIX.bad = true; renderFixtures(); return; }
+  const players = names.map(n => by[n] || { name: n });
+  const earlier = setsInOrder(FIX.data).filter(([id, s]) => id !== FIX.id && setFirstDate(s) <= (setFirstDate(FIX) || "9999")).map(e => e[1]);
+  const r = draftFixtureSet(players, FIX.games.map(g => ({ level: g.level, size: g.size, avail: [...g.avail] })),
+                            fixtureHistory(earlier, n => by[n] || null), hashText(FIX.id + "|udtag|" + (++FIX.nonce)));
+  FIX.games.forEach((g, gi) => { g.players = r.games[gi].map(p => p.name); });
   FIX.dirty = true; FIX.sel = null; FIX.bad = false;
-  const out = r.games.reduce((x, g, gi) => x + g.filter(p => !fixtureFits(p, FIX.games[gi].level)).length, 0);
-  FIX.msg = out ? `${out} ${out === 1 ? "spiller er" : "spillere er"} sat på en kamp mere end et halvt niveau uden for ${out === 1 ? "sit" : "deres"} bånd (markeret med !): der er for få spillere til kampenes niveauer og størrelser. Prøv et andet niveau eller færre spillere i en kamp.` : "";
+  const out = FIX.games.reduce((x, g) => x + g.players.filter(n => !fixtureFits(by[n] || {}, g.level)).length, 0);
+  const short = FIX.games.filter(g => g.players.length < g.size).map(g => `${g.name} mangler ${g.size - g.players.length}`);
+  FIX.msg = [short.length ? short.join(", ") + ": der er ikke flere til rådighed, der kan spille den." : "",
+    out ? `${out} ${out === 1 ? "plads er" : "pladser er"} fyldt med en spiller mere end et halvt niveau uden for sit bånd (markeret med !).` : ""].filter(Boolean).join(" ");
   renderFixtures();
 }
 
-/* Where a name is in the draft: a match index, -1 for the reserves, or null */
-function fixWhere(name) {
-  const gi = FIX.draft.games.findIndex(g => g.indexOf(name) !== -1);
-  return gi !== -1 ? gi : FIX.draft.reserves.indexOf(name) !== -1 ? -1 : null;
-}
-const fixList = at => at === -1 ? FIX.draft.reserves : FIX.draft.games[at];
-
-function saveFixtures() {
-  const payload = { games: FIX.games.map((g, i) => ({ level: g.level, players: (FIX.draft.games[i] || []).slice() })), reserves: FIX.draft.reserves.slice() };
-  if (navigator.onLine && !isAuthed()) { requireLogin(saveFixtures); return; }
-  const q = readQueue().filter(x => !(x.kind === "fixtures" && x.key === FIX.key));
-  q.push({ kind: "fixtures", key: FIX.key, names: payload, at: Date.now() });
+/* Puts a set in the phone's queue (saved at once on the phone, sent in the background) */
+function queueSet(id, payload, data) {
+  const q = readQueue().filter(x => !(x.kind === "fixtures" && x.key === id));
+  q.push({ kind: "fixtures", key: id, names: payload, at: Date.now() });
   writeQueue(q);
-  putSaved(FIX.data, "fixtures", FIX.key, payload, "");
-  if (GRP_CACHE && GRP_CACHE.data === FIX.data) storeGroups();
+  putSaved(data, "fixtures", id, payload, "");
+  if (GRP_CACHE && GRP_CACHE.data === data) storeGroups();
+}
+const fixPayload = () => ({ name: FIX.name, games: FIX.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice() })) });
+function saveFixSet() {
+  if (navigator.onLine && !isAuthed()) { requireLogin(saveFixSet); return; }
+  queueSet(FIX.id, fixPayload(), FIX.data);
   FIX.dirty = false; FIX.saved = ""; FIX.msg = ""; FIX.bad = false;
   renderFixtures();
+  sendQueue();
+}
+/* Moves match gi to another set (to: its id, or "__new"): both sets are saved */
+function moveGame(gi, to) {
+  if (navigator.onLine && !isAuthed()) { requireLogin(function () { moveGame(gi, to); }); return; }
+  const g = FIX.games.splice(gi, 1)[0], plain = { name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice() };
+  const sets = fixtureSets(FIX.data), id = to === "__new" ? "k" + Date.now().toString(36) : to;
+  const target = to === "__new" ? { name: g.name, games: [] } : { name: sets[to].name, games: sets[to].games.map(x => Object.assign({}, x)) };
+  target.games.push(plain);
+  queueSet(id, { name: target.name, games: target.games }, FIX.data);
+  queueSet(FIX.id, fixPayload(), FIX.data);
+  FIX.dirty = false; FIX.sel = null;
+  FIX.msg = `${g.name} er flyttet til ${target.name}.`; FIX.bad = false;
+  if (!FIX.games.length) { FIX = null; startFixtures(id); } else renderFixtures();
   sendQueue();
 }
 
 function renderFixtures() {
   const box = document.getElementById("fix");
   if (!box || !FIX) return;
-  const all = FIX.data.players, by = fixPlayers(), shown = showLevels();
+  const all = FIX.data.players, by = fixAll(), shown = showLevels(), sel = FIX.sel;
   const band = p => shown && p && Number.isFinite(p.lo) ? ` <span class="grp-band">${bandText(p.lo, p.hi)}</span>` : "";
-  const order = all.slice().sort((a, b) => a.name.localeCompare(b.name, "da"));
-  const who = order.map(p => `<label><input type="checkbox" data-favail="${esc(p.name)}"${FIX.avail.has(p.name) ? " checked" : ""}><span>${esc(p.name)}</span>${band(p)}</label>`).join("");
-  const places = FIX.games.reduce((x, g) => x + g.size, 0), n = FIX.avail.size;
-  const setup = FIX.games.map((g, i) => `<div class="fix-game"><span class="fix-gname">Kamp ${i + 1}</span>
-      ${FIX.games.length > 1 ? `<button type="button" class="clearbtn" data-fdel="${i}">Fjern</button>` : ""}
-      <div class="fix-ctl"><span class="grp-hint">Niveau</span><div class="grp-mode" role="group" aria-label="Niveau for kamp ${i + 1}">
+  const order = setsInOrder(FIX.data), isSaved = order.some(e => e[0] === FIX.id);
+  const options = (isSaved ? "" : `<option value="${esc(FIX.id)}" selected>${esc(FIX.name)} (ikke gemt)</option>`) +
+    order.map(([id, s]) => `<option value="${esc(id)}"${id === FIX.id ? " selected" : ""}>${esc(s.name)}${setDates(s) ? " · " + esc(setDates(s)) : ""}</option>`).join("") +
+    `<option value="__new">＋ Nyt kampsæt</option>`;
+  const others = order.filter(e => e[0] !== FIX.id);
+  const setup = FIX.games.map((g, i) => `<div class="fix-game">
+      <input type="text" class="fix-gname" data-gname="${i}" value="${esc(g.name)}" aria-label="Navn på kamp ${i + 1}" maxlength="60">
+      <input type="date" data-gdate="${i}" value="${esc(g.date)}" aria-label="Dato for ${esc(g.name)}">
+      <div class="fix-ctl"><span class="grp-hint">Niveau</span><div class="grp-mode" role="group" aria-label="Niveau for ${esc(g.name)}">
         ${[1, 2, 3, 4].map(l => `<button type="button" data-flevel="${i}:${l}" aria-pressed="${g.level === l}">${l}</button>`).join("")}</div>
-        <span class="grp-step"><button type="button" data-fsize="${i}:-1" aria-label="Færre spillere i kamp ${i + 1}">−</button>
-        <output>${g.size} spillere</output><button type="button" data-fsize="${i}:1" aria-label="Flere spillere i kamp ${i + 1}">+</button></span></div></div>`).join("");
-  const fit = n > places ? `${n - places} ${n - places === 1 ? "bliver reserve" : "bliver reserver"}` : n < places ? `${places - n} ${places - n === 1 ? "plads" : "pladser"} for mange: de største kampe får færre spillere` : "alle pladser fyldt";
+        <span class="grp-step"><button type="button" data-fsize="${i}:-1" aria-label="Færre spillere i ${esc(g.name)}">−</button>
+        <output>${g.size} spillere</output><button type="button" data-fsize="${i}:1" aria-label="Flere spillere i ${esc(g.name)}">+</button></span></div>
+      <div class="fix-ctl"><select data-gmove="${i}" aria-label="Flyt ${esc(g.name)} til et andet kampsæt"><option value="">Flyt til andet kampsæt …</option>
+        ${others.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}</option>`).join("")}<option value="__new">Et nyt kampsæt</option></select>
+        ${FIX.games.length > 1 ? `<button type="button" class="clearbtn" data-fdel="${i}">Fjern kampen</button>` : ""}</div></div>`).join("");
+  const short = g => g.name.length > 9 ? g.name.slice(0, 8) + "…" : g.name;
+  const rows = all.slice().sort((a, b) => a.name.localeCompare(b.name, "da")).map(p => `<tr><th scope="row">${esc(p.name)}${band(p)}</th>` +
+    FIX.games.map((g, gi) => { const on = g.avail.has(p.name); return `<td><button type="button" class="fix-tog" data-fav="${gi}|${esc(p.name)}" aria-pressed="${on}" aria-label="${esc(p.name)} til rådighed for ${esc(g.name)}">${on ? "✓" : ""}</button></td>`; }).join("") + `</tr>`).join("");
+  const table = `<div class="fix-av"><table><thead><tr><th scope="col">Spiller</th>${FIX.games.map((g, gi) =>
+      `<th scope="col"><button type="button" class="fix-colbtn" data-favall="${gi}" title="Alle til eller fra for ${esc(g.name)}">${esc(short(g))}<small>${g.date ? esc(shortDate(g.date)) : ""}</small></button></th>`).join("")}</tr></thead>
+    <tbody>${rows}</tbody><tfoot><tr><th scope="row">Til rådighed</th>${FIX.games.map(g => `<td>${g.avail.size}/${g.size}</td>`).join("")}</tr></tfoot></table></div>`;
+  const anyone = fixAvailAny().size, places = FIX.games.reduce((x, g) => x + g.size, 0);
   let cards = "";
-  if (FIX.draft) {
-    const who2 = FIX.sel;
-    const chip = (name, level) => {
-      const p = by[name] || { name: name }, w = level == null ? null : fixtureWeights(p, level);
-      const out = level != null && !fixtureFits(p, level);
+  if (fixHasDraft()) {
+    const count = {}; FIX.games.forEach(g => g.players.forEach(n => { count[n] = (count[n] || 0) + 1; }));
+    const chip = (name, gi, level) => {
+      const p = by[name] || { name: name }, w = level == null ? null : fixtureWeights(p, level), out = level != null && !fixtureFits(p, level);
       const arrow = !shown || !w || idealLevel(p) == null ? "" : w[0] > 0.5 ? `<span class="grp-arrow" title="Spiller op">↑</span>` : w[2] > 0.5 ? `<span class="grp-arrow" title="Spiller ned">↓</span>` : "";
-      return `<button type="button" class="grp-p${out ? " fix-out" : ""}" data-fp="${esc(name)}" aria-pressed="${who2 === name}"${out ? ` title="Kampens niveau ligger mere end et halvt niveau uden for spillerens bånd"` : ""}>` +
-        `<span class="grp-pname">${arrow}${esc(name)}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}</span>${band(p)}</button>`;
+      return `<button type="button" class="grp-p${out ? " fix-out" : ""}" data-fp="${gi}|${esc(name)}" aria-pressed="${!!sel && sel.name === name && sel.gi === gi}"${out ? ` title="Kampens niveau ligger mere end et halvt niveau uden for spillerens bånd"` : ""}>` +
+        `<span class="grp-pname">${arrow}${esc(name)}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}${count[name] > 1 && gi >= 0 ? ` <small class="fix-x">${count[name]} kampe</small>` : ""}</span>${band(p)}</button>`;
     };
-    const here = at => who2 && fixWhere(who2) !== at ? `<button type="button" class="clearbtn grp-here" data-fto="${at}">Flyt ${esc(who2)} hertil</button>` : "";
+    const tools = gi => {
+      if (!sel) return "";
+      if (sel.gi === gi && gi >= 0) return `<button type="button" class="clearbtn grp-here" data-fout="${gi}">Tag ${esc(sel.name)} ud af kampen</button>`;
+      if (gi < 0 || !FIX.games[gi].avail.has(sel.name) || FIX.games[gi].players.indexOf(sel.name) !== -1) return "";
+      return `<button type="button" class="clearbtn grp-here" data-fto="${gi}">Flyt ${esc(sel.name)} hertil</button>` +
+        (sel.gi >= 0 ? ` <button type="button" class="clearbtn grp-here" data-falso="${gi}">Også ${esc(sel.name)} her</button>` : "");
+    };
     cards = `<div class="grp-list">` + FIX.games.map(function (g, gi) {
-      const names = FIX.draft.games[gi] || [], ideals = names.map(nm => idealLevel(by[nm] || {})).filter(v => v != null);
+      const ideals = g.players.map(n => idealLevel(by[n] || {})).filter(v => v != null);
       const avg = ideals.length ? ideals.reduce((x, y) => x + y, 0) / ideals.length : null;
       const team = !shown || avg == null ? "" : avg < g.level - 0.25 ? `holdet er mere øvet end kampen (gns. ideelt niveau ${nivText(avg)})`
         : avg > g.level + 0.25 ? `holdet er mindre øvet end kampen (gns. ideelt niveau ${nivText(avg)})` : `holdet passer til kampens niveau (gns. ${nivText(avg)})`;
-      return `<div class="grp-card"><div class="grp-head"><strong>Kamp ${gi + 1} · niveau ${g.level}</strong><small>${[names.length + " spillere", team].filter(Boolean).join(" · ")}</small></div>
-        <div class="grp-players">${names.map(nm => chip(nm, g.level)).join("") || '<span class="grp-hint">Ingen spillere</span>'}</div>${here(gi)}</div>`;
-    }).join("") + `<div class="grp-card"><div class="grp-head"><strong>Reserver</strong><small>${FIX.draft.reserves.length} ${FIX.draft.reserves.length === 1 ? "spiller" : "spillere"}</small></div>
-        <div class="grp-players">${FIX.draft.reserves.map(nm => chip(nm, null)).join("") || '<span class="grp-hint">Ingen</span>'}</div>${here(-1)}</div></div>
-      <p class="grp-legend">${shown ? "↑ = spiller op, ↓ = spiller ned (ud fra spillerens ideelle kampniveau); uden pil: samme niveau. " : ""}Tryk på en spiller og derefter på en anden for at bytte dem (også med en reserve), eller på “Flyt … hertil”.</p>
-      <div class="grp-save"><button type="button" class="login-go" data-fact="save"${FIX.dirty ? "" : " disabled"}>Gem udtagelse</button>
-        <span class="grp-hint" role="status">${FIX.dirty ? "Ikke gemt" : waiting("fixtures", FIX.key) ? queuedText() : FIX.saved ? "Gemt " + esc(FIX.saved) : ""}</span></div>`;
+      const missing = g.size - g.players.length;
+      return `<div class="grp-card${missing > 0 ? " bad" : ""}"><div class="grp-head"><strong>${esc(g.name)}</strong><small>${[g.date ? shortDate(g.date) : "", "niveau " + g.level,
+          g.players.length + "/" + g.size + " spillere" + (missing > 0 ? ` · mangler ${missing}` : ""), team].filter(Boolean).join(" · ")}</small></div>
+        <div class="grp-players">${g.players.map(n => chip(n, gi, g.level)).join("") || '<span class="grp-hint">Ingen spillere</span>'}</div>${tools(gi)}</div>`;
+    }).join("") + (() => { const res = fixReserves(); return `<div class="grp-card"><div class="grp-head"><strong>Reserver</strong><small>${res.length} ${res.length === 1 ? "spiller" : "spillere"} til rådighed uden en kamp</small></div>
+        <div class="grp-players">${res.map(n => chip(n, -1, null)).join("") || '<span class="grp-hint">Ingen</span>'}</div></div>`; })() + `</div>
+      <p class="grp-legend">${shown ? "↑ = spiller op, ↓ = spiller ned (ud fra spillerens ideelle kampniveau); uden pil: samme niveau. " : ""}Tryk på en spiller og derefter på en anden for at bytte dem (også med en reserve), eller brug knapperne, der kommer frem. En spiller kan kun komme på kampe, spilleren er til rådighed for.</p>`;
   }
   box.innerHTML = levelsToggleHtml() +
-    `<details class="grp-sec"${FIX.draft ? "" : " open"}><summary>Hvem er til rådighed? ${n} af ${all.length}</summary>
-      ${all.length ? `<div class="grp-who">${who}</div>
-      <div class="grp-row"><button type="button" class="clearbtn" data-fact="all">Alle</button><button type="button" class="clearbtn" data-fact="none">Ingen</button></div>`
-      : `<p>Fanen "Spillere" er tom.</p>`}</details>
+    `<div class="grp-row fix-sets"><span class="grp-hint grp-label">Kampsæt</span><select id="fix-set" aria-label="Vælg kampsæt">${options}</select></div>
     <section class="grp-sec">
-      <h3 style="margin-top:0">Kampe ${esc(keyLabel(FIX.key))}</h3>
+      <div class="grp-row" style="margin-top:0"><input type="text" class="fix-sname" data-fname value="${esc(FIX.name)}" aria-label="Navn på kampsættet" maxlength="60">
+        ${isSaved ? `<button type="button" class="clearbtn" data-fact="delete">Slet kampsæt</button>` : ""}</div>
+      <p class="grp-hint grp-explain">Kampene i et kampsæt (fx en weekend) fordeles samlet: en spiller kan komme på flere af dem, men alle til rådighed får én kamp, før nogen får to.</p>
       ${setup}
-      <div class="grp-row"><button type="button" class="clearbtn" data-fact="add">+ Tilføj kamp</button><span class="grp-hint">${n} til rådighed · ${places} pladser · ${fit}</span></div>
-      <p class="grp-hint grp-explain">Spillerne fordeles efter 25-50-25: over tid spiller hver spiller ca. 25 % af kampene over sit niveau, 50 % på sit niveau og 25 % under. En spillers ideelle kampniveau er Fra plus en tredjedel af båndet (1–3 giver 1,67), og en spiller kommer kun på kampe højst et halvt niveau uden for sit bånd. Hver spiller får højst én kamp på dagen; er der flere end pladser, bliver nogle reserver, og det går på skift. Det bygger på de gemte udtagelser (${Object.keys(FIX.data.fixtures || {}).filter(k => k < FIX.key).length}), så husk “Gem udtagelse”.</p>
-      <div class="grp-row"><button type="button" class="login-go" data-fact="draft">${FIX.draft ? "Lav ny udtagelse" : "Lav udtagelse"}</button></div>
+      <div class="grp-row"><button type="button" class="clearbtn" data-fact="add">+ Tilføj kamp</button></div>
+    </section>
+    <section class="grp-sec">
+      <h3 style="margin-top:0">Hvem er til rådighed?</h3>
+      <p class="grp-hint">Tryk på feltet under en kamp, når spilleren kan spille den. Tryk på kampens navn for at sætte alle til eller fra.</p>
+      ${all.length ? table : `<p>Fanen "Spillere" er tom.</p>`}
+      <p class="grp-hint">${anyone} ${anyone === 1 ? "spiller" : "spillere"} til rådighed for mindst én kamp · ${places} pladser i alt</p>
+      <p class="grp-hint grp-explain">Fordelingen følger 25-50-25: over tid spiller hver spiller ca. 25 % af kampene over sit niveau, 50 % på sit niveau og 25 % under. En spillers ideelle kampniveau er Fra plus en tredjedel af båndet (1–3 giver 1,67), og en spiller kommer kun på kampe højst et halvt niveau uden for sit bånd. Af de kampe, en spiller kan spille, vælges den, der bringer spilleren tættest på sit mål. Reserverne går på skift over sæsonen. Det bygger på de gemte kampsæt, så husk “Gem kampsæt”.</p>
+      <div class="grp-row"><button type="button" class="login-go" data-fact="draft">${fixHasDraft() ? "Lav ny udtagelse" : "Lav udtagelse"}</button></div>
     </section>` +
-    (FIX.msg ? `<p class="grp-msg${FIX.bad ? " bad" : ""}" role="status">${esc(FIX.msg)}</p>` : "") + cards;
+    (FIX.msg ? `<p class="grp-msg${FIX.bad ? " bad" : ""}" role="status">${esc(FIX.msg)}</p>` : "") + cards +
+    `<div class="grp-save"><button type="button" class="login-go" data-fact="save"${FIX.dirty ? "" : " disabled"}>Gem kampsæt</button>
+      <span class="grp-hint" role="status">${FIX.dirty ? "Ikke gemt" : waiting("fixtures", FIX.id) ? queuedText() : FIX.saved ? "Gemt " + esc(FIX.saved) : ""}</span></div>`;
 }
 
-document.getElementById("fix").addEventListener("change", function (e) {
+function fixUnsavedOk() { return !(FIX && FIX.dirty && FIX.touched) || confirm("Kampsættet er ikke gemt. Skift alligevel?"); }
+const fixBox = document.getElementById("fix");
+fixBox.addEventListener("input", function (e) {           // typing: no re-drawing (it would lose the cursor)
   const t = e.target;
-  if (!FIX || t.dataset.favail == null) return;
-  const name = t.dataset.favail;
-  FIX.touched = true;
-  if (t.checked) { FIX.avail.add(name); if (FIX.draft && fixWhere(name) == null) { FIX.draft.reserves.push(name); FIX.dirty = true; } }
-  else {
-    FIX.avail.delete(name);
-    if (FIX.draft && fixWhere(name) != null) { const l = fixList(fixWhere(name)); l.splice(l.indexOf(name), 1); FIX.dirty = true; }
-    if (FIX.sel === name) FIX.sel = null;
+  if (!FIX) return;
+  if (t.dataset.fname != null) { FIX.name = t.value; FIX.dirty = FIX.touched = true; }
+  else if (t.dataset.gname != null) {
+    const i = +t.dataset.gname, g = FIX.games[i];
+    g.name = t.value; FIX.dirty = FIX.touched = true;
+    const col = fixBox.querySelector(`[data-favall="${i}"]`), head = fixBox.querySelectorAll(".grp-list .grp-card strong")[i];
+    if (col && col.firstChild) col.firstChild.textContent = g.name.length > 9 ? g.name.slice(0, 8) + "…" : g.name;   // the name in place
+    if (head) head.textContent = g.name;
   }
-  renderFixtures();
-  document.querySelector("#fix details").open = true;      // keep the list open while ticking
+  else return;
+  const st = fixBox.querySelector(".grp-save .grp-hint"), btn = fixBox.querySelector('[data-fact="save"]');
+  if (st) st.textContent = "Ikke gemt";
+  if (btn) btn.disabled = false;
 });
-document.getElementById("fix").addEventListener("click", function (e) {
+fixBox.addEventListener("change", function (e) {
+  const t = e.target;
+  if (!FIX) return;
+  if (t.id === "fix-set") {
+    const v = t.value;
+    if (!fixUnsavedOk()) { t.value = FIX.id; return; }
+    if (v === "__new") newSet(FIX.data); else loadSet(v, FIX.data);
+  } else if (t.dataset.gdate != null) {
+    FIX.games[+t.dataset.gdate].date = t.value; FIX.dirty = FIX.touched = true; renderFixtures();
+  } else if (t.dataset.gmove != null && t.value) {
+    moveGame(+t.dataset.gmove, t.value);
+  }
+});
+fixBox.addEventListener("click", function (e) {
   const b = e.target.closest("button");
   if (!b || !FIX) return;
   FIX.touched = true;
-  const act = b.dataset.fact;
-  if (act === "all" || act === "none") {
-    FIX.avail = new Set(act === "all" ? FIX.data.players.map(p => p.name) : []);
-    if (FIX.draft) {
-      FIX.draft.games = FIX.draft.games.map(g => g.filter(nm => FIX.avail.has(nm)));
-      FIX.draft.reserves = FIX.draft.reserves.filter(nm => FIX.avail.has(nm));
-      FIX.avail.forEach(nm => { if (fixWhere(nm) == null) FIX.draft.reserves.push(nm); });
-      FIX.dirty = true;
-    }
-    FIX.sel = null; renderFixtures(); document.querySelector("#fix details").open = true;
-  } else if (act === "add") {
-    FIX.games.push({ level: FIX.games[FIX.games.length - 1].level, size: FIX.games[FIX.games.length - 1].size });
-    rememberFixGames();
-    if (FIX.draft) { FIX.draft.games.push([]); FIX.dirty = true; }
-    renderFixtures();
+  const act = b.dataset.fact, by = fixAll(), gameOf = i => FIX.games[i];
+  const changed = () => { FIX.dirty = true; renderFixtures(); };
+  if (act === "add") {
+    const last = FIX.games[FIX.games.length - 1], g = fixDefaultGame(FIX.games.length + 1);
+    if (last) { g.date = last.date; g.level = last.level; g.size = last.size; }
+    FIX.games.push(g); changed();
   } else if (b.dataset.fdel != null) {
-    const i = +b.dataset.fdel;
-    FIX.games.splice(i, 1); rememberFixGames();
-    if (FIX.draft) { const gone = FIX.draft.games.splice(i, 1)[0] || []; FIX.draft.reserves.push(...gone); FIX.dirty = true; }
-    renderFixtures();
+    if (!confirm(`Fjern ${gameOf(+b.dataset.fdel).name} fra kampsættet?`)) return;
+    FIX.games.splice(+b.dataset.fdel, 1); FIX.sel = null; changed();
   } else if (b.dataset.flevel) {
     const [i, l] = b.dataset.flevel.split(":").map(Number);
-    FIX.games[i].level = l; rememberFixGames();
-    if (FIX.draft) FIX.dirty = true;
-    renderFixtures();
+    gameOf(i).level = l; rememberFixGame(gameOf(i)); changed();
   } else if (b.dataset.fsize) {
     const [i, d] = b.dataset.fsize.split(":").map(Number);
-    FIX.games[i].size = Math.max(1, Math.min(30, FIX.games[i].size + d)); rememberFixGames();
-    renderFixtures();
+    gameOf(i).size = Math.max(1, Math.min(30, gameOf(i).size + d)); rememberFixGame(gameOf(i)); changed();
+  } else if (b.dataset.fav) {                              // a box in the table
+    const k = b.dataset.fav.indexOf("|"), gi = +b.dataset.fav.slice(0, k), name = b.dataset.fav.slice(k + 1), g = gameOf(gi);
+    if (g.avail.has(name)) { g.avail.delete(name); g.players = g.players.filter(n => n !== name); if (FIX.sel && FIX.sel.name === name) FIX.sel = null; }
+    else g.avail.add(name);
+    changed();
+  } else if (b.dataset.favall != null) {                   // a match's name: everyone on or off
+    const g = gameOf(+b.dataset.favall), everyone = FIX.data.players.every(p => g.avail.has(p.name));
+    if (everyone) { g.avail = new Set(); g.players = []; } else FIX.data.players.forEach(p => g.avail.add(p.name));
+    changed();
   } else if (act === "draft") {
     makeDraft();
   } else if (act === "save") {
-    saveFixtures();
-  } else if (b.dataset.fto != null) {                      // "Flyt … hertil"
-    const to = +b.dataset.fto, from = fixWhere(FIX.sel);
-    if (from != null) { const l = fixList(from); l.splice(l.indexOf(FIX.sel), 1); fixList(to).push(FIX.sel); FIX.dirty = true; }
-    FIX.sel = null; renderFixtures();
+    saveFixSet();
+  } else if (act === "delete") {
+    if (!confirm(`Slet kampsættet ${FIX.name}? Det kan ikke fortrydes.`)) return;
+    if (navigator.onLine && !isAuthed()) { requireLogin(function () { b.click(); }); return; }
+    queueSet(FIX.id, { name: FIX.name, games: [] }, FIX.data);
+    FIX = null; sendQueue(); startFixtures(null);
+  } else if (b.dataset.fto != null || b.dataset.falso != null) {   // move here / also here
+    const gi = +(b.dataset.fto != null ? b.dataset.fto : b.dataset.falso), s = FIX.sel;
+    if (b.dataset.fto != null && s.gi >= 0) gameOf(s.gi).players = gameOf(s.gi).players.filter(n => n !== s.name);
+    gameOf(gi).players.push(s.name);
+    FIX.sel = null; changed();
+  } else if (b.dataset.fout != null) {                     // out of this match
+    const g = gameOf(+b.dataset.fout); g.players = g.players.filter(n => n !== FIX.sel.name); FIX.sel = null; changed();
   } else if (b.dataset.fp != null) {                       // tap a player: select, or swap with the selected one
-    const name = b.dataset.fp;
-    if (FIX.sel === name) FIX.sel = null;
-    else if (FIX.sel && fixWhere(FIX.sel) !== fixWhere(name)) {
-      const a = fixList(fixWhere(FIX.sel)), c = fixList(fixWhere(name)), i = a.indexOf(FIX.sel), j = c.indexOf(name);
-      a[i] = name; c[j] = FIX.sel; FIX.sel = null; FIX.dirty = true;
-    } else FIX.sel = name;
-    renderFixtures();
+    const k = b.dataset.fp.indexOf("|"), gi = +b.dataset.fp.slice(0, k), name = b.dataset.fp.slice(k + 1), s = FIX.sel;
+    if (s && s.name === name && s.gi === gi) { FIX.sel = null; renderFixtures(); return; }
+    if (!s || s.gi === gi) { FIX.sel = { name: name, gi: gi }; FIX.msg = ""; renderFixtures(); return; }
+    // swap s (in match s.gi, or a reserve) with name (in match gi, or a reserve)
+    const okIn = (who, g) => g < 0 || (gameOf(g).avail.has(who) && gameOf(g).players.indexOf(who) === -1);
+    if (!okIn(s.name, gi) || !okIn(name, s.gi)) {
+      const why = (who, g) => !gameOf(g).avail.has(who) ? `${who} er ikke til rådighed for ${gameOf(g).name}` : `${who} spiller allerede i ${gameOf(g).name}`;
+      FIX.msg = !okIn(s.name, gi) ? why(s.name, gi) : why(name, s.gi); FIX.bad = true; FIX.sel = null; renderFixtures(); return;
+    }
+    if (s.gi >= 0) { const l = gameOf(s.gi).players; l[l.indexOf(s.name)] = name; }
+    if (gi >= 0) { const l = gameOf(gi).players; l[l.indexOf(name)] = s.name; }
+    FIX.sel = null; FIX.msg = ""; changed();
   }
 });
 
