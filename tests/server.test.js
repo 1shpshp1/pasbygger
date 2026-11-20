@@ -163,20 +163,39 @@ test('login answers without writing to the Statistik tab; the 5-minute warm-up w
   assert.equal(again.filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0])).pop()[head.indexOf('Login til Øvelser')], '2');
 });
 
-test('saveFixtures (the Kampe tab): matches with levels, the players on each and the reserves; saving again replaces', () => {
+test('saveFixtures (the app of 20 Nov 2026): one date\'s matches and reserves, shown as a set "d-<date>"', () => {
   const srv = testServer(), t = login(srv);
   const [a] = SESSION_DATES;
   assert.equal(srv.call('saveFixtures', 'nope', a, { games: [], reserves: [] }).error, 'LOGIN');
   assert.equal(srv.call('saveFixtures', t, a, { games: [{ level: 7, players: [] }] }).error, 'The matches could not be read.');
   srv.call('saveFixtures', t, a, { games: [{ level: 1, players: ['Alma', 'Bo'] }, { level: 3, players: [] }], reserves: ['Carl'] });
-  let f = srv.call('getGroupData', t).result.fixtures[a];
-  assert.deepEqual(f.games, [{ level: 1, players: ['Alma', 'Bo'] }, { level: 3, players: [] }], 'a match with nobody is kept');
-  assert.deepEqual(f.reserves, ['Carl']);
+  const f = srv.call('getGroupData', t).result.fixtures['d-' + a];
+  assert.deepEqual(f.games.map(g => [g.level, g.avail, g.players]), [[1, ['Alma', 'Bo', 'Carl'], ['Alma', 'Bo']], [3, ['Carl'], []]]);
   assert.deepEqual(rows(srv, 'Holdkampe').map(r => r.slice(0, 4)), [[a, '1', '1', 'Alma'], [a, '1', '1', 'Bo'], [a, '2', '3', ''], [a, 'Reserve', '', 'Carl']]);
-  srv.call('saveFixtures', t, a, { games: [{ level: 2, players: ['Dina'] }], reserves: [] });
-  assert.deepEqual(srv.call('getGroupData', t).result.fixtures[a].games, [{ level: 2, players: ['Dina'] }]);
   srv.call('saveFixtures', t, a, { games: [], reserves: [] });
-  assert.deepEqual(srv.call('getGroupData', t).result.fixtures, {}, 'nothing in it removes the date');
-  srv.ctx.clearGroupCache();
   assert.deepEqual(srv.call('getGroupData', t).result.fixtures, {});
+});
+test('saveFixtureSet: a set of named matches, who can play each and who plays; old one-date drafts show as sets and move', () => {
+  const srv = testServer(), t = login(srv);
+  const [a, b] = SESSION_DATES;
+  const set = { name: 'Weekend', games: [
+    { name: 'U13 mod Brøndby', date: a, level: 2, size: 8, avail: ['Alma', 'Bo', 'Carl'], players: ['Alma', 'Bo'] },
+    { name: 'U13 mod KB', date: b, level: 3, size: 8, avail: ['Bo', 'Dina'], players: ['Bo', 'Dina'] },
+    { name: 'Ingen endnu', date: b, level: 1, size: 6, avail: [], players: [] }] };
+  assert.equal(srv.call('saveFixtureSet', 'nope', 'k1', set).error, 'LOGIN');
+  srv.call('saveFixtureSet', t, 'k1', set);
+  const got = srv.call('getGroupData', t).result.fixtures.k1;
+  assert.equal(got.name, 'Weekend');
+  assert.deepEqual(got.games.map(g => [g.name, g.date, g.level, g.size, g.avail, g.players]), set.games.map(g => [g.name, g.date, g.level, g.size, g.avail, g.players]));
+  srv.ctx.clearGroupCache();                                  // the same from a fresh read of the tab
+  assert.deepEqual(srv.call('getGroupData', t).result.fixtures.k1.games, got.games);
+  // a draft from the old Holdkampe tab: shown as a set, and moved to Kampsæt when saved again
+  srv.call('saveFixtures', t, a, { games: [{ level: 2, players: ['Emil'] }], reserves: ['Frida'] });
+  const old = srv.call('getGroupData', t).result.fixtures['d-' + a];
+  assert.deepEqual(old.games.map(g => [g.date, g.level, g.avail, g.players]), [[a, 2, ['Emil', 'Frida'], ['Emil']]]);
+  srv.call('saveFixtureSet', t, 'd-' + a, { name: 'Gammel', games: old.games });
+  assert.equal(rows(srv, 'Holdkampe').length, 0, 'gone from Holdkampe');
+  assert.equal(srv.call('getGroupData', t).result.fixtures['d-' + a].name, 'Gammel');
+  srv.call('saveFixtureSet', t, 'k1', { games: [] });
+  assert.equal(srv.call('getGroupData', t).result.fixtures.k1, undefined, 'no matches removes the set');
 });

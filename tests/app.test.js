@@ -640,7 +640,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
 
 test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () => {
   const guest = await phone(testServer(), { loggedIn: false });
-  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe', 'Spilleroversigt']);
+  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe (beta)', 'Spilleroversigt']);
   await guest.click('#nav-overview');
   await guest.waitForSelector('#login-pw');
   const page = await phone(testServer());
@@ -755,56 +755,63 @@ test('Kampe til træning "Grupperne": each group plays its own match, split into
   assert.deepEqual(page.errors, []);
 });
 
-test('Kampe tab: who is available, matches with levels, a 25-50-25 draft with reserves, swaps, saved and in Spilleroversigt', { skip }, async () => {
+test('Kampe tab: a set of named matches, who can play each, a 25-50-25 draft only on those, saved, moved, in Spilleroversigt', { skip }, async () => {
   const guest = await phone(testServer(), { loggedIn: false });
   await guest.click('#nav-fixtures');
   await guest.waitForSelector('#login-pw');                          // needs the code
   const srv = testServer(), page = await phone(srv);
   await page.click('#nav-fixtures');
-  await page.waitForSelector('#fix [data-favail]');
-  assert.equal(await page.locator('#fix-date').inputValue(), await page.evaluate(() => todayIso()));
-  const avail = ['Alma', 'Bo', 'Carl', 'Noah', 'Dina', 'Emil', 'Lucas', 'Frida', 'Pelle', 'Gustav'];
-  for (const n of avail) await page.locator(`#fix [data-favail="${n}"]`).check();
-  assert.match(await page.locator('#fix details summary').innerText(), /Hvem er til rådighed\? 10 af 16/);
-  await page.click('#fix [data-flevel="0:1"]');                      // kamp 1: niveau 1, 4 spillere
-  for (let i = 0; i < 6; i++) await page.click('#fix [data-fsize="0:-1"]');
-  await page.click('#fix [data-fact="add"]');                        // kamp 2: niveau 3, 4 spillere
+  await page.waitForSelector('#fix .fix-sname');
+  await page.fill('#fix .fix-sname', 'Weekend 22.–23. nov.');
+  await page.fill('#fix [data-gname="0"]', 'U13 mod Brøndby');
+  await page.click('#fix [data-flevel="0:1"]');
+  for (let i = 0; i < 6; i++) await page.click('#fix [data-fsize="0:-1"]');   // 4 players
+  await page.click('#fix [data-fact="add"]');
+  await page.fill('#fix [data-gname="1"]', 'U13 mod KB');
+  await page.locator('#fix [data-gname="1"]').dispatchEvent('change');
   await page.click('#fix [data-flevel="1:3"]');
-  assert.match(await page.locator('#fix').innerText(), /10 til rådighed · 8 pladser · 2 bliver reserver/);
+  // who can play: the first match only five, the second everyone
+  for (const n of ['Alma', 'Bo', 'Carl', 'Noah', 'Dina']) await page.click(`#fix [data-fav="0|${n}"]`);
+  await page.click('#fix [data-favall="1"]');
+  assert.match(await page.locator('#fix .fix-av tfoot').innerText(), /Til rådighed\s*5\/4\s*16\/4/);
   await page.click('#fix [data-fact="draft"]');
   const cards = page.locator('#fix .grp-list .grp-card');
   assert.equal(await cards.count(), 3, 'two matches and the reserves');
-  assert.match(await cards.nth(0).locator('.grp-head').innerText(), /Kamp 1 · niveau 1\s*4 spillere · holdet/);
-  assert.match(await cards.nth(2).locator('.grp-head').innerText(), /Reserver\s*2 spillere/);
-  const names = async i => cards.nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.fp));
-  const level1 = await names(0);
-  assert.ok(level1.every(n => ['Alma', 'Bo', 'Carl', 'Noah', 'Dina', 'Emil', 'Lucas', 'Frida', 'Pelle'].includes(n)), 'level 1 only for bands reaching 1,5: ' + level1);
-  // swap a level-1 player with a reserve
-  const r0 = (await names(2))[0];
+  assert.match(await cards.nth(0).locator('.grp-head').innerText(), /U13 mod Brøndby\s*\d+ \w+ · niveau 1 · 4\/4 spillere/);
+  const names = i => cards.nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.fp.split('|')[1]));
+  const first = await names(0);
+  assert.ok(first.every(n => ['Alma', 'Bo', 'Carl', 'Noah', 'Dina'].includes(n)), 'only those who can play it: ' + first);
+  assert.match(await cards.nth(2).locator('.grp-head').innerText(), /Reserver\s*8 spillere til rådighed uden en kamp/);
+  // a swap that isn't allowed: someone only free for the second match into the first
+  const second = await names(1), outsider = second.find(n => !['Alma', 'Bo', 'Carl', 'Noah', 'Dina'].includes(n));
+  await cards.nth(1).locator(`[data-fp="1|${outsider}"]`).click();
   await cards.nth(0).locator('.grp-p').first().click();
-  await cards.nth(2).locator('.grp-p').first().click();
-  assert.ok((await names(0)).includes(r0), 'the reserve now plays');
+  assert.match(await page.locator('#fix .grp-msg').innerText(), new RegExp(outsider + ' er ikke til rådighed for U13 mod Brøndby'));
   await page.click('#fix [data-fact="save"]');
   await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
-  const t = srv.call('login', CODE).result.token, today = await page.evaluate(() => todayIso());
-  const f = srv.call('getGroupData', t).result.fixtures[today];
-  assert.deepEqual(f.games.map(g => [g.level, g.players.length]), [[1, 4], [3, 4]]);
-  assert.equal(f.reserves.length, 2);
-  // reopened: the saved draft comes back
+  const t = srv.call('login', CODE).result.token;
+  const sets = srv.call('getGroupData', t).result.fixtures, id = Object.keys(sets)[0];
+  assert.equal(sets[id].name, 'Weekend 22.–23. nov.');
+  assert.deepEqual(sets[id].games.map(g => [g.name, g.level, g.avail.length, g.players.length]), [['U13 mod Brøndby', 1, 5, 4], ['U13 mod KB', 3, 16, 4]]);
+  // reopened: the set and its draft come back
   await page.reload(); await page.waitForSelector('#sessions .card');
   await page.click('#nav-fixtures');
   await page.waitForSelector('#fix .grp-list');
-  assert.equal(await page.locator('#fix .grp-list .grp-card').count(), 3);
+  assert.match(await page.locator('#fix #fix-set option:checked').innerText(), /Weekend 22\.–23\. nov\./);
   assert.match(await page.locator('#fix .grp-save').innerText(), /Gemt \d/);
+  // the second match moved to a new set: both saved
+  await page.selectOption('#fix [data-gmove="1"]', '__new');
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  const after = srv.call('getGroupData', t).result.fixtures;
+  assert.equal(Object.keys(after).length, 2);
+  assert.deepEqual(after[id].games.map(g => g.name), ['U13 mod Brøndby']);
   // Spilleroversigt: a Kampe section
   await page.click('#nav-overview'); await page.waitForSelector('#ov .ov-p');
-  const one = f.games[0].players[0];
-  const card = page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + one + '$') }) });
-  assert.match(await card.innerText(), /Kampe\s*1 kamp/);
+  const card = page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + first[0] + '$') }) });
+  assert.match(await card.innerText(), /Kampe\s*\d kamp/);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
-
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
