@@ -631,13 +631,19 @@
     .fix-av { overflow-x: auto; margin: 8px 0; }
     .fix-av table { border-collapse: collapse; font-size: 15px; }
     .fix-av th, .fix-av td { padding: 3px 4px; text-align: center; border-bottom: 1px solid #eee9e2; }
-    .fix-av tbody th, .fix-av tfoot th { text-align: left; font-weight: normal; white-space: nowrap; padding-right: 10px; }
+    .fix-av table { width: 100%; }
+    .fix-av tbody th, .fix-av tfoot th { width: 100%; text-align: left; font-weight: normal; padding-right: 8px; overflow-wrap: anywhere; }
     .fix-av tfoot td, .fix-av tfoot th { color: #555555; font-size: 14px; border-bottom: 0; }
     .grp .fix-tog { width: 40px; height: 34px; border: 1px solid #cccccc; border-radius: 8px; background: #ffffff; color: #ffffff; font: inherit; font-weight: bold; cursor: pointer; }
     .grp .fix-tog[aria-pressed="true"] { background: var(--red); border-color: var(--red); }
-    .grp .fix-colbtn { display: flex; flex-direction: column; align-items: center; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--red); font: inherit; font-size: 14px; font-weight: bold; cursor: pointer; }
-    .grp .fix-colbtn small { color: #555555; font-size: 12px; font-weight: normal; }
-    .grp .fix-x { color: #555555; font-size: 12px; }
+    .grp .fix-x { color: var(--red); font-size: 12px; font-weight: bold; }
+    .fix-legend { display: grid; gap: 8px; margin: 8px 0 4px; padding: 0; list-style: none; }
+    .fix-legend li { display: flex; align-items: flex-start; gap: 10px; }
+    .fix-legend .fix-num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--red); color: #ffffff; font-weight: bold; text-align: center; line-height: 28px; }
+    .fix-legend b { display: block; overflow-wrap: anywhere; }
+    .grp .fix-legend small { display: block; color: #555555; font-size: 14px; }
+    .fix-legend .clearbtn { margin-top: 4px; }
+    .fix-av abbr { text-decoration: none; font-weight: bold; color: var(--red); }
     .grp .fix-out { border-color: var(--red); }
     .grp .fix-warn { color: var(--red); font-weight: bold; margin-left: 2px; }
     .ov-bars .ov-aim .ov-less { background: #b3b3b3; }
@@ -784,7 +790,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. nov. 2026 (3)</p>
+<p class="build" id="build">App-version 20. nov. 2026 (4)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -5147,11 +5153,13 @@ function renderFixtures() {
       <div class="fix-ctl"><select data-gmove="${i}" aria-label="Flyt ${esc(g.name)} til et andet kampsæt"><option value="">Flyt til andet kampsæt …</option>
         ${others.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}</option>`).join("")}<option value="__new">Et nyt kampsæt</option></select>
         ${FIX.games.length > 1 ? `<button type="button" class="clearbtn" data-fdel="${i}">Fjern kampen</button>` : ""}</div></div>`).join("");
-  const short = g => g.name.length > 9 ? g.name.slice(0, 8) + "…" : g.name;
   const rows = all.slice().sort((a, b) => a.name.localeCompare(b.name, "da")).map(p => `<tr><th scope="row">${esc(p.name)}${band(p)}</th>` +
     FIX.games.map((g, gi) => { const on = g.avail.has(p.name); return `<td><button type="button" class="fix-tog" data-fav="${gi}|${esc(p.name)}" aria-pressed="${on}" aria-label="${esc(p.name)} til rådighed for ${esc(g.name)}">${on ? "✓" : ""}</button></td>`; }).join("") + `</tr>`).join("");
-  const table = `<div class="fix-av"><table><thead><tr><th scope="col">Spiller</th>${FIX.games.map((g, gi) =>
-      `<th scope="col"><button type="button" class="fix-colbtn" data-favall="${gi}" title="Alle til eller fra for ${esc(g.name)}">${esc(short(g))}<small>${g.date ? esc(shortDate(g.date)) : ""}</small></button></th>`).join("")}</tr></thead>
+  const legend = `<ol class="fix-legend">${FIX.games.map((g, gi) => `<li><span class="fix-num" aria-hidden="true">${gi + 1}</span>
+      <span><b data-gl="${gi}">${esc(g.name)}</b><small>${[g.date ? shortDate(g.date) : "", "niveau " + g.level].filter(Boolean).join(" · ")}</small>
+      ${g.avail.size ? "" : `<button type="button" class="clearbtn" data-favall="${gi}">Sæt alle til rådighed</button>`}</span></li>`).join("")}</ol>`;
+  const table = legend + `<div class="fix-av"><table><thead><tr><th scope="col">Spiller</th>${FIX.games.map((g, gi) =>
+      `<th scope="col"><abbr title="${esc(g.name)}">${gi + 1}</abbr></th>`).join("")}</tr></thead>
     <tbody>${rows}</tbody><tfoot><tr><th scope="row">Til rådighed</th>${FIX.games.map(g => `<td>${g.avail.size}/${g.size}</td>`).join("")}</tr></tfoot></table></div>`;
   const anyone = fixAvailAny().size, places = FIX.games.reduce((x, g) => x + g.size, 0);
   let cards = "";
@@ -5161,7 +5169,7 @@ function renderFixtures() {
       const p = by[name] || { name: name }, w = level == null ? null : fixtureWeights(p, level), out = level != null && !fixtureFits(p, level);
       const arrow = !shown || !w || idealLevel(p) == null ? "" : w[0] > 0.5 ? `<span class="grp-arrow" title="Spiller op">↑</span>` : w[2] > 0.5 ? `<span class="grp-arrow" title="Spiller ned">↓</span>` : "";
       return `<button type="button" class="grp-p${out ? " fix-out" : ""}" data-fp="${gi}|${esc(name)}" aria-pressed="${!!sel && sel.name === name && sel.gi === gi}"${out ? ` title="Kampens niveau ligger mere end et halvt niveau uden for spillerens bånd"` : ""}>` +
-        `<span class="grp-pname">${arrow}${esc(name)}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}${count[name] > 1 && gi >= 0 ? ` <small class="fix-x">${count[name]} kampe</small>` : ""}</span>${band(p)}</button>`;
+        `<span class="grp-pname">${arrow}${esc(name)}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}${count[name] > 1 && gi >= 0 ? ` <small class="fix-x">⚠ ${count[name]} kampe</small>` : ""}</span>${band(p)}</button>`;
     };
     const tools = gi => {
       if (!sel) return "";
@@ -5170,7 +5178,11 @@ function renderFixtures() {
       return `<button type="button" class="clearbtn grp-here" data-fto="${gi}">Flyt ${esc(sel.name)} hertil</button>` +
         (sel.gi >= 0 ? ` <button type="button" class="clearbtn grp-here" data-falso="${gi}">Også ${esc(sel.name)} her</button>` : "");
     };
-    cards = `<div class="grp-list">` + FIX.games.map(function (g, gi) {
+    const multi = Object.keys(count).filter(n => count[n] > 1).sort((a, b) => a.localeCompare(b, "da"));
+    const list = multi.map(n => `${esc(n)} (${FIX.games.map(g => g.players.indexOf(n) !== -1 ? esc(g.name) : null).filter(Boolean).join(" og ")})`);
+    const warn = multi.length ? `<p class="grp-msg bad fix-multi" role="alert">⚠ ${multi.length === 1 ? "En spiller" : multi.length + " spillere"} skal spille mere end én kamp i kampsættet: ${list.join(", ")}. ` +
+      `Er det meningen? Ellers tag ${multi.length === 1 ? "spilleren" : "dem"} ud af en kamp, eller sæt flere til rådighed.</p>` : "";
+    cards = warn + `<div class="grp-list">` + FIX.games.map(function (g, gi) {
       const ideals = g.players.map(n => idealLevel(by[n] || {})).filter(v => v != null);
       const avg = ideals.length ? ideals.reduce((x, y) => x + y, 0) / ideals.length : null;
       const team = !shown || avg == null ? "" : avg < g.level - 0.25 ? `holdet er mere øvet end kampen (gns. ideelt niveau ${nivText(avg)})`
@@ -5194,7 +5206,7 @@ function renderFixtures() {
     </section>
     <section class="grp-sec">
       <h3 style="margin-top:0">Hvem er til rådighed?</h3>
-      <p class="grp-hint">Tryk på feltet under en kamp, når spilleren kan spille den. Tryk på kampens navn for at sætte alle til eller fra.</p>
+      <p class="grp-hint">Tryk på feltet under kampens nummer, når spilleren kan spille den. Et tryk mere fjerner krydset igen.</p>
       ${all.length ? table : `<p>Fanen "Spillere" er tom.</p>`}
       <p class="grp-hint">${anyone} ${anyone === 1 ? "spiller" : "spillere"} til rådighed for mindst én kamp · ${places} pladser i alt</p>
       <p class="grp-hint grp-explain">Fordelingen følger 25-50-25: over tid spiller hver spiller ca. 25 % af kampene over sit niveau, 50 % på sit niveau og 25 % under. En spillers ideelle kampniveau er Fra plus en tredjedel af båndet (1–3 giver 1,67), og en spiller kommer kun på kampe højst et halvt niveau uden for sit bånd. Af de kampe, en spiller kan spille, vælges den, der bringer spilleren tættest på sit mål. Reserverne går på skift over sæsonen. Det bygger på de gemte kampsæt, så husk “Gem kampsæt”.</p>
@@ -5214,8 +5226,8 @@ fixBox.addEventListener("input", function (e) {           // typing: no re-drawi
   else if (t.dataset.gname != null) {
     const i = +t.dataset.gname, g = FIX.games[i];
     g.name = t.value; FIX.dirty = FIX.touched = true;
-    const col = fixBox.querySelector(`[data-favall="${i}"]`), head = fixBox.querySelectorAll(".grp-list .grp-card strong")[i];
-    if (col && col.firstChild) col.firstChild.textContent = g.name.length > 9 ? g.name.slice(0, 8) + "…" : g.name;   // the name in place
+    const col = fixBox.querySelector(`[data-gl="${i}"]`), head = fixBox.querySelectorAll(".grp-list .grp-card strong")[i];
+    if (col) col.textContent = g.name;                    // the name in place
     if (head) head.textContent = g.name;
   }
   else return;
@@ -5260,10 +5272,9 @@ fixBox.addEventListener("click", function (e) {
     if (g.avail.has(name)) { g.avail.delete(name); g.players = g.players.filter(n => n !== name); if (FIX.sel && FIX.sel.name === name) FIX.sel = null; }
     else g.avail.add(name);
     changed();
-  } else if (b.dataset.favall != null) {                   // a match's name: everyone on or off
-    const g = gameOf(+b.dataset.favall), everyone = FIX.data.players.every(p => g.avail.has(p.name));
-    if (everyone) { g.avail = new Set(); g.players = []; } else FIX.data.players.forEach(p => g.avail.add(p.name));
-    changed();
+  } else if (b.dataset.favall != null) {                   // "Sæt alle til rådighed": only for a match nobody is ticked for yet,
+    const g = gameOf(+b.dataset.favall);                   // and it only adds, so no work is ever lost
+    if (!g.avail.size) { FIX.data.players.forEach(p => g.avail.add(p.name)); changed(); }
   } else if (act === "draft") {
     makeDraft();
   } else if (act === "save") {
