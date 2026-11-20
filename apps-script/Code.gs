@@ -1,6 +1,6 @@
 /* The version of this file. Raise it by one whenever Code.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const CODE_VERSION = 3;
+const CODE_VERSION = 4;
 const SHEET_NAME = 'Træningspas Efterår \'26';
 const DRILLS_SHEET = 'Øvelser';   // tab with the drill library
 /* The password for the "Øvelser" tab is NOT written in this file.
@@ -99,7 +99,8 @@ const API_ACTIONS = {
   getGroupData:     function () { return getGroupData.apply(null, arguments); },
   saveGroups:       function () { return saveGroups.apply(null, arguments); },
   saveSignups:      function () { return saveSignups.apply(null, arguments); },
-  saveMatches:      function () { return saveMatches.apply(null, arguments); }
+  saveMatches:      function () { return saveMatches.apply(null, arguments); },
+  saveFixtures:     function () { return saveFixtures.apply(null, arguments); }   // the Kampe tab: players drafted to real matches
 };
 
 function doPost(e) {

@@ -24,12 +24,16 @@
    rows keep the order of the opposite numbers. The saved
    matches are what "Del kampene efter 25-50-25" uses to vary who plays harder and easier matches.
 
+   Tab "Holdkampe": written by the app's Kampe tab ("Gem udtagelse"), one row per player per date (Dato, Kamp,
+   Niveau, Spiller, Gemt): the real matches of a date, their level 1–4, who was drafted to each, and the reserves
+   (Kamp = "Reserve"). The Kampe tab's 25-50-25 and Spilleroversigt build on them.
+
    Speed: the players and groups are kept ready in the cache (cleared when a tab is edited by hand and built again
    by the next request or the 5-minute warm-up). A save from the app only writes that training's rows and updates
    the cached copy, without reading the other tabs. A phone that already has the newest copy only gets "unchanged". */
 /* The version of this file. Raise it by one whenever Grupper.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const GRUPPER_VERSION = 2;
+const GRUPPER_VERSION = 3;
 const PLAYERS_SHEET = 'Spillere';
 const GROUPS_SHEET = 'Grupper';
 const GROUPS_PASSWORD_PROPERTY = 'GROUPS_PASSWORD';
@@ -38,6 +42,8 @@ const SIGNUPS_SHEET = 'Tilmeldte';
 const SIGNUPS_HEADERS = ['Træning', 'Spiller', 'Gemt'];
 const MATCHES_SHEET = 'Kampe';
 const MATCHES_HEADERS = ['Træning', 'Kamp', 'Hold', 'Spiller', 'Gemt'];
+const FIXTURES_SHEET = 'Holdkampe';       // the app's Kampe tab: who was drafted to which real match on a date
+const FIXTURES_HEADERS = ['Dato', 'Kamp', 'Niveau', 'Spiller', 'Gemt'];
 const GROUP_CACHE = 'grp';                 // cache keys grp_meta ("version|pieces") and grp_0, grp_1, …
 
 /* Run once: makes the two tabs (if missing) */
@@ -123,7 +129,8 @@ function buildGroupData_() {
   const rowsOf = (name, width) => { const t = ss.getSheetByName(name); return t && t.getLastRow() > 1 ? t.getRange(2, 1, t.getLastRow() - 1, width).getDisplayValues() : []; };
   const json = JSON.stringify({ players: players, history: groupsFromRows_(rowsOf(GROUPS_SHEET, GROUPS_HEADERS.length)),
                                 signups: signupsFromRows_(rowsOf(SIGNUPS_SHEET, SIGNUPS_HEADERS.length)),
-                                matches: matchesFromRows_(rowsOf(MATCHES_SHEET, MATCHES_HEADERS.length)) });
+                                matches: matchesFromRows_(rowsOf(MATCHES_SHEET, MATCHES_HEADERS.length)),
+                                fixtures: fixturesFromRows_(rowsOf(FIXTURES_SHEET, FIXTURES_HEADERS.length)) });
   return putGroupData_(json);
 }
 
@@ -160,6 +167,24 @@ function matchesFromRows_(rows) {                         // { "2026-11-03": { s
     h.matches[m - 1][team].push(name);
   });
   return matches;
+}
+
+/* Tab "Holdkampe": { "2026-11-22": { saved, games: [{ level, players: [names] }], reserves: [names] } }. A row's Kamp is
+   the match's number (1, 2, …) or "Reserve"; a match with nobody on it keeps one row with an empty Spiller. */
+function fixturesFromRows_(rows) {
+  const fixtures = {};
+  rows.forEach(r => {
+    const key = String(r[0]).trim(), kamp = String(r[1]).trim(), name = String(r[3]).trim();
+    if (!key) return;
+    const f = fixtures[key] = fixtures[key] || { saved: r[4], games: [], reserves: [] };
+    if (/^reserve$/i.test(kamp)) { if (name) f.reserves.push(name); return; }
+    const g = parseInt(kamp, 10), level = parseInt(r[2], 10);
+    if (!(g >= 1)) return;
+    while (f.games.length < g) f.games.push({ level: 2, players: [] });
+    if (level >= 1 && level <= 4) f.games[g - 1].level = level;
+    if (name) f.games[g - 1].players.push(name);
+  });
+  return fixtures;
 }
 
 /* Puts the copy in the cache (in pieces, the meta key last): { json, version } */
@@ -269,6 +294,37 @@ function saveSignups(token, key, names) {
     const rows = names.map(name => String(name).trim()).filter(Boolean).map(name => [key, name, saved]);
     replaceTrainingRows_(signupsSheet_(), SIGNUPS_HEADERS.length, key, rows);
     patchGroupCache_('signups', key, signupsFromRows_(rows));
+    return { ok: true, saved: saved };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Saves the Kampe tab's draft for one date ({ games: [{ level: 1–4, players: [names] }], reserves: [names] }),
+   replacing what was saved for it before. Nothing in it (no players, no reserves) removes it. */
+function saveFixtures(token, key, data) {
+  requireToken_(token);
+  key = String(key || '').trim();
+  if (!key || key.length > 40) throw new Error('No date given.');
+  const games = data && Array.isArray(data.games) ? data.games : null, reserves = data && Array.isArray(data.reserves) ? data.reserves : [];
+  if (!games || games.some(g => !g || !Array.isArray(g.players) || !(+g.level >= 1 && +g.level <= 4))) throw new Error('The matches could not be read.');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const saved = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm');
+    const rows = [];
+    const anyone = games.some(g => g.players.some(n => String(n).trim())) || reserves.some(n => String(n).trim());
+    if (anyone) {
+      games.forEach((g, i) => {
+        const names = g.players.map(n => String(n).trim()).filter(Boolean);
+        if (!names.length) rows.push([key, String(i + 1), String(+g.level), '', saved]);   // a match with nobody: kept
+        names.forEach(name => rows.push([key, String(i + 1), String(+g.level), name, saved]));
+      });
+      reserves.map(n => String(n).trim()).filter(Boolean).forEach(name => rows.push([key, 'Reserve', '', name, saved]));
+    }
+    replaceTrainingRows_(appSheet_(FIXTURES_SHEET, FIXTURES_HEADERS), FIXTURES_HEADERS.length, key, rows);
+    patchGroupCache_('fixtures', key, fixturesFromRows_(rows));
     return { ok: true, saved: saved };
   } finally {
     lock.releaseLock();
