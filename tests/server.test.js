@@ -162,3 +162,21 @@ test('login answers without writing to the Statistik tab; the 5-minute warm-up w
   const again = srv.book['Statistik'].getDataRange().getDisplayValues();
   assert.equal(again.filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0])).pop()[head.indexOf('Login til Øvelser')], '2');
 });
+
+test('saveFixtures (the Kampe tab): matches with levels, the players on each and the reserves; saving again replaces', () => {
+  const srv = testServer(), t = login(srv);
+  const [a] = SESSION_DATES;
+  assert.equal(srv.call('saveFixtures', 'nope', a, { games: [], reserves: [] }).error, 'LOGIN');
+  assert.equal(srv.call('saveFixtures', t, a, { games: [{ level: 7, players: [] }] }).error, 'The matches could not be read.');
+  srv.call('saveFixtures', t, a, { games: [{ level: 1, players: ['Alma', 'Bo'] }, { level: 3, players: [] }], reserves: ['Carl'] });
+  let f = srv.call('getGroupData', t).result.fixtures[a];
+  assert.deepEqual(f.games, [{ level: 1, players: ['Alma', 'Bo'] }, { level: 3, players: [] }], 'a match with nobody is kept');
+  assert.deepEqual(f.reserves, ['Carl']);
+  assert.deepEqual(rows(srv, 'Holdkampe').map(r => r.slice(0, 4)), [[a, '1', '1', 'Alma'], [a, '1', '1', 'Bo'], [a, '2', '3', ''], [a, 'Reserve', '', 'Carl']]);
+  srv.call('saveFixtures', t, a, { games: [{ level: 2, players: ['Dina'] }], reserves: [] });
+  assert.deepEqual(srv.call('getGroupData', t).result.fixtures[a].games, [{ level: 2, players: ['Dina'] }]);
+  srv.call('saveFixtures', t, a, { games: [], reserves: [] });
+  assert.deepEqual(srv.call('getGroupData', t).result.fixtures, {}, 'nothing in it removes the date');
+  srv.ctx.clearGroupCache();
+  assert.deepEqual(srv.call('getGroupData', t).result.fixtures, {});
+});

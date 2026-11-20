@@ -171,9 +171,10 @@ test('Niveau (by Fra, a narrower band first): group 1 holds the most experienced
   for (const [name, aim, why] of [['Alma', '0 / 100 / 0', /Alle, hvis bånd overlapper spillerens, er på samme niveau/], ['Jonas', '0 / 100 / 0', /Alle, hvis bånd overlapper/], ['Frida', '13 / 75 / 13', /overlapper spillerens bånd en del/]]) {
     const c = card(name), goals = await c.locator('.ov-val.ov-goal').allInnerTexts();
     const [u, e, d] = aim.split(' / '), want = `↑\u202f${u} · =\u202f${e} · ↓\u202f${d} %`;
-    assert.deepEqual(goals, [want, want], name + ': the aim for groups and matches, for everyone, with arrows');
-    assert.deepEqual(await c.locator('.ov-lab').allInnerTexts(), ['Faktisk', 'Mål', 'Faktisk', 'Mål'], name + ': each bar says what it is');
-    assert.equal(await c.locator('.ov-aim').count(), 2, name + ': an aim bar under both');
+    assert.deepEqual(goals.slice(0, 2), [want, want], name + ': the aim for groups and training matches, for everyone, with arrows');
+    assert.equal(goals.length, 3, name + ': and one for the Kampe tab (by the ideal match level)');
+    assert.deepEqual(await c.locator('.ov-lab').allInnerTexts(), ['Faktisk', 'Mål', 'Faktisk', 'Mål', 'Faktisk', 'Mål'], name + ': each bar says what it is');
+    assert.equal(await c.locator('.ov-aim').count(), 3, name + ': an aim bar under all three');
     if (why) assert.match(await c.innerText(), why); else assert.doesNotMatch(await c.innerText(), /Ingen er|Få er/);
   }
   // the aim bar's parts are the aim (Frida: 12,5 / 75 / 12,5)
@@ -275,7 +276,7 @@ test('Spilleroversigt: attendance, level mix and most frequent teammates', { ski
   assert.match(text, /Kampe til træning\s*ingen gemte kampe endnu/, 'the matches section is there even without saved matches');
   assert.match(await alma.locator('.ov-bars').first().getAttribute('aria-label'), /^Grupper: \d+ % spiller op, \d+ % samme niveau, \d+ % spiller ned\. Mål: \d+ % spiller op, /);
   assert.match(await card('Frida').innerText(), /Ikke med i gemte grupper endnu/);
-  assert.equal(await card('Frida').locator('.ov-empty').count(), 2, 'no data: an empty bar, the aim still shown');
+  assert.equal(await card('Frida').locator('.ov-empty').count(), 3, 'no data: an empty bar, the aim still shown');
   await page.click('#ov [data-sort="times"]');
   const first = await page.locator('#ov .ov-p strong').first().innerText();
   assert.ok(['Alma', 'Bo', 'Carl', 'Dina', 'Emil'].includes(first), 'sorted by attendance: ' + first);
@@ -639,7 +640,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
 
 test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () => {
   const guest = await phone(testServer(), { loggedIn: false });
-  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Spilleroversigt']);
+  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe', 'Spilleroversigt']);
   await guest.click('#nav-overview');
   await guest.waitForSelector('#login-pw');
   const page = await phone(testServer());
@@ -751,6 +752,56 @@ test('Kampe til træning "Grupperne": each group plays its own match, split into
   await page.waitForFunction(() => /Kampe gemt/.test(document.querySelector('#grp-v .grp-matches').innerText));
   const t = srv.call('login', CODE).result.token;
   assert.deepEqual(Object.values(srv.call('getGroupData', t).result.matches)[0].matches.map(m => m.length), [3, 3, 3]);
+  assert.deepEqual(page.errors, []);
+});
+
+test('Kampe tab: who is available, matches with levels, a 25-50-25 draft with reserves, swaps, saved and in Spilleroversigt', { skip }, async () => {
+  const guest = await phone(testServer(), { loggedIn: false });
+  await guest.click('#nav-fixtures');
+  await guest.waitForSelector('#login-pw');                          // needs the code
+  const srv = testServer(), page = await phone(srv);
+  await page.click('#nav-fixtures');
+  await page.waitForSelector('#fix [data-favail]');
+  assert.equal(await page.locator('#fix-date').inputValue(), await page.evaluate(() => todayIso()));
+  const avail = ['Alma', 'Bo', 'Carl', 'Noah', 'Dina', 'Emil', 'Lucas', 'Frida', 'Pelle', 'Gustav'];
+  for (const n of avail) await page.locator(`#fix [data-favail="${n}"]`).check();
+  assert.match(await page.locator('#fix details summary').innerText(), /Hvem er til rådighed\? 10 af 16/);
+  await page.click('#fix [data-flevel="0:1"]');                      // kamp 1: niveau 1, 4 spillere
+  for (let i = 0; i < 6; i++) await page.click('#fix [data-fsize="0:-1"]');
+  await page.click('#fix [data-fact="add"]');                        // kamp 2: niveau 3, 4 spillere
+  await page.click('#fix [data-flevel="1:3"]');
+  assert.match(await page.locator('#fix').innerText(), /10 til rådighed · 8 pladser · 2 bliver reserver/);
+  await page.click('#fix [data-fact="draft"]');
+  const cards = page.locator('#fix .grp-list .grp-card');
+  assert.equal(await cards.count(), 3, 'two matches and the reserves');
+  assert.match(await cards.nth(0).locator('.grp-head').innerText(), /Kamp 1 · niveau 1\s*4 spillere · holdet/);
+  assert.match(await cards.nth(2).locator('.grp-head').innerText(), /Reserver\s*2 spillere/);
+  const names = async i => cards.nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.fp));
+  const level1 = await names(0);
+  assert.ok(level1.every(n => ['Alma', 'Bo', 'Carl', 'Noah', 'Dina', 'Emil', 'Lucas', 'Frida', 'Pelle'].includes(n)), 'level 1 only for bands reaching 1,5: ' + level1);
+  // swap a level-1 player with a reserve
+  const r0 = (await names(2))[0];
+  await cards.nth(0).locator('.grp-p').first().click();
+  await cards.nth(2).locator('.grp-p').first().click();
+  assert.ok((await names(0)).includes(r0), 'the reserve now plays');
+  await page.click('#fix [data-fact="save"]');
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  const t = srv.call('login', CODE).result.token, today = await page.evaluate(() => todayIso());
+  const f = srv.call('getGroupData', t).result.fixtures[today];
+  assert.deepEqual(f.games.map(g => [g.level, g.players.length]), [[1, 4], [3, 4]]);
+  assert.equal(f.reserves.length, 2);
+  // reopened: the saved draft comes back
+  await page.reload(); await page.waitForSelector('#sessions .card');
+  await page.click('#nav-fixtures');
+  await page.waitForSelector('#fix .grp-list');
+  assert.equal(await page.locator('#fix .grp-list .grp-card').count(), 3);
+  assert.match(await page.locator('#fix .grp-save').innerText(), /Gemt \d/);
+  // Spilleroversigt: a Kampe section
+  await page.click('#nav-overview'); await page.waitForSelector('#ov .ov-p');
+  const one = f.games[0].players[0];
+  const card = page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: new RegExp('^' + one + '$') }) });
+  assert.match(await card.innerText(), /Kampe\s*1 kamp/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
 
