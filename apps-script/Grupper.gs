@@ -9,6 +9,8 @@
      Fra   – the lowest level the player can train at (a number, e.g. 1)
      Til   – the highest level (empty = the same as Fra)
      Aktiv – nej / false / 0 hides the player (for example when they have stopped)
+     Favoritpladser – optional, the positions the player likes, e.g. "Keeper, forsvar"; the Kampe tab spreads the
+             keeper-interested ones (keeper, målmand) so each match has one
    A player without Fra and Til fits in any group.
 
    Tab "Grupper": written by the app, one row per player per training (Træning, Gruppe, Spiller, Gemt).
@@ -34,7 +36,7 @@
    the cached copy, without reading the other tabs. A phone that already has the newest copy only gets "unchanged". */
 /* The version of this file. Raise it by one whenever Grupper.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const GRUPPER_VERSION = 4;
+const GRUPPER_VERSION = 5;
 const PLAYERS_SHEET = 'Spillere';
 const GROUPS_SHEET = 'Grupper';
 const GROUPS_PASSWORD_PROPERTY = 'GROUPS_PASSWORD';
@@ -126,7 +128,10 @@ function buildGroupData_() {
     if (lo === null) lo = hi;
     if (hi === null) hi = lo;
     if (lo !== null && lo > hi) { const t = lo; lo = hi; hi = t; }
-    players.push({ name: name, lo: lo, hi: hi });
+    const player = { name: name, lo: lo, hi: hi };
+    const fav = c('favoritpladser') === -1 ? '' : String(r[c('favoritpladser')]).trim();   // e.g. "Keeper, forsvar"
+    if (fav) player.pos = fav.slice(0, 100);
+    players.push(player);
   });
 
   const rowsOf = (name, width) => { const t = ss.getSheetByName(name); return t && t.getLastRow() > 1 ? t.getRange(2, 1, t.getLastRow() - 1, width).getDisplayValues() : []; };
@@ -191,21 +196,23 @@ function fixturesFromRows_(rows) {
   return fixtures;
 }
 
-/* Tab "Kampsæt": { setId: { saved, name, games: [{ name, date, level, size, avail: [names], players: [names] }] } }. One
-   row per player who can play a match (Udtaget "ja" if they play it), and one with an empty Spiller for the match itself. */
+/* Tab "Kampsæt": { setId: { saved, name, games: [{ name, date, level, size, avail: [names], players: [names], locked:
+   [names] }] } }. One row per player who can play a match (Udtaget "ja" if they play it, "fast" if the coach picked them,
+   so the draft keeps them there), and one with an empty Spiller for the match itself. */
 function setsFromRows_(rows) {
   const sets = {};
   rows.forEach(r => {
     const id = String(r[0]).trim(), g = parseInt(r[2], 10), name = String(r[7]).trim();
     if (!id || !(g >= 1)) return;
     const s = sets[id] = sets[id] || { saved: r[9], name: String(r[1]).trim(), games: [] };
-    while (s.games.length < g) s.games.push({ name: '', date: '', level: 2, size: 10, avail: [], players: [] });
+    while (s.games.length < g) s.games.push({ name: '', date: '', level: 2, size: 10, avail: [], players: [], locked: [] });
     const m = s.games[g - 1], level = parseInt(r[5], 10), size = parseInt(r[6], 10);
     if (String(r[3]).trim()) m.name = String(r[3]).trim();
     if (String(r[4]).trim()) m.date = String(r[4]).trim();
     if (level >= 1 && level <= 4) m.level = level;
     if (size >= 1) m.size = size;
-    if (name) { m.avail.push(name); if (/^ja$/i.test(String(r[8]).trim())) m.players.push(name); }
+    const picked = String(r[8]).trim();                     // "ja": drafted; "fast": picked by the coach (the draft keeps it)
+    if (name) { m.avail.push(name); if (/^(ja|fast)$/i.test(picked)) m.players.push(name); if (/^fast$/i.test(picked)) m.locked.push(name); }
   });
   return sets;
 }
@@ -217,7 +224,7 @@ function oldFixturesAsSets_(old) {
     const f = old[date];
     sets['d-' + date] = { saved: f.saved, name: 'Kampe ' + date, games: f.games.map((g, i) => ({
       name: 'Kamp ' + (i + 1), date: date, level: g.level, size: Math.max(g.players.length, 1),
-      avail: g.players.concat(f.reserves), players: g.players.slice() })) };
+      avail: g.players.concat(f.reserves), players: g.players.slice(), locked: [] })) };
   });
   return sets;
 }
@@ -353,8 +360,8 @@ function saveFixtureSet(token, id, set) {
     games.forEach((g, i) => {
       const base = [id, setName, String(i + 1), String(g.name || '').trim().slice(0, 100), String(g.date || '').trim().slice(0, 10), String(+g.level), String(Math.max(1, +g.size || 1))];
       rows.push(base.concat(['', '', saved]));
-      const plays = new Set(g.players.map(n => String(n).trim()));
-      g.avail.map(n => String(n).trim()).filter(Boolean).forEach(name => rows.push(base.concat([name, plays.has(name) ? 'ja' : '', saved])));
+      const plays = new Set(g.players.map(n => String(n).trim())), fixed = new Set((g.locked || []).map(n => String(n).trim()));
+      g.avail.map(n => String(n).trim()).filter(Boolean).forEach(name => rows.push(base.concat([name, fixed.has(name) ? 'fast' : plays.has(name) ? 'ja' : '', saved])));
     });
     replaceTrainingRows_(appSheet_(SETS_SHEET, SETS_HEADERS), SETS_HEADERS.length, id, rows);
     if (/^d-\d{4}-\d{2}-\d{2}$/.test(id) && ss.getSheetByName(FIXTURES_SHEET)) {

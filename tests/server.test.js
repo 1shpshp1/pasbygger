@@ -112,6 +112,16 @@ test('an edit in the Spillere tab reaches the app (the cache is cleared)', () =>
   assert.equal(srv.call('getGroupData', t).result.players.length, 17);
 });
 
+test('a column Favoritpladser in Spillere reaches the app (only for players who have one)', () => {
+  const srv = testServer(), t = login(srv);
+  srv.book['Spillere'].getRange(1, 5).setValue('Favoritpladser');
+  srv.book['Spillere'].getRange(2, 5).setValue('Keeper, forsvar');
+  srv.ctx.clearGroupCache();
+  const ps = srv.call('getGroupData', t).result.players;
+  assert.deepEqual(ps[0], { name: 'Alma', lo: 1, hi: 2, pos: 'Keeper, forsvar' });
+  assert.deepEqual(ps[1], { name: 'Bo', lo: 1, hi: 2 });
+});
+
 test('a player marked Aktiv = nej is left out', () => {
   const srv = testServer(), t = login(srv);
   srv.book['Spillere'].getRange(1, 4).setValue('Aktiv');
@@ -196,6 +206,11 @@ test('saveFixtureSet: a set of named matches, who can play each and who plays; o
   srv.call('saveFixtureSet', t, 'd-' + a, { name: 'Gammel', games: old.games });
   assert.equal(rows(srv, 'Holdkampe').length, 0, 'gone from Holdkampe');
   assert.equal(srv.call('getGroupData', t).result.fixtures['d-' + a].name, 'Gammel');
+  // a player picked by the coach ("fast"): kept as picked and as playing
+  srv.call('saveFixtureSet', t, 'k1', { name: 'W', games: [{ name: 'A', date: a, level: 2, size: 8, avail: ['Alma', 'Bo'], players: ['Alma', 'Bo'], locked: ['Alma'] }] });
+  const k = srv.call('getGroupData', t).result.fixtures.k1.games[0];
+  assert.deepEqual([k.players, k.locked], [['Alma', 'Bo'], ['Alma']]);
+  assert.deepEqual(rows(srv, 'Kampsæt').filter(r => r[0] === 'k1' && r[7]).map(r => [r[7], r[8]]), [['Alma', 'fast'], ['Bo', 'ja']]);
   srv.call('saveFixtureSet', t, 'k1', { games: [] });
   assert.equal(srv.call('getGroupData', t).result.fixtures.k1, undefined, 'no matches removes the set');
 });

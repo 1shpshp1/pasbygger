@@ -408,3 +408,22 @@ test('Kampsæt: only matches a player can play, everyone one before anyone two, 
   assert.ok(Math.max(...res) - Math.min(...res) <= 1, 'reserve turns spread evenly: ' + res);
   assert.ok(h.k3.mix[0] > 0 && h.k3.mix[2] > 0, 'a middle player gets both: ' + Array.from(h.k3.mix).map(v => v.toFixed(2)));
 });
+
+test('Kampsæt: a keeper-interested player on each match when there are enough; picked players stay where the coach put them', () => {
+  const P = Array.from({ length: 14 }, (_, i) => { const lo = 1 + (i % 7) * 0.4; return { name: 'k' + i, lo: lo, hi: lo + 2, pos: i % 5 === 0 ? 'Keeper, forsvar' : '' }; });
+  const names = P.map(p => p.name);
+  assert.equal(A.isKeeper({ pos: 'Målmand' }), true);
+  assert.equal(A.isKeeper({ pos: 'Angreb' }), false);
+  const games = [{ level: 2, size: 5, avail: names, locked: ['k6'] }, { level: 3, size: 5, avail: names }, { level: 3, size: 4, avail: names }];
+  const r = A.draftFixtureSet(P, games, {}, 1), got = Array.from(r.games, g => Array.from(g));
+  got.forEach((g, gi) => assert.equal(g.filter(p => A.isKeeper(p)).length, 1, `match ${gi + 1}: one keeper-interested (${g.map(p => p.name)})`));
+  assert.ok(got[0].some(p => p.name === 'k6'), 'the picked player stays on their match (even outside their band)');
+  // a picked player who isn't ticked as available is kept too
+  const r2 = A.draftFixtureSet(P, [{ level: 2, size: 3, avail: ['k0', 'k1', 'k2', 'k3'], locked: ['k9'] }], {}, 1);
+  assert.ok(Array.from(r2.games[0], p => p.name).includes('k9'));
+  // only one keeper-interested for two matches: they get one, not both (one match each comes first)
+  const one = P.map(p => Object.assign({}, p, { pos: p.name === 'k0' ? 'Keeper' : '' }));
+  // (level 3: everyone fits, so nobody has to play twice to avoid a level outside the band)
+  const r3 = A.draftFixtureSet(one, [{ level: 3, size: 5, avail: names }, { level: 3, size: 5, avail: names }], {}, 1);
+  assert.equal(Array.from(r3.games).flat().filter(p => p.name === 'k0').length, 1);
+});

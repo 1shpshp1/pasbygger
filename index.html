@@ -636,6 +636,9 @@
     .fix-av tfoot td, .fix-av tfoot th { color: #555555; font-size: 14px; border-bottom: 0; }
     .grp .fix-tog { width: 40px; height: 34px; border: 1px solid #cccccc; border-radius: 8px; background: #ffffff; color: #ffffff; font: inherit; font-weight: bold; cursor: pointer; }
     .grp .fix-tog[aria-pressed="true"] { background: var(--red); border-color: var(--red); }
+    .grp .fix-tog.fix-fast { background: #fbe3e7; border: 2px solid var(--red); }
+    .grp .fix-keeper { margin-left: 3px; }
+    .grp .fix-nokeeper { color: var(--red); font-weight: bold; }
     .grp .fix-x { color: var(--red); font-size: 12px; font-weight: bold; }
     .fix-legend { display: grid; gap: 8px; margin: 8px 0 4px; padding: 0; list-style: none; }
     .fix-legend li { display: flex; align-items: flex-start; gap: 10px; }
@@ -790,7 +793,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 20. nov. 2026 (4)</p>
+<p class="build" id="build">App-version 25. nov. 2026 (1)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -935,7 +938,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKx
 /* The server files this app was made for: each reports its version (CODE_VERSION in Code.gs with the plan,
    GRUPPER_VERSION in Grupper.gs with the players). An older deployed copy gives "Serveren er ikke opdateret" with
    what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
-const SERVER_NEEDS = { code: 5, grupper: 4 };
+const SERVER_NEEDS = { code: 5, grupper: 5 };
 const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
 const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
 function serverOutdated() {
@@ -3556,48 +3559,63 @@ function fixtureHistory(earlier, byName) {
   return out;
 }
 
-/* A set of matches (e.g. a weekend): who plays which. players: everyone who can play at least one ({ name, lo, hi });
-   games: [{ level, size, avail: [names who can play it] }]; history: fixtureHistory(...). A player only on matches
-   they can play, and on as many as needed – but everyone gets one before anyone gets two. Returns { games: [[players]],
-   reserves: [players] } (reserves: could play, but play none).
-   Solved exactly as a minimum-cost flow: each place filled is worth far more than anything else (so every place that
-   can be filled is); a player on a match costs how far it takes their mix from their aim (25-50-25 over the last 12
-   sets; of several matches the one that suits them best is chosen), and a level more than half a level outside their
-   band costs a lot (more, the farther: a second match for someone who fits is cheaper); a player's first match is
-   cheaper the more reserve turns they have had, and every further match costs more than any difference in the mix. */
+/* Keeper-interested: "Favoritpladser" in the Spillere tab mentions keeper or målmand */
+const isKeeper = p => !!p && /keeper|målmand|maalmand|mål/i.test(String(p.pos || ""));
+
+/* A set of matches (e.g. a weekend): who plays which. players: everyone who can play at least one ({ name, lo, hi, pos });
+   games: [{ level, size, avail: [names who can play it], locked: [names the coach picked] }]; history: fixtureHistory(...).
+   Returns { games: [[players]], reserves: [players] } (reserves: could play, but play none).
+   Solved exactly as a minimum-cost flow, in this order of importance:
+     1. a player the coach picked ("Udtaget") stays on that match;
+     2. every place that can be filled is filled, and a player only on matches they can play;
+     3. a level more than half a level outside the band costs a lot (more, the farther);
+     4. everyone gets one match before anyone gets two (a further match costs more than a keeper or the mix);
+     5. each match gets a keeper-interested player if one is free (one place per match counts a keeper extra);
+     6. of several matches, each player gets the one that brings them closest to their 25-50-25 aim; a first match is
+        sooner for those with more reserve turns. */
+const KEEPER_BONUS = 2000;
 function draftFixtureSet(players, games, history, seed) {
   const rand = seededRandom(seed || 1), n = players.length, G = games.length;
-  const S = 0, T = G + n + 1, gNode = g => 1 + g, pNode = i => 1 + G + i;
-  const to = [], cap = [], cost = [], next = [], head = new Array(T + 1).fill(-1);
+  let nodes = 2;
+  const S = 0, T = 1, gT = games.map(() => nodes++), gK = games.map(() => nodes++), gR = games.map(() => nodes++), pN = players.map(() => nodes++);
+  const to = [], cap = [], cost = [], next = [], head = [];
   const edge = (u, v, c, w) => {
-    to.push(v); cap.push(c); cost.push(w); next.push(head[u]); head[u] = to.length - 1;
-    to.push(u); cap.push(0); cost.push(-w); next.push(head[v]); head[v] = to.length - 1;
+    to.push(v); cap.push(c); cost.push(w); next.push(head[u] === undefined ? -1 : head[u]); head[u] = to.length - 1;
+    to.push(u); cap.push(0); cost.push(-w); next.push(head[v] === undefined ? -1 : head[v]); head[v] = to.length - 1;
   };
-  const FILL = 1e7, h = name => (history || {})[name] || { mix: [0, 0, 0, 0], reserves: 0 };
+  const FILL = 1e7, LOCK = 1e9, h = name => (history || {})[name] || { mix: [0, 0, 0, 0], reserves: 0 };
   const placeEdges = games.map(() => []);                   // (edge, player) for each match
-  games.forEach((g, gi) => edge(S, gNode(gi), Math.max(0, g.size | 0), 0));
+  games.forEach(function (g, gi) {
+    edge(S, gT[gi], Math.max(0, g.size | 0, (g.locked || []).length), 0);
+    edge(gT[gi], gK[gi], 1, -KEEPER_BONUS);                 // the keeper place
+    edge(gT[gi], gR[gi], Math.max(0, g.size | 0, (g.locked || []).length), 0);
+  });
   players.forEach(function (p, i) {
-    const hist = h(p.name), aim = fixtureAim(p);
+    const hist = h(p.name), aim = fixtureAim(p), keeper = isKeeper(p);
     games.forEach(function (g, gi) {
-      if ((g.avail || []).indexOf(p.name) === -1) return;    // can't play this one
+      const locked = (g.locked || []).indexOf(p.name) !== -1;
+      if (!locked && (g.avail || []).indexOf(p.name) === -1) return;   // can't play this one
       let c = rand() * 1e-3;
       if (idealLevel(p) != null) {
         const w = fixtureWeights(p, g.level);
         for (let r = 0; r < 3; r++) { const d = (hist.mix[r] + w[r]) / (hist.mix[3] + 1) - aim[r]; c += 1000 * d * d; }
       }
       if (!fixtureFits(p, g.level)) { const far = Math.max(p.lo - FIX_SLACK - g.level, g.level - p.hi - FIX_SLACK); c += 2e5 + 4e5 * far * far; }
-      edge(gNode(gi), pNode(i), 1, c - FILL);
+      const gp = nodes++;                                    // this player on this match: at most once
+      if (keeper) edge(gK[gi], gp, 1, 0);
+      edge(gR[gi], gp, 1, 0);
+      edge(gp, pN[i], 1, c - FILL - (locked ? LOCK : 0));
       placeEdges[gi].push([to.length - 2, i]);
     });
     const first = -2000 * hist.reserves + 200 * hist.mix[3];  // reserve turns: sooner a match; many matches lately: a little later
-    for (let k = 1; k <= G; k++) edge(pNode(i), T, 1, first + 3000 * (k - 1));
+    for (let k = 1; k <= G; k++) edge(pN[i], T, 1, first + 3000 * (k - 1));
   });
   for (;;) {                                                 // successive shortest paths while one lowers the cost
-    const dist = new Array(T + 1).fill(Infinity), inQ = new Array(T + 1).fill(false), prev = new Array(T + 1).fill(-1), q = [S];
+    const dist = new Array(nodes).fill(Infinity), inQ = new Array(nodes).fill(false), prev = new Array(nodes).fill(-1), q = [S];
     dist[S] = 0;
     while (q.length) {
       const u = q.shift(); inQ[u] = false;
-      for (let e = head[u]; e !== -1; e = next[e]) if (cap[e] > 0 && dist[u] + cost[e] < dist[to[e]] - 1e-9) {
+      for (let e = head[u] === undefined ? -1 : head[u]; e !== -1; e = next[e]) if (cap[e] > 0 && dist[u] + cost[e] < dist[to[e]] - 1e-9) {
         dist[to[e]] = dist[u] + cost[e]; prev[to[e]] = e;
         if (!inQ[to[e]]) { inQ[to[e]] = true; q.push(to[e]); }
       }
@@ -4859,7 +4877,7 @@ function putSaved(data, kind, key, names, saved) {
   if (kind === "fixtures") {                               // the Kampe tab: a set { name, games: [{ name, date, level, size, avail, players }] }
     data.fixtures = data.fixtures || {};
     if (!names || !(names.games || []).length) delete data.fixtures[key];
-    else data.fixtures[key] = { saved: saved, name: names.name || "", games: names.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: g.avail.slice(), players: g.players.slice() })) };
+    else data.fixtures[key] = { saved: saved, name: names.name || "", games: names.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: g.avail.slice(), players: g.players.slice(), locked: (g.locked || []).slice() })) };
     return;
   }
   const field = kind === "groups" ? "history" : kind === "matches" ? "matches" : "signups";
@@ -5019,7 +5037,7 @@ const FIX_GAME_KEY = "oevFixGame";                         // the last match set
 function fixDefaultGame(n) {
   let g = null;
   try { g = JSON.parse(localStorage.getItem(FIX_GAME_KEY) || "null"); } catch (e) { /* not remembered */ }
-  return { name: "Kamp " + n, date: todayIso(), level: g && g.level >= 1 && g.level <= 4 ? g.level : 2, size: g && g.size >= 1 ? g.size : 10, avail: new Set(), players: [] };
+  return { name: "Kamp " + n, date: todayIso(), level: g && g.level >= 1 && g.level <= 4 ? g.level : 2, size: g && g.size >= 1 ? g.size : 10, avail: new Set(), players: [], locked: new Set() };
 }
 function rememberFixGame(g) {
   try { localStorage.setItem(FIX_GAME_KEY, JSON.stringify({ level: g.level, size: g.size })); } catch (e) { /* not remembered */ }
@@ -5034,7 +5052,7 @@ function fixtureSets(data) {
     if (f.games && f.games.length && !Array.isArray(f.games[0].avail)) {
       const date = id.replace(/^d-/, "");
       out[/^d-/.test(id) ? id : "d-" + id] = { saved: f.saved, name: "Kampe " + date, games: f.games.map((g, i) => ({
-        name: "Kamp " + (i + 1), date: date, level: g.level, size: Math.max(g.players.length, 1), avail: g.players.concat(f.reserves || []), players: g.players.slice() })) };
+        name: "Kamp " + (i + 1), date: date, level: g.level, size: Math.max(g.players.length, 1), avail: g.players.concat(f.reserves || []), players: g.players.slice(), locked: [] })) };
     } else out[id] = f;
   });
   return out;
@@ -5072,7 +5090,7 @@ function loadSet(id, data) {
   const s = fixtureSets(data)[id];
   if (!s) return newSet(data);
   FIX = { id: id, data: data, name: s.name, saved: s.saved, sel: null, dirty: false, touched: false, msg: "", bad: false, nonce: 0,
-          games: s.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: new Set(g.avail), players: g.players.slice() })) };
+          games: s.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: new Set(g.avail), players: g.players.slice(), locked: new Set(g.locked || []) })) };
   renderFixtures();
 }
 function newSet(data) {
@@ -5091,7 +5109,7 @@ function makeDraft() {
   if (!names.length) { FIX.msg = "Sæt spillerne til rådighed for kampene først (tabellen ovenfor)."; FIX.bad = true; renderFixtures(); return; }
   const players = names.map(n => by[n] || { name: n });
   const earlier = setsInOrder(FIX.data).filter(([id, s]) => id !== FIX.id && setFirstDate(s) <= (setFirstDate(FIX) || "9999")).map(e => e[1]);
-  const r = draftFixtureSet(players, FIX.games.map(g => ({ level: g.level, size: g.size, avail: [...g.avail] })),
+  const r = draftFixtureSet(players, FIX.games.map(g => ({ level: g.level, size: g.size, avail: [...g.avail], locked: [...g.locked] })),
                             fixtureHistory(earlier, n => by[n] || null), hashText(FIX.id + "|udtag|" + (++FIX.nonce)));
   FIX.games.forEach((g, gi) => { g.players = r.games[gi].map(p => p.name); });
   FIX.dirty = true; FIX.sel = null; FIX.bad = false;
@@ -5110,7 +5128,7 @@ function queueSet(id, payload, data) {
   putSaved(data, "fixtures", id, payload, "");
   if (GRP_CACHE && GRP_CACHE.data === data) storeGroups();
 }
-const fixPayload = () => ({ name: FIX.name, games: FIX.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice() })) });
+const fixPayload = () => ({ name: FIX.name, games: FIX.games.map(g => ({ name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice(), locked: [...g.locked] })) });
 function saveFixSet() {
   if (navigator.onLine && !isAuthed()) { requireLogin(saveFixSet); return; }
   queueSet(FIX.id, fixPayload(), FIX.data);
@@ -5121,7 +5139,7 @@ function saveFixSet() {
 /* Moves match gi to another set (to: its id, or "__new"): both sets are saved */
 function moveGame(gi, to) {
   if (navigator.onLine && !isAuthed()) { requireLogin(function () { moveGame(gi, to); }); return; }
-  const g = FIX.games.splice(gi, 1)[0], plain = { name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice() };
+  const g = FIX.games.splice(gi, 1)[0], plain = { name: g.name, date: g.date, level: g.level, size: g.size, avail: [...g.avail], players: g.players.slice(), locked: [...g.locked] };
   const sets = fixtureSets(FIX.data), id = to === "__new" ? "k" + Date.now().toString(36) : to;
   const target = to === "__new" ? { name: g.name, games: [] } : { name: sets[to].name, games: sets[to].games.map(x => Object.assign({}, x)) };
   target.games.push(plain);
@@ -5153,14 +5171,19 @@ function renderFixtures() {
       <div class="fix-ctl"><select data-gmove="${i}" aria-label="Flyt ${esc(g.name)} til et andet kampsæt"><option value="">Flyt til andet kampsæt …</option>
         ${others.map(([id, s]) => `<option value="${esc(id)}">${esc(s.name)}</option>`).join("")}<option value="__new">Et nyt kampsæt</option></select>
         ${FIX.games.length > 1 ? `<button type="button" class="clearbtn" data-fdel="${i}">Fjern kampen</button>` : ""}</div></div>`).join("");
-  const rows = all.slice().sort((a, b) => a.name.localeCompare(b.name, "da")).map(p => `<tr><th scope="row">${esc(p.name)}${band(p)}</th>` +
-    FIX.games.map((g, gi) => { const on = g.avail.has(p.name); return `<td><button type="button" class="fix-tog" data-fav="${gi}|${esc(p.name)}" aria-pressed="${on}" aria-label="${esc(p.name)} til rådighed for ${esc(g.name)}">${on ? "✓" : ""}</button></td>`; }).join("") + `</tr>`).join("");
+  const glove = p => isKeeper(p) ? ` <span class="fix-keeper" title="Keeper-interesseret (${esc(p.pos)})" aria-label="keeper-interesseret">🧤</span>` : "";
+  const rows = all.slice().sort((a, b) => a.name.localeCompare(b.name, "da")).map(p => `<tr><th scope="row">${esc(p.name)}${glove(p)}${band(p)}</th>` +
+    FIX.games.map((g, gi) => {
+      const st = g.locked.has(p.name) ? "fast" : g.avail.has(p.name) ? "on" : "off";
+      return `<td><button type="button" class="fix-tog fix-${st}" data-fav="${gi}|${esc(p.name)}" aria-pressed="${st !== "off"}" aria-label="${esc(p.name)}, ${esc(g.name)}: ${st === "fast" ? "udtaget" : st === "on" ? "til rådighed" : "ikke til rådighed"}">${st === "fast" ? "📌" : st === "on" ? "✓" : ""}</button></td>`;
+    }).join("") + `</tr>`).join("");
   const legend = `<ol class="fix-legend">${FIX.games.map((g, gi) => `<li><span class="fix-num" aria-hidden="true">${gi + 1}</span>
       <span><b data-gl="${gi}">${esc(g.name)}</b><small>${[g.date ? shortDate(g.date) : "", "niveau " + g.level].filter(Boolean).join(" · ")}</small>
       ${g.avail.size ? "" : `<button type="button" class="clearbtn" data-favall="${gi}">Sæt alle til rådighed</button>`}</span></li>`).join("")}</ol>`;
   const table = legend + `<div class="fix-av"><table><thead><tr><th scope="col">Spiller</th>${FIX.games.map((g, gi) =>
       `<th scope="col"><abbr title="${esc(g.name)}">${gi + 1}</abbr></th>`).join("")}</tr></thead>
-    <tbody>${rows}</tbody><tfoot><tr><th scope="row">Til rådighed</th>${FIX.games.map(g => `<td>${g.avail.size}/${g.size}</td>`).join("")}</tr></tfoot></table></div>`;
+    <tbody>${rows}</tbody><tfoot><tr><th scope="row">Til rådighed</th>${FIX.games.map(g => `<td>${g.avail.size}/${g.size}</td>`).join("")}</tr>
+      <tr><th scope="row">📌 Udtaget</th>${FIX.games.map(g => `<td>${g.locked.size}</td>`).join("")}</tr></tfoot></table></div>`;
   const anyone = fixAvailAny().size, places = FIX.games.reduce((x, g) => x + g.size, 0);
   let cards = "";
   if (fixHasDraft()) {
@@ -5169,31 +5192,37 @@ function renderFixtures() {
       const p = by[name] || { name: name }, w = level == null ? null : fixtureWeights(p, level), out = level != null && !fixtureFits(p, level);
       const arrow = !shown || !w || idealLevel(p) == null ? "" : w[0] > 0.5 ? `<span class="grp-arrow" title="Spiller op">↑</span>` : w[2] > 0.5 ? `<span class="grp-arrow" title="Spiller ned">↓</span>` : "";
       return `<button type="button" class="grp-p${out ? " fix-out" : ""}" data-fp="${gi}|${esc(name)}" aria-pressed="${!!sel && sel.name === name && sel.gi === gi}"${out ? ` title="Kampens niveau ligger mere end et halvt niveau uden for spillerens bånd"` : ""}>` +
-        `<span class="grp-pname">${arrow}${esc(name)}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}${count[name] > 1 && gi >= 0 ? ` <small class="fix-x">⚠ ${count[name]} kampe</small>` : ""}</span>${band(p)}</button>`;
+        `<span class="grp-pname">${arrow}${gi >= 0 && FIX.games[gi].locked.has(name) ? `<span title="Udtaget af træneren">📌</span>` : ""}${esc(name)}${isKeeper(p) ? `<span class="fix-keeper" title="Keeper-interesseret">🧤</span>` : ""}${out ? `<span class="fix-warn" aria-hidden="true">!</span>` : ""}${count[name] > 1 && gi >= 0 ? ` <small class="fix-x">⚠ ${count[name]} kampe</small>` : ""}</span>${band(p)}</button>`;
     };
     const tools = gi => {
       if (!sel) return "";
-      if (sel.gi === gi && gi >= 0) return `<button type="button" class="clearbtn grp-here" data-fout="${gi}">Tag ${esc(sel.name)} ud af kampen</button>`;
-      if (gi < 0 || !FIX.games[gi].avail.has(sel.name) || FIX.games[gi].players.indexOf(sel.name) !== -1) return "";
-      return `<button type="button" class="clearbtn grp-here" data-fto="${gi}">Flyt ${esc(sel.name)} hertil</button>` +
-        (sel.gi >= 0 ? ` <button type="button" class="clearbtn grp-here" data-falso="${gi}">Også ${esc(sel.name)} her</button>` : "");
+      if (gi < 0) return sel.gi >= 0 ? `<button type="button" class="clearbtn grp-here" data-fout="${sel.gi}">Flyt ${esc(sel.name)} til reserverne</button>` : "";
+      if (sel.gi === gi) return `<button type="button" class="clearbtn grp-here" data-fout="${gi}">Tag ${esc(sel.name)} ud af kampen</button>`;
+      if (FIX.games[gi].players.indexOf(sel.name) !== -1) return "";
+      const free = FIX.games[gi].avail.has(sel.name);
+      return `<button type="button" class="clearbtn grp-here" data-fto="${gi}">Flyt ${esc(sel.name)} hertil${free ? "" : " (ikke til rådighed)"}</button>` +
+        (sel.gi >= 0 && free ? ` <button type="button" class="clearbtn grp-here" data-falso="${gi}">Også ${esc(sel.name)} her</button>` : "");
     };
     const multi = Object.keys(count).filter(n => count[n] > 1).sort((a, b) => a.localeCompare(b, "da"));
     const list = multi.map(n => `${esc(n)} (${FIX.games.map(g => g.players.indexOf(n) !== -1 ? esc(g.name) : null).filter(Boolean).join(" og ")})`);
     const warn = multi.length ? `<p class="grp-msg bad fix-multi" role="alert">⚠ ${multi.length === 1 ? "En spiller" : multi.length + " spillere"} skal spille mere end én kamp i kampsættet: ${list.join(", ")}. ` +
       `Er det meningen? Ellers tag ${multi.length === 1 ? "spilleren" : "dem"} ud af en kamp, eller sæt flere til rådighed.</p>` : "";
-    cards = warn + `<div class="grp-list">` + FIX.games.map(function (g, gi) {
+    const anyKeeper = all.some(isKeeper);                     // (no warnings while nobody has the column filled in)
+    const noKeeper = anyKeeper ? FIX.games.filter(g => g.players.length && !g.players.some(n => isKeeper(by[n]))).map(g => esc(g.name)) : [];
+    const warnK = noKeeper.length ? `<p class="grp-msg bad fix-nokeeper-msg" role="alert">🧤 Ingen keeper-interesseret i ${noKeeper.join(" og ")}: sæt en keeper-interesseret til rådighed for kampen, eller flyt en derhen.</p>` : "";
+    cards = warn + warnK + `<div class="grp-list">` + FIX.games.map(function (g, gi) {
       const ideals = g.players.map(n => idealLevel(by[n] || {})).filter(v => v != null);
       const avg = ideals.length ? ideals.reduce((x, y) => x + y, 0) / ideals.length : null;
       const team = !shown || avg == null ? "" : avg < g.level - 0.25 ? `holdet er mere øvet end kampen (gns. ideelt niveau ${nivText(avg)})`
         : avg > g.level + 0.25 ? `holdet er mindre øvet end kampen (gns. ideelt niveau ${nivText(avg)})` : `holdet passer til kampens niveau (gns. ${nivText(avg)})`;
-      const missing = g.size - g.players.length;
+      const missing = g.size - g.players.length, keepers = g.players.filter(n => isKeeper(by[n]));
+      const keeperTxt = !anyKeeper ? "" : keepers.length ? "🧤 " + keepers.map(esc).join(", ") : `<span class="fix-nokeeper">ingen keeper-interesseret</span>`;
       return `<div class="grp-card${missing > 0 ? " bad" : ""}"><div class="grp-head"><strong>${esc(g.name)}</strong><small>${[g.date ? shortDate(g.date) : "", "niveau " + g.level,
-          g.players.length + "/" + g.size + " spillere" + (missing > 0 ? ` · mangler ${missing}` : ""), team].filter(Boolean).join(" · ")}</small></div>
+          g.players.length + "/" + g.size + " spillere" + (missing > 0 ? ` · mangler ${missing}` : ""), keeperTxt, team].filter(Boolean).join(" · ")}</small></div>
         <div class="grp-players">${g.players.map(n => chip(n, gi, g.level)).join("") || '<span class="grp-hint">Ingen spillere</span>'}</div>${tools(gi)}</div>`;
     }).join("") + (() => { const res = fixReserves(); return `<div class="grp-card"><div class="grp-head"><strong>Reserver</strong><small>${res.length} ${res.length === 1 ? "spiller" : "spillere"} til rådighed uden en kamp</small></div>
-        <div class="grp-players">${res.map(n => chip(n, -1, null)).join("") || '<span class="grp-hint">Ingen</span>'}</div></div>`; })() + `</div>
-      <p class="grp-legend">${shown ? "↑ = spiller op, ↓ = spiller ned (ud fra spillerens ideelle kampniveau); uden pil: samme niveau. " : ""}Tryk på en spiller og derefter på en anden for at bytte dem (også med en reserve), eller brug knapperne, der kommer frem. En spiller kan kun komme på kampe, spilleren er til rådighed for.</p>`;
+        <div class="grp-players">${res.map(n => chip(n, -1, null)).join("") || '<span class="grp-hint">Ingen</span>'}</div>${tools(-1)}</div>`; })() + `</div>
+      <p class="grp-legend">${shown ? "↑ = spiller op, ↓ = spiller ned (ud fra spillerens ideelle kampniveau); uden pil: samme niveau. " : ""}Tryk på en spiller og derefter på \u201cFlyt … hertil\u201d under en anden kamp (eller på en anden spiller for at bytte dem). 📌 = udtaget af træneren: appen flytter dem ikke.</p>`;
   }
   box.innerHTML = levelsToggleHtml() +
     `<div class="grp-row fix-sets"><span class="grp-hint grp-label">Kampsæt</span><select id="fix-set" aria-label="Vælg kampsæt">${options}</select></div>
@@ -5206,7 +5235,7 @@ function renderFixtures() {
     </section>
     <section class="grp-sec">
       <h3 style="margin-top:0">Hvem er til rådighed?</h3>
-      <p class="grp-hint">Tryk på feltet under kampens nummer, når spilleren kan spille den. Et tryk mere fjerner krydset igen.</p>
+      <p class="grp-hint">Tryk på feltet under kampens nummer: ét tryk = til rådighed (✓), to tryk = udtaget (📌, appen flytter ikke en udtaget spiller), tre tryk = fjernet igen. 🧤 = keeper-interesseret (kolonnen Favoritpladser i fanen Spillere).</p>
       ${all.length ? table : `<p>Fanen "Spillere" er tom.</p>`}
       <p class="grp-hint">${anyone} ${anyone === 1 ? "spiller" : "spillere"} til rådighed for mindst én kamp · ${places} pladser i alt</p>
       <p class="grp-hint grp-explain">Fordelingen følger 25-50-25: over tid spiller hver spiller ca. 25 % af kampene over sit niveau, 50 % på sit niveau og 25 % under. En spillers ideelle kampniveau er Fra plus en tredjedel af båndet (1–3 giver 1,67), og en spiller kommer kun på kampe højst et halvt niveau uden for sit bånd. Af de kampe, en spiller kan spille, vælges den, der bringer spilleren tættest på sit mål. Reserverne går på skift over sæsonen. Det bygger på de gemte kampsæt, så husk “Gem kampsæt”.</p>
@@ -5267,10 +5296,15 @@ fixBox.addEventListener("click", function (e) {
   } else if (b.dataset.fsize) {
     const [i, d] = b.dataset.fsize.split(":").map(Number);
     gameOf(i).size = Math.max(1, Math.min(30, gameOf(i).size + d)); rememberFixGame(gameOf(i)); changed();
-  } else if (b.dataset.fav) {                              // a box in the table
+  } else if (b.dataset.fav) {                              // a box in the table: off → til rådighed → udtaget → off
     const k = b.dataset.fav.indexOf("|"), gi = +b.dataset.fav.slice(0, k), name = b.dataset.fav.slice(k + 1), g = gameOf(gi);
-    if (g.avail.has(name)) { g.avail.delete(name); g.players = g.players.filter(n => n !== name); if (FIX.sel && FIX.sel.name === name) FIX.sel = null; }
-    else g.avail.add(name);
+    if (g.locked.has(name)) {
+      g.locked.delete(name); g.avail.delete(name); g.players = g.players.filter(n => n !== name);
+      if (FIX.sel && FIX.sel.name === name) FIX.sel = null;
+    } else if (g.avail.has(name)) {
+      g.locked.add(name);
+      if (g.players.indexOf(name) === -1) g.players.push(name);   // picked: on the match at once
+    } else g.avail.add(name);
     changed();
   } else if (b.dataset.favall != null) {                   // "Sæt alle til rådighed": only for a match nobody is ticked for yet,
     const g = gameOf(+b.dataset.favall);                   // and it only adds, so no work is ever lost
@@ -5285,12 +5319,20 @@ fixBox.addEventListener("click", function (e) {
     queueSet(FIX.id, { name: FIX.name, games: [] }, FIX.data);
     FIX = null; sendQueue(); startFixtures(null);
   } else if (b.dataset.fto != null || b.dataset.falso != null) {   // move here / also here
-    const gi = +(b.dataset.fto != null ? b.dataset.fto : b.dataset.falso), s = FIX.sel;
-    if (b.dataset.fto != null && s.gi >= 0) gameOf(s.gi).players = gameOf(s.gi).players.filter(n => n !== s.name);
-    gameOf(gi).players.push(s.name);
+    const gi = +(b.dataset.fto != null ? b.dataset.fto : b.dataset.falso), s = FIX.sel, to = gameOf(gi);
+    if (!to.avail.has(s.name)) {                           // not ticked for that match: ask, and tick
+      if (!confirm(`${s.name} er ikke sat til rådighed for ${to.name}. Flyt alligevel og sæt ${s.name} til rådighed for kampen?`)) return;
+      to.avail.add(s.name);
+    }
+    if (b.dataset.fto != null && s.gi >= 0) {
+      const from = gameOf(s.gi);
+      from.players = from.players.filter(n => n !== s.name);
+      if (from.locked.delete(s.name)) to.locked.add(s.name);  // picked: still picked, on the new match
+    }
+    to.players.push(s.name);
     FIX.sel = null; changed();
-  } else if (b.dataset.fout != null) {                     // out of this match
-    const g = gameOf(+b.dataset.fout); g.players = g.players.filter(n => n !== FIX.sel.name); FIX.sel = null; changed();
+  } else if (b.dataset.fout != null) {                     // out of this match (to the reserves if on no other)
+    const g = gameOf(+b.dataset.fout); g.players = g.players.filter(n => n !== FIX.sel.name); g.locked.delete(FIX.sel.name); FIX.sel = null; changed();
   } else if (b.dataset.fp != null) {                       // tap a player: select, or swap with the selected one
     const k = b.dataset.fp.indexOf("|"), gi = +b.dataset.fp.slice(0, k), name = b.dataset.fp.slice(k + 1), s = FIX.sel;
     if (s && s.name === name && s.gi === gi) { FIX.sel = null; renderFixtures(); return; }
@@ -5301,8 +5343,8 @@ fixBox.addEventListener("click", function (e) {
       const why = (who, g) => !gameOf(g).avail.has(who) ? `${who} er ikke til rådighed for ${gameOf(g).name}` : `${who} spiller allerede i ${gameOf(g).name}`;
       FIX.msg = !okIn(s.name, gi) ? why(s.name, gi) : why(name, s.gi); FIX.bad = true; FIX.sel = null; renderFixtures(); return;
     }
-    if (s.gi >= 0) { const l = gameOf(s.gi).players; l[l.indexOf(s.name)] = name; }
-    if (gi >= 0) { const l = gameOf(gi).players; l[l.indexOf(name)] = s.name; }
+    if (s.gi >= 0) { const g = gameOf(s.gi), l = g.players; l[l.indexOf(s.name)] = name; if (g.locked.delete(s.name)) g.locked.add(name); }
+    if (gi >= 0) { const g = gameOf(gi), l = g.players; l[l.indexOf(name)] = s.name; if (g.locked.delete(name)) g.locked.add(s.name); }
     FIX.sel = null; FIX.msg = ""; changed();
   }
 });
