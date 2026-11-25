@@ -826,6 +826,55 @@ test('Kampe tab: a set of named matches, who can play each, a 25-50-25 draft onl
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
+test('Kampe: keepers (Favoritpladser) spread, a picked player (📌) kept, "Flyt hertil" to any match, warnings, saved', { skip }, async () => {
+  const srv = testServer();
+  srv.book['Spillere'].getRange(1, 5).setValue('Favoritpladser');
+  srv.book['Spillere'].getRange(2, 5).setValue('Keeper');                  // Alma
+  srv.book['Spillere'].getRange(10, 5).setValue('Målmand, forsvar');        // Ida
+  const page = await phone(srv);
+  await page.click('#nav-fixtures');
+  await page.waitForSelector('#fix .fix-sname');
+  for (let i = 0; i < 6; i++) await page.click('#fix [data-fsize="0:-1"]');   // Kamp 1: niveau 2, 4 spillere
+  await page.click('#fix [data-fact="add"]');
+  await page.click('#fix [data-flevel="1:3"]');                              // Kamp 2: niveau 3, 4 spillere
+  await page.click('#fix [data-favall="0"]');
+  await page.click('#fix [data-favall="1"]');
+  assert.match(await page.locator('#fix .fix-av tbody tr', { hasText: 'Alma' }).innerText(), /🧤/, 'keeper-interested marked in the table');
+  await page.click('#fix [data-fav="0|Malou"]');                             // ✓ → 📌: Malou picked for Kamp 1
+  assert.equal(await page.locator('#fix [data-fav="0|Malou"]').innerText(), '📌');
+  await page.click('#fix [data-fav="0|Jonas"]'); await page.click('#fix [data-fav="0|Jonas"]');   // ✓ → 📌 → off
+  assert.equal(await page.locator('#fix [data-fav="0|Jonas"]').getAttribute('aria-pressed'), 'false');
+  assert.match(await page.locator('#fix .fix-av tfoot').innerText(), /📌 Udtaget\s*1\s*0/);
+  await page.click('#fix [data-fact="draft"]');
+  const cards = page.locator('#fix .grp-list .grp-card');
+  const names = i => cards.nth(i).locator('.grp-p').evaluateAll(bs => bs.map(b => b.dataset.fp.split('|')[1]));
+  assert.ok((await names(0)).includes('Malou'), 'the picked player is on Kamp 1');
+  assert.match(await cards.nth(0).locator('.grp-head').innerText(), /🧤 (Alma|Ida)/);
+  assert.match(await cards.nth(1).locator('.grp-head').innerText(), /🧤 (Alma|Ida)/, 'one keeper-interested on each match');
+  await page.click('#fix [data-fact="draft"]');                              // a new draft: Malou still there
+  assert.ok((await names(0)).includes('Malou'));
+  // "Flyt hertil" to a match the player isn't ticked for: asks (accepted here) and ticks
+  const where = (await names(1)).includes('Jonas') ? 1 : 2;
+  await cards.nth(where).locator('[data-fp$="|Jonas"]').click();
+  assert.match(await cards.nth(0).locator('[data-fto="0"]').innerText(), /Flyt Jonas hertil \(ikke til rådighed\)/);
+  await cards.nth(0).locator('[data-fto="0"]').click();
+  assert.ok((await names(0)).includes('Jonas'));
+  assert.equal(await page.locator('#fix [data-fav="0|Jonas"]').getAttribute('aria-pressed'), 'true', 'now ticked for Kamp 1');
+  // the keeper-interested out of Kamp 1: a warning
+  for (const k of ['Alma', 'Ida']) {
+    if (!(await names(0)).includes(k)) continue;
+    await cards.nth(0).locator(`[data-fp="0|${k}"]`).click();
+    await cards.nth(0).locator('[data-fout="0"]').click();
+  }
+  assert.match(await page.locator('#fix .fix-nokeeper-msg').innerText(), /Ingen keeper-interesseret i Kamp 1/);
+  await page.click('#fix [data-fact="save"]');
+  await page.waitForFunction(() => !localStorage.getItem('oevGrpQueue'), null, { timeout: 15000 });
+  const t = srv.call('login', CODE).result.token, set = Object.values(srv.call('getGroupData', t).result.fixtures)[0];
+  assert.deepEqual(set.games[0].locked, ['Malou'], 'the pick is saved');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(page.errors, []);
+});
+
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
