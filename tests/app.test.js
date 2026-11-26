@@ -615,7 +615,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
   await openGroups(page);
   assert.equal(await page.locator('#grp-v [data-rule="mix"]').getAttribute('aria-pressed'), 'true', 'an older choice switches once');
   assert.match(await page.locator('#grp-v').innerText(), /25-50-25: over tid er hver spiller ca\. 25 %/);
-  assert.equal(await page.locator('#grp-v input[type=range]').count(), 1, 'one slider: Socialt mix');
+  assert.equal(await page.locator('#grp-v input[type=range]').count(), 2, 'two sliders: Socialt mix and Niveaublanding');
   assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="social"]') }).innerText(), /Socialt mix: 25 %/);
   await page.click('#grp-v [data-act="make"]');
   const sizes = await page.locator('#grp-v .grp-list .grp-card').evaluateAll(cs => cs.map(c => c.querySelectorAll('.grp-p').length));
@@ -668,8 +668,15 @@ test('Socialt mix: a slider for 25-50-25 groups (25 % to begin with), remembered
   await page.click('#grp-v [data-act="make"]');
   assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="social"]') }).innerText(),
     /Med disse grupper er \d+ % af makkerne fra sidste træning sammen igen \(ved ren tilfældighed ca\. 25 %\)/);
+  const even = page.locator('#grp-v [data-act="even"]');             // Niveaublanding, 25 % to begin with
+  assert.equal(await even.inputValue(), '25');
+  assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="even"]') }).innerText(), /Gruppernes gennemsnit \(Fra\) ligger nu \d+,\d niveau fra hinanden/);
+  await even.fill('70');
+  assert.match(await page.locator('#grp-v .grp-slide').filter({ has: page.locator('[data-act="even"]') }).innerText(), /Niveaublanding: 70 %/);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('oevGrpSettings')).even), 70);
   await page.click('#grp-v [data-rule="band"]');                    // Bånd keeps its own slider
   assert.equal(await page.locator('#grp-v [data-act="social"]').count(), 0);
+  assert.equal(await page.locator('#grp-v [data-act="even"]').count(), 0);
   assert.equal(await page.locator('#grp-v [data-act="change"]').count(), 1);
   assert.deepEqual(page.errors, []);
 });
