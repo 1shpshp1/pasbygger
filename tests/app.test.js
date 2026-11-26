@@ -875,6 +875,36 @@ test('Kampe: keepers (Favoritpladser) spread, a picked player (📌) kept, "Flyt
   assert.deepEqual(page.errors, []);
 });
 
+test('Spilleroversigt: a player\'s history – training groups, training matches and matches, newest first, with filters', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  const t = srv.call('login', CODE).result.token;
+  srv.call('saveGroups', t, '2026-10-01', [['Alma', 'Bo', 'Ida'], ['Carl', 'Dina']]);
+  srv.call('saveGroups', t, '2026-10-08', [['Alma', 'Carl'], ['Bo', 'Dina']]);
+  srv.call('saveMatches', t, '2026-10-08', [[['Alma', 'Bo'], ['Carl', 'Dina']]]);
+  srv.call('saveFixtureSet', t, 'k1', { name: 'Weekend', games: [
+    { name: 'U13 mod Brøndby', date: '2026-10-11', level: 2, size: 8, avail: ['Alma', 'Bo'], players: ['Alma'], locked: ['Alma'] }] });
+  srv.call('saveFixtureSet', t, 'k2', { name: 'Næste weekend', games: [
+    { name: 'U13 mod KB', date: '2026-10-18', level: 3, size: 8, avail: ['Alma', 'Bo'], players: ['Bo'] }] });
+  await page.click('#nav-overview'); await page.waitForSelector('#ov .ov-p');
+  await page.locator('#ov .ov-p').filter({ has: page.locator('strong', { hasText: /^Alma$/ }) }).locator('.ov-histbtn').click();
+  await page.waitForSelector('#hist .hist-e');
+  assert.match(await page.locator('#hist').innerText(), /2 træninger · 1 kamp til træning · 1 kamp \(1× reserve\)/);
+  const heads = await page.locator('#hist .hist-e .hist-k').allInnerTexts();
+  assert.deepEqual(heads, ['Kamp', 'Kamp', 'Kamp til træning', 'Træningsgruppe', 'Træningsgruppe'], 'newest first');
+  const text = await page.locator('#hist .hist-list').innerText();
+  assert.match(text, /Reserve \(til rådighed, men ikke på en kamp\)[\s\S]*Næste weekend/);
+  assert.match(text, /U13 mod Brøndby · niveau 2 [↑=↓] · 📌 udtaget af træneren/);
+  assert.match(text, /Kamp 1, hold A [↑=↓][\s\S]*Med Bo [↑=↓][\s\S]*Mod Carl [↑=↓], Dina [↑=↓]/);
+  assert.match(text, /Gruppe 1 med Bo =, Ida ↓/, 'teammates with ↑ = ↓ (Alma 1–2: Bo 1–2 the same, Ida 3–5 less experienced)');
+  await page.click('#hist [data-hk="groups"]');
+  assert.deepEqual(await page.locator('#hist .hist-e .hist-k').allInnerTexts(), ['Træningsgruppe', 'Træningsgruppe']);
+  await page.click('#hist [data-hk="fixtures"]');
+  assert.equal(await page.locator('#hist .hist-e').count(), 2);
+  await page.click('#v-back');                                       // back to Spilleroversigt
+  assert.equal(await page.locator('#ov .ov-p').first().isVisible(), true);
+  assert.deepEqual(page.errors, []);
+});
+
 test('Kampe til sidst in puljer: pools by one rule, matches per pool by another, sizes chosen', { skip }, async () => {
   const page = await phone(testServer());
   await openGroups(page);
