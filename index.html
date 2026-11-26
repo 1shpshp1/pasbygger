@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 26. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 26. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -3114,7 +3114,8 @@ function matchMix(earlier, level) {
 /* 25-50-25 placement: the players into matches of the given sizes, so that each comes closest to 25 % harder,
    50 % own level and 25 % easier over time (see above). lv(p): the level, unknown counted as the average.
    Returns { pools: [[players]] in the order of sizes, cat: { name: 0 | 1 | 2 } for this time }.
-   social (optional, for the groups): { pairs: pairHistory(...), weight } – pairs who were together lately cost. */
+   social (optional, for the groups): { pairs: pairHistory(...), weight, even } – pairs who were together lately cost;
+   even: how much it costs when the groups' average levels differ (so there is no clear top, middle and bottom group). */
 /* How strongly overlap draws players together (see near[] in mixPools). With the coaches' 51 real bands over 40
    trainings (the social mix at 25 %), pairs overlapping 1–24 / 25–49 / 50–74 / 75–100 % of a band are together
    7 / 13 / 24 / 36 % of the times both are there, and bands that don't overlap never; it hardly changes the level mix. */
@@ -3133,6 +3134,7 @@ function mixPools(all, sizes, level, lv, mix, rand, social) {
   const bands = all.map((p, i) => isBand(p) ? p : own[i]);     // compared by band where there is one
   // social mix (groups): together lately costs, the newest training most (social: { pairs: pairHistory(...), weight })
   const met = new Float64Array(n * n), socialW = social && social.weight > 0 ? social.weight : 0;
+  const evenW = social && social.even > 0 ? social.even : 0;   // level mix (groups): uneven group averages cost
   if (socialW) for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j) met[i * n + j] = social.pairs[pairKey(all[i].name, all[j].name)] || 0;
   // overlap pull: two players whose bands overlap more are drawn together a little more often (the "same" share of each
   // for the other, both ways), so A and C who overlap a lot meet more often than A and B who overlap less
@@ -3157,6 +3159,11 @@ function mixPools(all, sizes, level, lv, mix, rand, social) {
     sum.fill(0); cnt.fill(0);
     for (let i = 0; i < n; i++) if (own[i] === own[i]) { sum[a[i]] += own[i]; cnt[a[i]]++; }
     let c = 0;
+    if (evenW) {                                               // each group's average away from everyone's, per player
+      let tot = 0, k = 0;
+      for (let g = 0; g < m; g++) { tot += sum[g]; k += cnt[g]; }
+      for (let g = 0; g < m; g++) if (cnt[g]) { const d = sum[g] / cnt[g] - tot / k; c += evenW * cnt[g] * d * d; }
+    }
     for (let i = 0; i < n; i++) {
       if (own[i] !== own[i] || cnt[a[i]] < 2) continue;
       const others = (sum[a[i]] - own[i]) / (cnt[a[i]] - 1), w = shareOf(i), h = had[i];
@@ -3699,7 +3706,7 @@ function grpSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(GRP_SETTINGS_KEY) || "null"); } catch (e) { /* ignore */ }
   return Object.assign({ mode: "count", count: 4, size: 5, change: 25, rule: "mix", maxDiff: 1, matchMode: "mix", matchCount: 0,
-                        matchPools: 1, poolMode: "max", poolSizeMode: "even", matchSub: [2, 2, 2, 2], matchTeams: [2, 2, 2, 2], social: 25 }, s || {},
+                        matchPools: 1, poolMode: "max", poolSizeMode: "even", matchSub: [2, 2, 2, 2], matchTeams: [2, 2, 2, 2], social: 25, even: 25 }, s || {},
                        s && (s.matchMode === "level" || s.matchMode === "tiers") ? { matchMode: "max" } : {},
                        s && s.rule === "even" ? { rule: "mix" } : {},                     // Lige hold is for the matches only now
                        s && !(s.v >= 2) ? { rule: "mix", matchMode: "mix" } : {});         // 25-50-25 became the default (once)
@@ -3709,7 +3716,8 @@ function saveGrpSettings() {
     localStorage.setItem(GRP_SETTINGS_KEY, JSON.stringify({ v: 2, mode: GRP.mode, count: GRP.count, size: GRP.size, change: GRP.change,
                                                       rule: GRP.rule, maxDiff: GRP.maxDiff, matchMode: GRP.matchMode,
                                                       matchCount: GRP.matchCount, matchPools: GRP.matchPools, poolMode: GRP.poolMode,
-                                                      poolSizeMode: GRP.poolSizeMode, matchSub: GRP.matchSub, matchTeams: GRP.matchTeams, social: GRP.social }));
+                                                      poolSizeMode: GRP.poolSizeMode, matchSub: GRP.matchSub, matchTeams: GRP.matchTeams, social: GRP.social,
+                                                      even: GRP.even }));
   } catch (e) { /* ignore */ }
 }
 
@@ -4243,6 +4251,25 @@ function socialText() {
     "Niveauet går stadig forud: spillere, hvis bånd overlapper meget, kommer oftest sammen.";
 }
 
+/* "Niveaublanding" (25-50-25 groups): how much the groups' average levels should be alike, so the groups aren't a top,
+   a middle and a bottom group. 0 %: only each player's own 25-50-25 counts. The weight is 3200 × (x/100)², 200 at
+   25 %. With the coaches' real bands (12 trainings, 18 players, 4 groups): the group averages differ by 1.9 levels
+   (Fra) at 0 %, 1.15 at 25 % and 0.8 at 50 % or more; the span inside a group grows from 1.1 to 1.6 and 1.8 levels;
+   3 of the 4 most experienced are in one group at 9, 2 and 0 of 12 trainings. The bands must still overlap, but how
+   much they overlap then matters less for how often two are together. */
+const levelMixWeight = () => 3200 * Math.pow((GRP.even == null ? 25 : GRP.even) / 100, 2);
+/* The difference between the highest and the lowest group average (Fra), or null */
+function levelMixSpread() {
+  if (!GRP.groups || GRP.groups.length < 2) return null;
+  const means = GRP.groups.map(g => g.map(p => p.lo).filter(Number.isFinite)).filter(f => f.length).map(f => f.reduce((x, y) => x + y, 0) / f.length);
+  return means.length < 2 ? null : Math.max(...means) - Math.min(...means);
+}
+function levelMixText() {
+  const d = levelMixSpread();
+  return (d == null ? "" : `Gruppernes gennemsnit (Fra) ligger nu ${d.toFixed(1).replace(".", ",")} niveau fra hinanden. `) +
+    "Jo højere, jo mere ens bliver grupperne, så der ikke er en tydelig top-, mellem- og bundgruppe. Til gengæld bliver spændet i hver gruppe større, og hvor meget båndene overlapper, betyder mindre. Båndene skal stadig overlappe.";
+}
+
 function makeNewGroups() {
   const players = presentPlayers();
   if (!players.length) { GRP.msg = "Sæt flueben ved de spillere, der er med."; GRP.bad = true; renderGroups(); return; }
@@ -4253,7 +4280,7 @@ function makeNewGroups() {
     const lv = p => nivOf(p) == null ? mean : nivOf(p);
     const mix = skillMix(earlierGroups().map(e => e.groups), grpSkill());
     const k = Math.max(1, Math.min(groupCount(players.length), players.length));
-    const social = { pairs: pairHistory(earlierGroups().map(e => e.groups)), weight: socialWeight() };
+    const social = { pairs: pairHistory(earlierGroups().map(e => e.groups)), weight: socialWeight(), even: levelMixWeight() };
     GRP.groups = mixPools(players, Array.from(poolSizes(players.length, k, 1)), nivOf, lv, mix, rand, social).pools
       .map(g => g.sort((x, y) => x.name.localeCompare(y.name, "da")));
     GRP.sel = null; GRP.dirty = true;
@@ -4696,6 +4723,11 @@ function renderGroups() {
         <input type="range" min="0" max="100" step="5" value="${GRP.social}" data-act="social" aria-label="Socialt mix">
         <span class="grp-ends" aria-hidden="true"><span>Samme makkere ok</span><span>Nye makkere</span></span>
         <span class="grp-hint grp-explain">${socialText()}</span>
+      </label>
+      <label class="grp-slide"><span>Niveaublanding: ${GRP.even} %</span>
+        <input type="range" min="0" max="100" step="5" value="${GRP.even}" data-act="even" aria-label="Niveaublanding">
+        <span class="grp-ends" aria-hidden="true"><span>Niveaugrupper</span><span>Blandede grupper</span></span>
+        <span class="grp-hint grp-explain">${levelMixText()}</span>
       </label>`
       : `<label class="grp-slide"><span>Ændring fra sidst: ${GRP.change >= 100 ? "bland mest muligt" : GRP.change + " %"}</span>
         <input type="range" min="0" max="100" step="5" value="${GRP.change}" data-act="change">
@@ -4799,6 +4831,11 @@ function grpInput(e) {
     GRP.social = +t.value; saveGrpSettings();
     const label = t.closest(".grp-slide");                     // update the text only: re-drawing would stop the drag
     label.firstElementChild.textContent = "Socialt mix: " + GRP.social + " %";
+    return;
+  }
+  if (t.dataset.act === "even") {
+    GRP.even = +t.value; saveGrpSettings();
+    t.closest(".grp-slide").firstElementChild.textContent = "Niveaublanding: " + GRP.even + " %";
     return;
   }
   if (t.dataset.act === "change") {

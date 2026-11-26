@@ -332,6 +332,31 @@ test('25-50-25 groups really mix: not a sort by level, and the middle players ge
   assert.ok(Math.abs(avg(0) - 0.25) <= 0.07 && Math.abs(avg(2) - 0.25) <= 0.07, `the middle: ↑${avg(0).toFixed(2)} ↓${avg(2).toFixed(2)}`);
 });
 
+test('25-50-25 groups: Niveaublanding makes the group averages alike (no clear top group); the bands must still overlap', () => {
+  const P = Array.from({ length: 30 }, (_, i) => { const lo = 1 + (i * 7 % 30) / 10; return { name: 'q' + i, lo: lo, hi: lo + 1.8 + (i % 4) * 0.25 }; });
+  const lvl = p => p.lo + 0.02 * p.hi, skill = {};
+  P.forEach(p => { skill[p.name] = p; });
+  const fits = (a, b) => Math.min(a.hi, b.hi) > Math.max(a.lo, b.lo);
+  function run(even) {
+    const saved = [];
+    let spread = 0, seed = 5, clash = 0;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let t = 0; t < 12; t++) {
+      const present = P.filter((p, i) => i % 2 === 0 || rand() < 0.3);
+      const gs = Array.from(A.mixPools(present, Array.from(A.poolSizes(present.length, 4, 1)), lvl, lvl, A.skillMix(saved.slice(0, 12), skill),
+        A.seededRandom(t + 1), { pairs: A.pairHistory(saved.slice(0, 12)), weight: 1, even: even }).pools, g => Array.from(g));
+      const means = gs.map(g => g.reduce((x, p) => x + p.lo, 0) / g.length);
+      spread += (Math.max(...means) - Math.min(...means)) / 12;
+      gs.forEach(g => g.forEach(a => g.forEach(b => { if (a !== b && !fits(a, b)) clash++; })));
+      saved.unshift(gs.map(g => g.map(p => p.name)));
+    }
+    return { spread: spread, clash: clash };
+  }
+  const plain = run(0), even = run(200);                   // 200 = the slider at 25 %
+  assert.ok(even.spread < plain.spread * 0.8, `group averages closer: ${plain.spread.toFixed(2)} → ${even.spread.toFixed(2)}`);
+  assert.equal(even.clash, 0, 'bands still overlap in every group');
+});
+
 test('25-50-25 groups: more overlap means more often together; the social mix lowers repeated teammates', () => {
   // bands like the coaches' (about two levels wide), 30 players, a steady core and some who come and go
   const P = Array.from({ length: 30 }, (_, i) => { const lo = 1 + (i * 7 % 30) / 10; return { name: 'q' + i, lo: lo, hi: lo + 1.8 + (i % 4) * 0.25 }; });
