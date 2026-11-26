@@ -605,6 +605,16 @@
     .ov-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
     .grp .ov-head strong { font-size: 18px; }
     .grp .ov-seen { margin-left: auto; color: #555555; font-size: 14px; }
+    .grp .ov-name { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: #cccccc; text-underline-offset: 3px; }
+    .grp .ov-histbtn { margin-top: 8px; }
+    .hist-list { display: grid; gap: 8px; margin-top: 12px; }
+    .hist-e { padding: 10px 12px; border: 1px solid #e3e3e3; border-radius: 10px; background: #ffffff; }
+    .hist-e.hist-res { background: #f7f5f2; }
+    .hist-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+    .grp .hist-k { margin-left: auto; color: #555555; font-size: 13px; }
+    .grp .hist-e p { margin: 4px 0 0; font-size: 15px; }
+    .grp .hist-c { color: var(--red); font-weight: bold; }
+    .grp .hist-mix, .grp .hist-set { color: #555555; font-size: 14px; }
     .ov-bar { display: flex; height: 10px; margin: 8px 0 4px; overflow: hidden; border-radius: 99px; background: #f0f0f0; }
     .ov-sec { margin-top: 10px; }
     .ov-sechead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; font-size: 15px; font-weight: bold; }
@@ -793,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 25. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 26. nov. 2026 (1)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -3734,6 +3744,7 @@ document.addEventListener("click", function (e) {
   if (typeof GRP !== "undefined" && GRP && GRP.box && GRP.box.isConnected && GRP.data) renderGroups();
   if (document.getElementById("ov")) renderOverview();
   if (FIX) renderFixtures();
+  if (HIST && document.getElementById("hist")) renderPlayerHistory();
 });
 
 function bandText(lo, hi) {
@@ -3898,7 +3909,82 @@ function openPlayerOverview() {
 document.getElementById("ov").addEventListener("click", function (e) {
   const b = e.target.closest("[data-sort]");
   if (b) { OV_SORT = b.dataset.sort; renderOverview(); }
+  const h = e.target.closest("[data-hist]");
+  if (h) openPlayerHistory(h.dataset.hist, h);
 });
+
+/* ---- One player's history: training groups, training matches and real matches (the Kampe tab) ----
+   From the saved data on the phone, newest first. With each teammate, opponent or match: ↑ (more experienced / harder),
+   = (the same level) or ↓, by the same rules as Spilleroversigt (today's bands; hidden with "Niveauer: Skjul"). */
+let HIST = null;
+function openPlayerHistory(name, opener) {
+  if (!GRP_CACHE) return;
+  HIST = { name: name, kind: "all" };
+  openViewer(name, [{ title: "Historik for " + name, html: '<div id="hist" class="grp"></div>' }], opener || null, null);
+  document.getElementById("hist").addEventListener("click", function (e) {
+    const b = e.target.closest("[data-hk]");
+    if (b) { HIST.kind = b.dataset.hk; renderPlayerHistory(); }
+  });
+  renderPlayerHistory();
+}
+const dominant = w => w[1] > 0.5 + 1e-9 || Math.abs(w[0] - w[2]) < 1e-9 ? "=" : w[0] > w[2] ? "↑" : "↓";
+const mixText = w => `↑ ${Math.round(100 * w[0])} · = ${Math.round(100 * w[1])} · ↓ ${Math.round(100 * w[2])} %`;
+
+/* Every saved thing the player took part in: [{ date, kind: "groups" | "tmatches" | "fixtures", title, lines: [html] }] */
+function playerHistory(name, data) {
+  const by = {}; data.players.forEach(p => { by[p.name] = p; });
+  const me = by[name], lvl = p => p && isBand(p) ? p : p && nivOf(p) != null ? nivOf(p) : NaN, shown = showLevels();
+  const tag = (other, w) => esc(other) + (shown && w ? ` <span class="hist-c">${dominant(w)}</span>` : "");
+  const out = [];
+  Object.keys(data.history || {}).forEach(function (key) {
+    const groups = data.history[key].groups, gi = groups.findIndex(g => g.indexOf(name) !== -1);
+    if (gi === -1) return;
+    const mates = groups[gi].filter(n => n !== name);
+    const ws = mates.map(n => hasLevel(lvl(me)) && hasLevel(lvl(by[n])) ? levelWeights(lvl(me), lvl(by[n])) : null);
+    const known = ws.filter(Boolean), avg = known.length ? [0, 1, 2].map(r => known.reduce((x, w) => x + w[r], 0) / known.length) : null;
+    out.push({ date: key.slice(0, 10), kind: "groups", title: keyLabel(key), what: "Træningsgruppe",
+      lines: [`Gruppe ${gi + 1} med ${mates.map((n, i) => tag(n, ws[i])).join(", ") || "ingen andre"}`].concat(shown && avg ? [`<span class="hist-mix">${mixText(avg)}</span>`] : []) });
+  });
+  Object.keys(data.matches || {}).forEach(function (key) {
+    data.matches[key].matches.forEach(function (teams, mi) {
+      const ti = teams.findIndex(t => t.indexOf(name) !== -1);
+      if (ti === -1) return;
+      const mates = teams[ti].filter(n => n !== name), opp = [].concat(...teams.filter((t, j) => j !== ti));
+      const w = hasLevel(lvl(me)) ? matchShare(lvl(me), mates.concat(opp).map(n => lvl(by[n])).filter(hasLevel)) : null;
+      const one = n => hasLevel(lvl(me)) && hasLevel(lvl(by[n])) ? levelWeights(lvl(me), lvl(by[n])) : null;
+      out.push({ date: key.slice(0, 10), kind: "tmatches", title: keyLabel(key), what: "Kamp til træning",
+        lines: [`Kamp ${mi + 1}, hold ${"ABC".charAt(ti)}${shown && w ? ` <span class="hist-c">${dominant(w)}</span>` : ""}`,
+          `Med ${mates.map(n => tag(n, one(n))).join(", ") || "ingen andre"}`, `Mod ${opp.map(n => tag(n, one(n))).join(", ")}`] });
+    });
+  });
+  setsInOrder(data).forEach(function ([id, set]) {
+    const mine = set.games.filter(g => g.players.indexOf(name) !== -1), could = set.games.some(g => (g.avail || []).indexOf(name) !== -1);
+    mine.forEach(function (g) {
+      const w = me ? fixtureWeights(me, g.level) : null, locked = (g.locked || []).indexOf(name) !== -1;
+      out.push({ date: g.date || setFirstDate(set), kind: "fixtures", title: g.date ? keyLabel(g.date) : esc(set.name), what: "Kamp",
+        lines: [`${esc(g.name)} · niveau ${g.level}${shown && w && idealLevel(me) != null ? ` <span class="hist-c">${dominant(w)}</span>` : ""}${locked ? " · 📌 udtaget af træneren" : ""}`,
+          `<span class="hist-set">${esc(set.name)}</span>`] });
+    });
+    if (!mine.length && could) out.push({ date: setFirstDate(set), kind: "fixtures", title: setFirstDate(set) ? keyLabel(setFirstDate(set)) : esc(set.name), what: "Kamp",
+      lines: [`Reserve (til rådighed, men ikke på en kamp)`, `<span class="hist-set">${esc(set.name)}</span>`], reserve: true });
+  });
+  const rank = { fixtures: 0, tmatches: 1, groups: 2 };     // the same day: the matches at the end of a training come after its groups
+  return out.sort((a, b) => b.date.localeCompare(a.date) || rank[a.kind] - rank[b.kind]);
+}
+
+function renderPlayerHistory() {
+  const box = document.getElementById("hist");
+  if (!box || !HIST || !GRP_CACHE) return;
+  const all = playerHistory(HIST.name, GRP_CACHE.data), p = GRP_CACHE.data.players.find(x => x.name === HIST.name);
+  const n = k => all.filter(e => e.kind === k && !e.reserve).length, res = all.filter(e => e.reserve).length;
+  const list = HIST.kind === "all" ? all : all.filter(e => e.kind === HIST.kind);
+  const chip = (k, label) => `<button type="button" data-hk="${k}" aria-pressed="${HIST.kind === k}">${label}</button>`;
+  box.innerHTML = `<p class="grp-hint">${p && showLevels() && Number.isFinite(p.lo) ? "Bånd " + bandText(p.lo, p.hi) + " · " : ""}${n("groups")} ${n("groups") === 1 ? "træning" : "træninger"} · ${n("tmatches")} ${n("tmatches") === 1 ? "kamp" : "kampe"} til træning · ${n("fixtures")} ${n("fixtures") === 1 ? "kamp" : "kampe"}${res ? ` (${res}× reserve)` : ""}</p>
+    <div class="grp-mode grp-wrap" role="group" aria-label="Vis">${chip("all", "Alt")}${chip("groups", "Træningsgrupper")}${chip("tmatches", "Kampe til træning")}${chip("fixtures", "Kampe")}</div>
+    ${showLevels() ? `<p class="grp-hint" style="margin-top:10px">↑ = mere øvet / sværere · = samme niveau · ↓ = mindre øvet / lettere (ud fra spillernes bånd i dag).</p>` : ""}
+    <div class="hist-list">${list.map(e => `<div class="hist-e${e.reserve ? " hist-res" : ""}"><div class="hist-h"><b>${e.title}</b><span class="hist-k">${e.what}</span></div>${e.lines.map(l => `<p>${l}</p>`).join("")}</div>`).join("")
+      || `<p class="grp-hint">Intet gemt endnu.</p>`}</div>`;
+}
 
 function renderOverview() {
   const box = document.getElementById("ov");
@@ -3968,8 +4054,9 @@ function renderOverview() {
           return section("Kampe", f.mix[3] ? `${f.mix[3]} ${f.mix[3] === 1 ? "kamp" : "kampe"}` : "", f.mix, isBand(s.p) ? fixtureAim(s.p) : null, "ingen gemte kampe endnu", res);
         })() +
         (why ? `<p class="ov-line">${why}</p>` : "");
-    return `<div class="ov-p"><div class="ov-head"><strong>${esc(s.p.name)}</strong> ${band}<span class="ov-seen">${seen}</span></div>` +
-      body + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") + `</div>`;
+    return `<div class="ov-p"><div class="ov-head"><button type="button" class="ov-name" data-hist="${esc(s.p.name)}" title="Se historik for ${esc(s.p.name)}"><strong>${esc(s.p.name)}</strong></button> ${band}<span class="ov-seen">${seen}</span></div>` +
+      body + (s.top.length ? `<p class="ov-line">Oftest med: ${esc(s.top.join(", "))}</p>` : "") +
+      `<button type="button" class="clearbtn ov-histbtn" data-hist="${esc(s.p.name)}">Se historik ›</button></div>`;
   }).join("");
   box.innerHTML = `<p class="grp-hint grp-explain">Bygger på ${keys.length} gemte ${keys.length === 1 ? "træning" : "træninger"}. ` +
     `For hver spiller: med hvem de har været i grupper og kampe (de seneste 12 træninger), og målet for dem.</p>
