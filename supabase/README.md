@@ -34,13 +34,13 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
    insert into teams (club_id, name) select c.id, 'U10' from clubs c
      where c.name = 'Min klub' and not exists (select 1 from teams t where t.club_id = c.id and t.name = 'U10');
    insert into team_members (team_id, user_id, role)
-     select t.id, u.id, case when u.email = 'holdleder@eksempel.dk' then 'admin' else 'coach' end::team_role
-     from teams t, auth.users u where t.name = 'U10' and u.email in ('holdleder@eksempel.dk', 'traener@eksempel.dk')
+     select t.id, u.id, case when u.email = 'admin@eksempel.dk' then 'admin' else 'coach' end::team_role
+     from teams t, auth.users u where t.name = 'U10' and u.email in ('admin@eksempel.dk', 'traener@eksempel.dk')
      on conflict (team_id, user_id) do nothing;
    select id as hold_id, plan_code as holdkode from teams where name = 'U10';
    ```
 
-   Roller: `admin` (holdleder: alt, også at fjerne spillere), `coach` (træner) og `assistant` (hjælpetræner: ser
+   Roller: `admin` (Admin: alt, også spillere, niveauer og trænere), `coach` (træner) og `assistant` (hjælpetræner: ser
    spillerne uden niveauer og kan kun gemme tilmeldte).
 5. **Flyt data fra arket.** På en computer med Node.js 20 eller nyere, i mappen med koden:
 
@@ -69,9 +69,40 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 - **Hvem ser hvad** afgøres i databasen (row-level security), ikke i appen: en træner får kun sine egne holds rækker.
 - **Niveauændringer** gemmes med tidspunkt og hvem (`player_levels`), så 25-50-25-historikken kan læses tilbage.
 - **Sletning (GDPR):** `select forget_player('<holdets id>', 'Navn');` fjerner spilleren og navnet fra alle gemte
-  træninger (kun holdleder).
+  træninger (kun admin).
 - **Spillere** rettes indtil videre i *Table Editor → players* (navn, `lo` = Fra, `hi` = Til, `positions`, `active`),
   indtil der kommer adminsider i appen. **Træningsplanen** skrives i appen: *+ Ny træning* over listen, og *Ret
-  træningen* / *Kopiér til ny træning* i en åben træning (holdledere og trænere).
+  træningen* / *Kopiér til ny træning* i en åben træning (admins og trænere).
 - **Statistik** står i `usage_counts` (antal pr. dag, intet om hvem).
 - **Backup:** Supabase tager daglig backup på betalte planer; på den gratis plan bør du selv eksportere jævnligt.
+
+## Admin-fanen
+
+Holdets admins har fanen **Admin** i appen:
+
+- **Spillere:** opret, ret navn, Fra/Til og favoritpladser, sæt en spiller som ikke aktiv, eller slet spilleren og al
+  historik (GDPR). Et nyt navn rettes også i alle gemte grupper og kampe, så 25-50-25-historikken følger med.
+  Kun admins kan ændre spillere og niveauer.
+- **Trænere:** se holdets trænere, skift rolle (Admin, Træner, Hjælpetræner) og fjern. Et hold har altid mindst én admin.
+- **Invitationer:** *Lav invitationslink* giver et link (`…/traeningsparat/?invite=KODE`), der kan bruges én gang og
+  virker i 14 dage. Træneren åbner det og logger ind, eller opretter en bruger med e-mail og adgangskode.
+  Det kræver i Supabase under *Authentication → Sign In / Providers*: **"Allow new users to sign up" slået til** og
+  **"Confirm email" slået fra**. En bruger uden invitation kan oprette sig, men ser intet (adgangen gives kun af
+  databasen, når en invitation bruges).
+
+## Slettede træninger
+
+En slettet træning gemmes i 90 dage og kan gendannes under *Slettede træninger* nederst i Træninger.
+
+## Eget øvelsesbibliotek (klar, ikke slået til)
+
+- Kilden `egne` i `drill_sources` er oprettet, men slået fra. Egne øvelser gemmes med `save_drill` – i det fælles
+  bibliotek (af redaktører i `app_admins`) eller som en klubs egne (af klubbens administratorer).
+- `drills.media` rummer tegninger og animationer (formatet står i `schema.sql`), og lageret **drill-media** i Supabase
+  Storage rummer billederne (alle kan se dem; redaktører og klubadministratorer kan lægge dem op).
+- Når biblioteket er klar: `update drill_sources set active = true where id = 'egne';`
+
+## Opdatering af databasen
+
+Når `schema.sql` ændres, kopieres hele filen ind i *SQL Editor* igen og køres. Den kan køres igen og igen uden at
+miste data.
