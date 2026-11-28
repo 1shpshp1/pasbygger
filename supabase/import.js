@@ -53,11 +53,16 @@ const isDbu = d => {
 /* The SQL for the shared library from getDrills' answer (lib) and getDrillsDa's (da): DBU's drills only.
    Gives back { sql, ids, skipped }. */
 function libraryToSql(lib, da) {
-  const out = ['begin;'], ids = [];
+  const out = ['begin;'], ids = [], from = {};
   let skipped = 0;
   (lib.drills || []).forEach(d => {
     const id = String(d['ID'] || '').trim();
-    if (!id || !isDbu(d)) { skipped++; return; }
+    if (!id || !isDbu(d)) {
+      skipped++;
+      const src = String(d['Kilde'] || '').split(/[;,]/)[0].trim() || (id ? 'uden kilde, ID ' + id.replace(/[0-9]+$/, '…') : 'uden ID');
+      from[src] = (from[src] || 0) + 1;
+      return;
+    }
     const content = Object.assign({}, d);
     delete content['__da'];
     out.push(`insert into drills (id, source_id, name, content, content_da) values (${q(id)}, 'dbu', ${q(String(d['Navn']).slice(0, 200))}, ${j(content)}, ${j((da || {})[id] || {})})
@@ -66,7 +71,7 @@ function libraryToSql(lib, da) {
   });
   out.push(`update library_settings set headers = ${j(lib.headers || [])}, aliases = ${j(lib.aliases || [])}, groups = ${j(lib.groups || [])} where id = 1;`);
   out.push('commit;');
-  return { sql: out.join('\n') + '\n', ids: ids, skipped: skipped };
+  return { sql: out.join('\n') + '\n', ids: ids, skipped: skipped, from: from };
 }
 
 /* The SQL for a team's plan from getPlan's sessions, replacing the team's plan. A station keeps its drill only if the
@@ -119,7 +124,8 @@ if (require.main === module) {
     process.stdout.write(toSql(data, team) + lib.sql + planToSql(all.plan, team, lib.ids));
     process.stderr.write(`${(data.players || []).length} players, ${Object.keys(data.history || {}).length} trainings with groups, ` +
       `${Object.keys(data.matches || {}).length} with matches, ${Object.keys(data.fixtures || {}).length} sets of matches, ` +
-      `${(all.plan || []).length} trainings in the plan, ${lib.ids.length} DBU drills (${lib.skipped} from other sources left out).\n`);
+      `${(all.plan || []).length} trainings in the plan, ${lib.ids.length} DBU drills (${lib.skipped} from other sources left out: ` +
+      Object.keys(lib.from).sort((a, b) => lib.from[b] - lib.from[a]).map(k => k + ' ' + lib.from[k]).join(', ') + ').\n');
   })().catch(e => { process.stderr.write('Stopped: ' + e.message + '\n'); process.exit(1); });
 }
 
