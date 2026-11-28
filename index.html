@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 26. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (1)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -5476,10 +5476,18 @@ fixBox.addEventListener("click", function (e) {
 prefetchGroups();                  // still logged in when the app opens: fetch the players ahead
 sendQueue();                       // saves that were waiting for a connection
 
+/* The address links are made from: this page's own, except inside the App Store / Google Play app (whose own address,
+   capacitor://localhost or https://localhost, only works on that phone), where it is the app on GitHub Pages. */
+const PUBLIC_APP_URL = "https://1shpshp1.github.io/pasbygger/";
+function appAddress() {
+  return /^https?:$/.test(location.protocol) && location.hostname !== "localhost" && !window.Capacitor
+    ? location.origin + location.pathname : PUBLIC_APP_URL;
+}
+
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
 function sessionLink(s) {
   if (!s || !s.iso) return "";
-  return location.origin + location.pathname + "?s=" + encodeURIComponent(s.iso);
+  return appAddress() + "?s=" + encodeURIComponent(s.iso);
 }
 
 function copySessionLink(btn) {
@@ -5503,7 +5511,7 @@ function isFckLink(u) {
 function appDrillLink(d) {
   const id = cleanVal(d && d["ID"]);
   if (!id) return "";
-  return location.origin + location.pathname + "?d=" + encodeURIComponent(id);
+  return appAddress() + "?d=" + encodeURIComponent(id);
 }
 
 /* Opened through a drill link (?d=...): ask for the code if needed, then show that drill */

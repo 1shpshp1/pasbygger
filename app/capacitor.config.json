@@ -1,0 +1,7 @@
+{
+  "appId": "dk.pasbygger.app",
+  "appName": "Pasbygger",
+  "webDir": "www",
+  "backgroundColor": "#AD152F",
+  "ios": { "contentInset": "never" }
+}

@@ -958,3 +958,10 @@ test('Kampe til sidst in puljer: pools by one rule, matches per pool by another,
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(page.errors, []);
 });
+
+test('links to a training or a drill use the page\'s own address, and the public one inside the App Store / Google Play app', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  assert.equal(await page.evaluate(() => appAddress()), base);
+  assert.equal(await page.evaluate(() => { window.Capacitor = {}; return appAddress(); }), 'https://1shpshp1.github.io/pasbygger/');
+  assert.deepEqual(page.errors, []);
+});

@@ -1,0 +1,22 @@
+{
+  "name": "pasbygger-app",
+  "private": true,
+  "description": "Pasbygger as an app for the App Store and Google Play (Capacitor). The app itself is ../index.html.",
+  "license": "GPL-3.0",
+  "scripts": {
+    "copy": "node copy-web.js",
+    "sync": "node copy-web.js && cap sync",
+    "icons": "capacitor-assets generate --iconBackgroundColor '#AD152F' --splashBackgroundColor '#AD152F'",
+    "android": "node copy-web.js && cap sync android && cap open android",
+    "ios": "node copy-web.js && cap sync ios && cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/ios": "8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "4.0.0",
+    "@capacitor/cli": "8.6.2"
+  }
+}
