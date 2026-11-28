@@ -1085,3 +1085,101 @@ test('the database is on for everyone; ?database=nej makes one phone use the she
   assert.equal(await page.evaluate(() => useSupabase()), false);
   assert.deepEqual(page.errors, []);
 });
+
+test('The planner (database): a coach makes, edits, copies and deletes trainings, choosing drills from the library; assistants and visitors can\'t', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'r'.repeat(120) + '.sig', saved = [], deleted = [];
+  let role = 'admin';
+  let plan = [{ id: 'tr-1', iso: '2030-01-07', date: '2030-01-07', focus: 'Pasninger', theme: 'Spil', subtheme: '', notes: [{ text: 'Husk bolde', url: '' }],
+    startup: { text: 'Opvarmning', url: '', drillId: '', coaches: ['Ole'] }, station1: { text: 'Rondo', url: '', drillId: 'D1', coaches: [] },
+    station2: { text: '', url: '', drillId: '', coaches: [] }, station3: { text: '', url: '', drillId: '', coaches: [] },
+    station4: { text: '', url: '', drillId: '', coaches: [] }, finish: { text: 'Kamp', url: '', drillId: '', coaches: [] } }];
+  const drills = { headers: ['ID', 'Navn'], drills: [{ ID: 'D1', Navn: 'Rondo', Kilde: 'DBU' }, { ID: 'D2', Navn: 'Portspillet', Kilde: 'DBU' }], aliases: [], groups: [], version: 'l', daVersion: '' };
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    const path = url.pathname;
+    if (path === '/auth/v1/token') return send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 });
+    if (path === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: role }]);
+    if (path === '/rest/v1/rpc/get_plan') return send({ version: 'v' + plan.length + saved.length + deleted.length, sessions: plan, server: 6, team: body.team || 't-other', code: 'abc' });
+    if (path === '/rest/v1/rpc/get_drills') return send(drills);
+    if (path === '/rest/v1/rpc/get_drills_da') return send({ version: 'x', da: {} });
+    if (path === '/rest/v1/rpc/get_group_data') return send({ players: [], history: {}, signups: {}, matches: {}, fixtures: {}, version: 'g', server: 5 });
+    if (path === '/rest/v1/rpc/save_training') {
+      saved.push(body);
+      const t = Object.assign({}, body.training, { id: body.training.id || 'tr-' + (plan.length + 1) });
+      plan = plan.filter(x => x.id !== t.id).concat([t]).sort((a, b) => a.iso < b.iso ? -1 : 1);
+      return send({ ok: true, id: t.id });
+    }
+    if (path === '/rest/v1/rpc/delete_training') { deleted.push(body); plan = plan.filter(x => x.id !== body.training_id); return send({ ok: true }); }
+    send(true);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base);
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'a visitor can\'t plan');
+  const login = async () => {
+    await page.click('#nav-groups');
+    await page.fill('#login-pw', 'træner@x.dk'); await page.click('#login-go');
+    await page.fill('#login-pw', 'kode'); await page.click('#login-go');
+    await page.waitForSelector('#groups:not(.view-hidden)');
+    await page.click('#nav-sessions');
+  };
+  await login();
+  await page.waitForSelector('#sessions .plan-new');
+  // a new training, with a drill from the library
+  await page.click('#sessions .plan-new');
+  await page.waitForFunction(() => document.querySelectorAll('#planner-drills option').length === 2);
+  await page.click('#planner .login-go');                          // nothing written yet
+  assert.match(await page.locator('#planner .planner-msg').innerText(), /mindst en dato eller en overskrift/);
+  await page.fill('#planner [name="iso"]', '2030-01-14');
+  await page.fill('#planner [name="focus"]', 'Afslutninger');
+  await page.fill('#planner [name="notes"]', 'Kegler og veste\nVideo https://example.com/v');
+  await page.fill('#planner [name="station2.text"]', 'Portspillet');
+  await page.fill('#planner [name="station2.coaches"]', 'Ole, Sune');
+  await page.fill('#planner [name="station3.text"]', 'Fri leg');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  const t = saved[0].training;
+  assert.equal(saved[0].team, 't1');
+  assert.deepEqual([t.id, t.iso, t.focus], ['', '2030-01-14', 'Afslutninger']);
+  assert.deepEqual(t.notes, [{ text: 'Kegler og veste', url: '' }, { text: 'Video', url: 'https://example.com/v' }]);
+  assert.deepEqual(t.station2, { text: 'Portspillet', url: '', drillId: 'D2', coaches: ['Ole', 'Sune'] });
+  assert.deepEqual(t.station3, { text: 'Fri leg', url: '', drillId: '', coaches: [] });
+  await page.waitForFunction(() => /Afslutninger/.test(document.getElementById('sessions').innerText));
+  // edit: the drill stays, the focus changes
+  await page.locator('#sessions .card', { hasText: 'Pasninger' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Ret træningen")');
+  assert.equal(await page.inputValue('#planner [name="station1.text"]'), 'Rondo');
+  await page.fill('#planner [name="focus"]', 'Pasninger og førsteberøring');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  assert.deepEqual([saved[1].training.id, saved[1].training.focus, saved[1].training.station1.drillId, saved[1].training.startup.coaches],
+                   ['tr-1', 'Pasninger og førsteberøring', 'D1', ['Ole']]);
+  // copy: a new training with the same parts and no date
+  await page.waitForFunction(() => /førsteberøring/.test(document.getElementById('sessions').innerText));
+  await page.locator('#sessions .card', { hasText: 'førsteberøring' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Kopiér til ny træning")');
+  assert.equal(await page.inputValue('#planner [name="iso"]'), '');
+  assert.equal(await page.locator('#planner .planner-del').count(), 0);
+  await page.fill('#planner [name="iso"]', '2030-01-21');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  assert.deepEqual([saved[2].training.id, saved[2].training.iso, saved[2].training.station1.drillId], ['', '2030-01-21', 'D1']);
+  // delete
+  await page.waitForFunction(() => document.querySelectorAll('#sessions .card').length === 3);
+  await page.locator('#sessions .card', { hasText: 'Afslutninger' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Ret træningen")');
+  await page.click('#planner .planner-del');                       // (the confirm is accepted)
+  await page.waitForFunction(() => document.querySelectorAll('#sessions .card').length === 2);
+  assert.equal(deleted[0].training_id, 'tr-2');
+  assert.deepEqual(page.errors, []);
+  // an assistant sees no planner
+  role = 'assistant';
+  await page.evaluate(() => { localStorage.removeItem('oevAuth'); localStorage.removeItem('oevSupaSession'); });
+  await page.goto(base);
+  await page.waitForSelector('#sessions .card');
+  await login();
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'an assistant can\'t plan');
+});

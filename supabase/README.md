@@ -71,6 +71,7 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 - **Sletning (GDPR):** `select forget_player('<holdets id>', 'Navn');` fjerner spilleren og navnet fra alle gemte
   træninger (kun holdleder).
 - **Spillere** rettes indtil videre i *Table Editor → players* (navn, `lo` = Fra, `hi` = Til, `positions`, `active`),
-  og **træningsplanen** i *Table Editor → trainings*. En planlægger og adminsider i appen er næste skridt.
+  indtil der kommer adminsider i appen. **Træningsplanen** skrives i appen: *+ Ny træning* over listen, og *Ret
+  træningen* / *Kopiér til ny træning* i en åben træning (holdledere og trænere).
 - **Statistik** står i `usage_counts` (antal pr. dag, intet om hvem).
 - **Backup:** Supabase tager daglig backup på betalte planer; på den gratis plan bør du selv eksportere jævnligt.
