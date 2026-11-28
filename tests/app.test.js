@@ -527,7 +527,7 @@ test('An old server copy: coaches are told what to copy; players see nothing', {
   await page.waitForFunction(() => !document.getElementById('server-note').hidden);
   assert.match(await page.locator('#server-note').innerText(), /Serveren er ikke opdateret[\s\S]*Code\.gs/);
   assert.deepEqual(await page.locator('#server-note a').evaluateAll(as => as.map(a => a.getAttribute('href'))),
-    ['Code.gs', 'Grupper.gs'].map(f => 'https://github.com/1shpshp1/pasbygger/blob/main/apps-script/' + f));
+    ['Code.gs', 'Grupper.gs'].map(f => 'https://github.com/1shpshp1/traeningsparat/blob/main/apps-script/' + f));
   await openGroups(page);
   await page.waitForFunction(() => /Grupper\.gs/.test(document.getElementById('grp-v').innerText));
   srv.oldServer = false;                                           // updated: the note goes once both files have answered
@@ -956,5 +956,129 @@ test('Kampe til sidst in puljer: pools by one rule, matches per pool by another,
   await sec.locator('[data-mpools="1"]').click();
   assert.equal(await sec.locator('[data-pmode]').count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(page.errors, []);
+});
+
+test('links to a training or a drill use the page\'s own address, and the public one inside the App Store / Google Play app', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv);
+  assert.equal(await page.evaluate(() => appAddress()), base);
+  assert.equal(await page.evaluate(() => { window.Capacitor = {}; return appAddress(); }), 'https://1shpshp1.github.io/traeningsparat/');
+  assert.deepEqual(page.errors, []);
+});
+
+test('With the database (Supabase): the plan by the team\'s link, log in with e-mail and a code, choose the team, groups and drills from it, nothing from the sheet', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const sb = { calls: [] }, jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'p'.repeat(120) + '.sig';
+  const plan = srv.call('getPlan', '').result, lib = srv.call('getDrills', srv.call('login', CODE).result.token, '').result;
+  const data = { players: [{ name: 'Alma', lo: 1, hi: 2 }, { name: 'Bo', lo: 2, hi: 3 }, { name: 'Carl', lo: 1, hi: 3 }, { name: 'Dina', lo: 2, hi: 2 }],
+                 history: {}, signups: {}, matches: {}, fixtures: {}, version: 'v1', server: 5 };
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    sb.calls.push([url.pathname, body, r.request().headers().authorization]);
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (url.pathname === '/auth/v1/otp') return body.email === 'ukendt@x.dk' ? send({ msg: 'Signups not allowed for otp' }, 422) : send({});
+    if (url.pathname === '/auth/v1/verify') return body.token === '123456' ? send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 }) : send({ msg: 'Token has expired or is invalid' }, 403);
+    if (url.pathname === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'U10', club: 'Klub', role: 'coach' }, { id: 't2', name: 'U12', club: 'Klub', role: 'coach' }]);
+    if (url.pathname === '/rest/v1/rpc/get_group_data') return send(body.team === 't2' ? data : { message: 'LOGIN' }, body.team === 't2' ? 200 : 400);
+    if (url.pathname === '/rest/v1/rpc/save_groups') return send({ ok: true, saved: '28.11.2026 12:00' });
+    if (url.pathname === '/rest/v1/rpc/get_plan') return send(Object.assign({}, plan, { code: body.code || 'own', server: 6 }));
+    if (url.pathname === '/rest/v1/rpc/get_drills') return send(Object.assign({}, lib, { daVersion: '' }));
+    if (url.pathname === '/rest/v1/rpc/get_drills_da') return send({ version: 'x', da: {} });
+    if (url.pathname === '/rest/v1/rpc/track') return send(true);
+    send({ message: 'unknown' }, 404);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon', login: 'code' })));
+  const sheetCalls = (srv.calls || []).length;
+  await page.goto(base + '?hold=abc123');                               // a team's link, as players and parents get it
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  const planCall = sb.calls.find(c => c[0] === '/rest/v1/rpc/get_plan');
+  assert.deepEqual([planCall[1].code, planCall[2]], ['abc123', 'Bearer anon']);   // no login needed
+  assert.match(await page.evaluate(() => sessionLink(SESSIONS[0])), /\?hold=abc123&s=\d{4}-\d{2}-\d{2}$/);
+  await page.click('#nav-groups');
+  assert.equal(await page.locator('#login-title').innerText(), 'Log ind med din e-mail');
+  await page.fill('#login-pw', 'ukendt@x.dk'); await page.click('#login-go');
+  await page.waitForFunction(() => /ikke adgang/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', 'træner@x.dk'); await page.click('#login-go');
+  await page.waitForFunction(() => document.getElementById('login-title').textContent === 'Indtast koden fra e-mailen');
+  await page.fill('#login-pw', '000000'); await page.click('#login-go');
+  await page.waitForFunction(() => /Forkert eller udløbet/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', '123456'); await page.click('#login-go');
+  await page.waitForSelector('#login-team');                          // two teams: choose
+  await page.selectOption('#login-team', 't2');
+  await page.click('#login-go');
+  await page.waitForSelector('#grp-tab .grp-slide');
+  assert.match(await page.locator('#grp-tab').innerText(), /Alma/);
+  assert.equal((srv.calls || []).length, sheetCalls, 'nothing asked of the sheet');
+  await page.click('#grp-tab [data-act="make"]');
+  await page.click('#grp-tab [data-act="save"]');
+  await page.waitForFunction(() => /Gemt/.test(document.querySelector('#grp-tab .grp-save').innerText));
+  const save = sb.calls.find(c => c[0] === '/rest/v1/rpc/save_groups');
+  assert.equal(save[1].team, 't2');
+  assert.match(save[1].key, /^\d{4}-\d{2}-\d{2} fri$/);
+  assert.deepEqual(save[1].groups.flat().sort(), ['Alma', 'Bo', 'Carl', 'Dina']);
+  assert.equal(save[2], 'Bearer ' + jwt);
+  // the drills, with the same login
+  await page.click('#nav-library');
+  await page.waitForSelector('#drill-grid .card');
+  assert.equal(await page.locator('#login').isHidden(), true);
+  assert.equal(sb.calls.find(c => c[0] === '/rest/v1/rpc/get_drills')[2], 'Bearer ' + jwt);
+  assert.ok(sb.calls.some(c => c[0] === '/rest/v1/rpc/track'), 'app opens counted in the database');
+  assert.equal((srv.calls || []).length, sheetCalls, 'still nothing asked of the sheet');
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('oevSupaSession'))).team, 't2');
+  assert.deepEqual(page.errors, []);
+});
+
+test('With the database: log in with e-mail and the password the holdleder gave you (no e-mail is sent)', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const sb = [], jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'q'.repeat(120) + '.sig';
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    sb.push(url.pathname + url.search);
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password')
+      return body.email === 'træner@x.dk' && body.password === 'Hemmelig 1' ? send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 })
+        : send({ error: 'invalid_grant', error_description: 'Invalid login credentials' }, 400);
+    if (url.pathname === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'admin' }]);
+    if (url.pathname === '/rest/v1/rpc/get_group_data') return send({ players: [{ name: 'Alma', lo: 1, hi: 2 }], history: {}, signups: {}, matches: {}, fixtures: {}, version: 'v', server: 5 });
+    if (url.pathname === '/rest/v1/rpc/get_plan') return send(Object.assign(srv.call('getPlan', '').result, { code: 'abc', server: 6 }));
+    if (url.pathname === '/rest/v1/rpc/track') return send(true);
+    send({ message: 'unknown' }, 404);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base + '?hold=abc');
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  await page.click('#nav-groups');
+  await page.fill('#login-pw', 'træner@x.dk');
+  assert.equal(await page.locator('#login-go').innerText(), 'Næste');
+  await page.click('#login-go');
+  assert.equal(await page.locator('#login-title').innerText(), 'Indtast din adgangskode');
+  assert.equal(await page.locator('#login-pw').getAttribute('type'), 'password');
+  await page.fill('#login-pw', 'forkert'); await page.click('#login-go');
+  await page.waitForFunction(() => /Forkert e-mail eller adgangskode/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', 'Hemmelig 1'); await page.click('#login-go');
+  await page.waitForSelector('#grp-tab .grp-slide');
+  assert.match(await page.locator('#grp-tab').innerText(), /Alma/);
+  assert.ok(!sb.some(x => /otp|verify/.test(x)), 'no e-mail asked for');
+  assert.deepEqual(page.errors, []);
+});
+
+test('?database=ja makes this phone use the database (the plan of the club\'s team without a link), ?database=nej the sheet again', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const asked = [];
+  await page.context().route('https://hfagotulnrjvqwrwweez.supabase.co/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    asked.push([url.pathname, body]);
+    if (url.pathname === '/rest/v1/rpc/get_plan') return r.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(srv.call('getPlan', '').result, { code: 'd8a11024', server: 6 })) });
+    r.fulfill({ contentType: 'application/json', body: 'true' });
+  });
+  assert.equal(await page.evaluate(() => useSupabase()), false, 'off unless asked for');
+  await page.goto(base + '?database=ja');
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  assert.equal(await page.evaluate(() => useSupabase()), true);
+  assert.equal(asked.find(a => a[0] === '/rest/v1/rpc/get_plan')[1].code, 'd8a11024');
+  await page.goto(base);                                                     // remembered on this phone
+  assert.equal(await page.evaluate(() => useSupabase()), true);
+  await page.goto(base + '?database=nej');
+  assert.equal(await page.evaluate(() => useSupabase()), false);
   assert.deepEqual(page.errors, []);
 });

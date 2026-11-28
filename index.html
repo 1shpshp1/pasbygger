@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Pasbygger</title>
+  <title>Træningsparat</title>
   <meta name="theme-color" content="#AD152F">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Pasbygger">
+  <meta name="apple-mobile-web-app-title" content="Træningsparat">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
   <style>
@@ -722,7 +722,7 @@
     }
     .login-box h2 { margin: 0 0 6px; color: var(--red); font-size: 22px; }
     .login-box p { margin: 0 0 12px; }
-    .login-box input {
+    .login-box input, .login-box select {
       display: block; width: 100%; padding: 12px 14px; border: 1px solid #cccccc;
       border-radius: 10px; font: inherit; font-size: 18px;
     }
@@ -750,7 +750,7 @@
 <div id="sessions">
   <div class="loading" role="status">
     <div class="spinner" aria-hidden="true"></div>
-    <span>Indlæser Pasbygger…</span>
+    <span>Indlæser Træningsparat…</span>
   </div>
 </div>
 
@@ -790,7 +790,7 @@
 </div>
 
 <div id="login" class="login view-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
-  <form class="login-box" id="login-form" autocomplete="off">
+  <form class="login-box" id="login-form" autocomplete="off" novalidate>
     <h2 id="login-title">Indtast kode</h2>
     <input type="password" id="login-pw" name="kode" aria-label="Kode" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
     <p class="login-err" id="login-err" role="alert"></p>
@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 26. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (6)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -950,7 +950,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKx
    what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
 const SERVER_NEEDS = { code: 5, grupper: 5 };
 const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
-const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
+const GITHUB_FILE = f => "https://github.com/1shpshp1/traeningsparat/blob/main/apps-script/" + f;
 function serverOutdated() {
   return ["code", "grupper"].filter(k => SERVER_HAS[k] != null && SERVER_HAS[k] < SERVER_NEEDS[k]);
 }
@@ -970,9 +970,148 @@ function showServerNote() {
   if (typeof GRP !== "undefined" && GRP && GRP.box && GRP.box.isConnected && GRP.data) renderGroups();
 }
 
-/* Calls a function in Code.gs, e.g. api("login", [code]). Gives back what the function returns.
-   The body is sent as plain text, which Google accepts from another website without extra checks. */
+/* ===================== The database: Supabase (instead of the sheet, for Grupper, Kampe and Spilleroversigt) =====
+   With an address and key below (Supabase → Project Settings → API: the Project URL and the anon / publishable key),
+   the players, groups, signups, matches and sets of matches are read from and saved in the database
+   (supabase/schema.sql), and coaches log in with their own e-mail and a code sent to it instead of the shared code.
+   The training plan, the drill library and the statistics then come from the database too, so the sheet and Apps
+   Script are not used at all. Each team's plan has a public link (<app>?hold=<code>) for players and parents; a
+   logged-in coach sees their own team's plan. Empty: everything comes from the sheet, as before.
+   To try it on one phone first: open the app with ?database=ja (back to the sheet: ?database=nej); "on" switches it on
+   for everyone. (For tests: localStorage "oevSupabase" = { url, key } uses another project.) */
+const SUPABASE = { url: "https://hfagotulnrjvqwrwweez.supabase.co", key: "sb_publishable_Bu5d8e3JqJV4OyvHmbLtHA_TjXh4fDI",
+                   plan: "d8a11024", login: "password", on: false };
+// plan: the code of the team whose plan is shown to visitors without a link. login: "password" (e-mail and a password the
+// holdleder gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
+const supaLoginKind = () => (supaConf() || {}).login === "code" ? "code" : "password";
+const SUPA_SESSION_KEY = "oevSupaSession";       // { refresh, exp (when the access token runs out), team, teams }
+const SUPA_LOGIN_DAYS = 14;                       // a personal login lasts 14 days after it was last used
+const SUPA_TRY_KEY = "oevDatabase";             // "ja": this phone uses the database (?database=ja), "nej": the sheet
+(function databaseFromAddress() {
+  try {
+    const want = new URLSearchParams(location.search).get("database");
+    if (want === "ja" || want === "nej") localStorage.setItem(SUPA_TRY_KEY, want);
+  } catch (e) { /* ignore */ }
+})();
+function supaConf() {
+  try { const o = JSON.parse(localStorage.getItem("oevSupabase") || "null"); if (o && o.url && o.key) return o; } catch (e) { /* ignore */ }
+  let mine = null;
+  try { mine = localStorage.getItem(SUPA_TRY_KEY); } catch (e) { /* ignore */ }
+  const on = mine === "ja" || (SUPABASE.on && mine !== "nej");
+  return on && SUPABASE.url && SUPABASE.key ? SUPABASE : null;
+}
+const useSupabase = () => !!supaConf();
+function supaSession() {
+  try { return JSON.parse(localStorage.getItem(SUPA_SESSION_KEY) || "null"); } catch (e) { return null; }
+}
+function storeSupaSession(s) {
+  try { if (s) localStorage.setItem(SUPA_SESSION_KEY, JSON.stringify(s)); else localStorage.removeItem(SUPA_SESSION_KEY); } catch (e) { /* ignore */ }
+}
+const supaTeam = () => (supaSession() || {}).team || "";
+
+/* A call to Supabase (auth or a database function). An answer that the login is no good gives "LOGIN", as the sheet
+   server does, so the app asks to log in again. */
+function supaFetch(path, body, token) {
+  const c = supaConf();
+  const ctrl = window.AbortController ? new AbortController() : null;
+  const timer = ctrl && setTimeout(function () { ctrl.abort(); }, 30000);
+  return fetch(c.url.replace(/\/+$/, "") + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: c.key, Authorization: "Bearer " + (token || c.key) },
+    body: JSON.stringify(body || {}),
+    signal: ctrl ? ctrl.signal : undefined
+  })
+    .finally(function () { clearTimeout(timer); })
+    .then(function (r) {
+      return r.text().then(function (text) {
+        let res = null;
+        try { res = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
+        if (r.ok) return res;
+        const msg = String(res && (res.message || res.msg || res.error_description || res.error) || "HTTP " + r.status);
+        if (r.status === 401 || /^LOGIN$|JWT/.test(msg)) throw serverError("LOGIN");
+        if (/row-level security/.test(msg)) throw serverError("Du har ikke adgang til at gemme dette på holdet.");
+        throw serverError(msg);
+      });
+    });
+}
+function authToken() { try { return AUTH.token; } catch (e) { return ""; } }   // (before the login code has loaded: none)
+const supaRpc = (name, params) => supaFetch("/rest/v1/rpc/" + name, params, authToken());
+
+/* Whose plan: a team link opened (?hold=<code>, remembered), else the logged-in coach's own team, else the code
+   remembered from a link opened earlier, else SUPABASE.plan */
+const PLAN_CODE_KEY = "oevPlanCode";
+function planArgs() {
+  let code = "";
+  try { code = new URLSearchParams(location.search).get("hold") || ""; } catch (e) { /* ignore */ }
+  if (code) { try { localStorage.setItem(PLAN_CODE_KEY, code); } catch (e) { /* ignore */ } return { code: code, team: null }; }
+  if (authToken() && supaTeam()) return { code: "", team: supaTeam() };
+  try { code = localStorage.getItem(PLAN_CODE_KEY) || ""; } catch (e) { /* ignore */ }
+  return { code: code || (supaConf() || {}).plan || "", team: null };
+}
+let PLAN_CODE = "";                                  // the shown plan's code, for links to a training
+function gotPlan(res) {
+  if (res && res.code) PLAN_CODE = res.code;
+  return res;
+}
+
+/* Logged in (access token, refresh token): the login is renewed whenever the app is used */
+function gotSupaSession(res) {
+  storeSupaSession(Object.assign(supaSession() || {}, { refresh: res.refresh_token, exp: Date.now() + (res.expires_in || 3600) * 1000 }));
+  AUTH.token = res.access_token;
+  AUTH.span = SUPA_LOGIN_DAYS * 864e5;
+  AUTH.until = Date.now() + AUTH.span;
+  saveAuth(); scheduleExpiry();
+}
+/* The access token lasts an hour: a fresh one first when it is (nearly) out. Without a connection the call goes on
+   with the old one (it then fails as having no connection, and the save waits on the phone). */
+let SUPA_REFRESHING = null;
+function supaRefreshIfNeeded() {
+  const s = supaSession();
+  if (!s || !s.refresh || !AUTH.token || Date.now() < s.exp - 60000) return Promise.resolve();
+  if (!SUPA_REFRESHING) SUPA_REFRESHING = supaFetch("/auth/v1/token?grant_type=refresh_token", { refresh_token: s.refresh })
+    .then(gotSupaSession)
+    .finally(function () { SUPA_REFRESHING = null; });
+  return SUPA_REFRESHING.catch(function (err) {
+    if (!err.server) return;                               // no connection: carry on
+    AUTH.token = ""; AUTH.until = 0; saveAuth();             // the login was withdrawn: log in again
+    throw serverError("LOGIN");
+  });
+}
+
+/* The sheet server's functions for Grupper, Kampe and Spilleroversigt, done by the database instead (the same
+   arguments and answers; the token is the login's). team: the team a save waiting on the phone was made for. */
+const SUPA_TEAM_ACTIONS = ["getGroupData", "saveGroups", "saveSignups", "saveMatches", "saveFixtureSet"];
+const SUPA_ACTIONS = {
+  getPlan:          version => supaRpc("get_plan", Object.assign({ have: version || "" }, planArgs())).then(gotPlan),
+  getSessions:      () => supaRpc("get_plan", planArgs()).then(gotPlan).then(res => res.sessions),
+  getSessionDrills: ids => supaRpc("get_session_drills", Object.assign({ ids: ids }, planArgs())),
+  getDrills:        (token, version) => supaRpc("get_drills", { have: version || "" }),
+  getDrillsDa:      (token, version) => supaRpc("get_drills_da", { have: version || "" }),
+  track:            (event, a, b) => supaRpc("track", { event: String(event), a: a == null ? "" : String(a), b: b == null ? "" : String(b) }),
+  getGroupData:   (token, version) => supaRpc("get_group_data", { team: supaTeam(), have: version || "" }),
+  saveGroups:     (token, key, groups, team) => supaRpc("save_groups", { team: team || supaTeam(), key: key, groups: groups }),
+  saveSignups:    (token, key, names, team) => supaRpc("save_signups", { team: team || supaTeam(), key: key, names: names }),
+  saveMatches:    (token, key, matches, team) => supaRpc("save_matches", { team: team || supaTeam(), key: key, matches: matches }),
+  saveFixtureSet: (token, id, set, team) => supaRpc("save_fixture_set", { team: team || supaTeam(), set_id: id, fixture_set: set })
+};
+
+/* Calls the server: the database for what it does (above), otherwise Code.gs. */
 function api(action, args) {
+  if (!useSupabase()) return sheetApi(action, args);
+  const before = authToken();
+  return (before ? supaRefreshIfNeeded() : Promise.resolve()).then(function () {
+    const a = (args || []).map(x => before && x === before ? AUTH.token : x);   // the renewed login in place of the old
+    if (SUPA_ACTIONS[action]) {
+      if (SUPA_TEAM_ACTIONS.indexOf(action) !== -1 && !supaTeam()) throw serverError("LOGIN");
+      return SUPA_ACTIONS[action].apply(null, a);
+    }
+    return sheetApi(action, a);
+  });
+}
+
+/* Calls a function in Code.gs, e.g. sheetApi("login", [code]). Gives back what the function returns.
+   The body is sent as plain text, which Google accepts from another website without extra checks. */
+function sheetApi(action, args) {
   const ctrl = window.AbortController ? new AbortController() : null;
   const timer = ctrl && setTimeout(function () { ctrl.abort(); }, 30000);   // give up after 30 seconds
   return fetch(API_URL, {
@@ -1413,6 +1552,7 @@ function keepLoggedIn(res) {
 function wipeLibrary() {
   clearTimeout(AUTH_TIMER);
   AUTH.token = ""; AUTH.until = 0;
+  if (useSupabase()) storeSupaSession(Object.assign(supaSession() || {}, { refresh: "" }));   // log in again (the team is remembered)
   GRP_CACHE = null;                                       // the players belong to the login. An open group screen stays
                                                           // usable: ticking and making groups need no server; saving asks for the code
   saveAuth();
@@ -1454,7 +1594,8 @@ function requireLogin(onOk, onCancel) {
   document.getElementById("login-err").textContent = "";
   document.getElementById("login-pw").value = "";
   document.getElementById("login").classList.remove("view-hidden");
-  document.getElementById("login-pw").focus();
+  if (useSupabase()) supaLoginShow("email");
+  else document.getElementById("login-pw").focus();
 }
 
 function closeLogin() {
@@ -1462,8 +1603,103 @@ function closeLogin() {
   document.getElementById("login").classList.add("view-hidden");
 }
 
+/* Logged in: fetch ahead, send what was waiting, and go on with what the login was for */
+function loginDone() {
+  prefetchGroups();
+  sendQueue();                       // saves that were waiting for a login
+  const cb = LOGIN_CB; LOGIN_CB = null;
+  closeLogin();
+  if (cb && cb.ok) cb.ok();
+}
+
+/* With the database: log in with your own e-mail and then your password (or the code Supabase sends to the e-mail,
+   SUPABASE.login "code"), then (on more than one team) choose the team. LOGIN_SUPA.step: "email", "password", "code"
+   or "team". */
+const LOGIN_SUPA = { step: "email", email: "", teams: [] };
+function supaLoginShow(step) {
+  LOGIN_SUPA.step = step;
+  const pw = document.getElementById("login-pw"), go = document.getElementById("login-go");
+  const pick = document.getElementById("login-team");
+  if (pick) pick.remove();
+  pw.hidden = step === "team";
+  pw.value = "";
+  if (step === "email") {
+    document.getElementById("login-title").textContent = "Log ind med din e-mail";
+    pw.type = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "username"); pw.removeAttribute("inputmode");
+    go.textContent = supaLoginKind() === "code" ? "Send kode" : "Næste";
+  } else if (step === "password") {
+    document.getElementById("login-title").textContent = "Indtast din adgangskode";
+    pw.type = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.setAttribute("autocomplete", "current-password"); pw.removeAttribute("inputmode");
+    go.textContent = "Log ind";
+  } else if (step === "code") {
+    document.getElementById("login-title").textContent = "Indtast koden fra e-mailen";
+    pw.type = "text"; pw.setAttribute("aria-label", "Kode fra e-mailen"); pw.setAttribute("autocomplete", "one-time-code"); pw.setAttribute("inputmode", "numeric");
+    go.textContent = "Åbn";
+  } else {
+    document.getElementById("login-title").textContent = "Vælg hold";
+    pw.insertAdjacentHTML("afterend", `<select id="login-team" aria-label="Hold">${LOGIN_SUPA.teams.map(t =>
+      `<option value="${esc(t.id)}">${esc(t.name)}${t.club ? " · " + esc(t.club) : ""}</option>`).join("")}</select>`);
+    go.textContent = "Åbn";
+  }
+  (step === "team" ? document.getElementById("login-team") : pw).focus();
+}
+function supaChooseTeam(team) {
+  const s = supaSession() || {};
+  if (s.team !== team) { GRP_CACHE = null; GRP_FETCH = null; }   // another team: not this one's players
+  storeSupaSession(Object.assign(s, { team: team, teams: LOGIN_SUPA.teams }));
+  loginDone();
+}
+function supaLoginSubmit() {
+  const pw = document.getElementById("login-pw"), go = document.getElementById("login-go"), err = document.getElementById("login-err");
+  const value = pw.value.trim(), step = LOGIN_SUPA.step;
+  if (step === "team") { supaChooseTeam(document.getElementById("login-team").value); return; }
+  if (!value) return;
+  if (step === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) { err.textContent = "Skriv en gyldig e-mailadresse."; return; }
+  if (step === "email" && supaLoginKind() === "password") { LOGIN_SUPA.email = value; err.textContent = ""; supaLoginShow("password"); return; }
+  const label = go.textContent;
+  go.disabled = true; go.textContent = step === "email" ? "Sender…" : "Tjekker…"; err.textContent = "";
+  const done = function () { go.disabled = false; go.textContent = label; };
+  if (step === "email") {
+    supaFetch("/auth/v1/otp", { email: value, create_user: false }).then(function () {
+      done(); LOGIN_SUPA.email = value; supaLoginShow("code");
+      err.textContent = "Vi har sendt en kode til " + value + ". Den kan tage et minut om at komme.";
+    }, function (e) {
+      done();
+      err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt."
+        : /signup|not allowed|not found/i.test(e.message) ? "Den e-mail har ikke adgang. Spørg holdlederen om at blive tilføjet."
+        : /rate|seconds/i.test(e.message) ? "Vent et øjeblik, før du beder om en ny kode." : "Kunne ikke sende koden: " + e.message;
+    });
+    return;
+  }
+  const signIn = step === "password"
+    ? supaFetch("/auth/v1/token?grant_type=password", { email: LOGIN_SUPA.email, password: pw.value })
+    : supaFetch("/auth/v1/verify", { type: "email", email: LOGIN_SUPA.email, token: value });
+  signIn.then(function (res) {
+    gotSupaSession(res);
+    return supaRpc("my_teams", {});
+  }).then(function (teams) {
+    done();
+    LOGIN_SUPA.teams = Array.isArray(teams) ? teams : [];
+    const s = supaSession() || {};
+    if (!LOGIN_SUPA.teams.length) {
+      AUTH.token = ""; AUTH.until = 0; saveAuth(); storeSupaSession(null); supaLoginShow("email");
+      err.textContent = "Du er ikke tilknyttet et hold endnu. Spørg holdlederen.";
+    } else if (LOGIN_SUPA.teams.length === 1 || LOGIN_SUPA.teams.some(t => t.id === s.team)) {
+      supaChooseTeam(LOGIN_SUPA.teams.some(t => t.id === s.team) ? s.team : LOGIN_SUPA.teams[0].id);
+    } else supaLoginShow("team");
+  }, function (e) {
+    done();
+    err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt."
+      : step === "password" ? (/not confirmed/i.test(e.message) ? "Brugeren er ikke bekræftet endnu. Holdlederen skal oprette den med \u201cAuto Confirm User\u201d."
+        : /LOGIN|invalid/i.test(e.message) ? "Forkert e-mail eller adgangskode. Prøv igen, eller spørg holdlederen." : "Kunne ikke logge ind: " + e.message)
+      : "Forkert eller udløbet kode. Prøv igen, eller bed om en ny.";
+    pw.select();
+  });
+}
+
 document.getElementById("login-form").addEventListener("submit", function (e) {
   e.preventDefault();
+  if (useSupabase()) { supaLoginSubmit(); return; }
   const pw = document.getElementById("login-pw").value;
   if (!pw.trim()) return;
   const go = document.getElementById("login-go"), err = document.getElementById("login-err");
@@ -1482,12 +1718,8 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
       AUTH.token = res.token;
       AUTH.until = Date.now() + res.seconds * 1000;
       AUTH.span = res.seconds * 1000;
-      prefetchGroups();
-      sendQueue();                     // saves that were waiting for a login
       saveAuth(); scheduleExpiry();
-      const cb = LOGIN_CB; LOGIN_CB = null;
-      closeLogin();
-      if (cb && cb.ok) cb.ok();
+      loginDone();
     }, function () {
       done();
       err.textContent = "Kunne ikke kontrollere koden. Prøv igen om lidt.";
@@ -2544,7 +2776,7 @@ function openDrill(i) {
 }
 
 /* ---- training sessions in the same viewer ---- */
-/* The exercise ID in a link: from both the old and the new DBU address, and from a Pasbygger link (?d=ID) */
+/* The exercise ID in a link: from both the old and the new DBU address, and from a Træningsparat link (?d=ID) */
 function exerciseIdFromUrl(u) {
   const m = String(u || "").match(/[?&](?:exerciseId|id)=(\d+)/i);
   if (m) return m[1];
@@ -3682,7 +3914,7 @@ function fetchGroupData() {
 let GRP_STORED = null;
 function readStoredGroups() {
   if (GRP_CACHE || !isAuthed()) return Promise.resolve(GRP_CACHE);
-  if (!GRP_STORED) GRP_STORED = readSaved("grp", s => s.version && s.data && Array.isArray(s.data.players)).then(function (s) {
+  if (!GRP_STORED) GRP_STORED = readSaved(grpStoreKey(), s => s.version && s.data && Array.isArray(s.data.players)).then(function (s) {
     GRP_STORED = null;
     if (s && !GRP_CACHE && isAuthed()) GRP_CACHE = { version: s.version, data: s.data, at: 0 };
     return GRP_CACHE;
@@ -3690,8 +3922,11 @@ function readStoredGroups() {
   return GRP_STORED;
 }
 function storeGroups() {
-  if (GRP_CACHE) idbSet("grp", JSON.stringify({ version: GRP_CACHE.version, data: GRP_CACHE.data }));
+  if (GRP_CACHE) idbSet(grpStoreKey(), JSON.stringify({ version: GRP_CACHE.version, data: GRP_CACHE.data }));
 }
+
+/* The phone's copy is kept per team with the database (two teams never mix), as "grp" with the sheet */
+const grpStoreKey = () => useSupabase() ? "grp-" + supaTeam() : "grp";
 
 /* Fetch ahead (when a training is opened, after a login, when the app opens), unless it was just done */
 function prefetchGroups() {
@@ -4993,7 +5228,7 @@ function noConnection(err) {
 
 /* What is waiting, put into a copy of the players and groups (after a fresh copy has come from the server) */
 function applyQueue(data) {
-  readQueue().forEach(x => putSaved(data, x.kind, x.key, x.names, ""));
+  readQueue().filter(x => !x.team || x.team === supaTeam()).forEach(x => putSaved(data, x.kind, x.key, x.names, ""));
   return data;
 }
 /* One training's saved groups, matches or signups into the phone's copy; an empty list removes them (as on the server) */
@@ -5012,7 +5247,7 @@ function putSaved(data, kind, key, names, saved) {
 
 function keepForLater(want, kind, names) {
   const q = readQueue().filter(x => !(x.kind === kind && x.key === want.key));
-  q.push({ kind: kind, key: want.key, names: names, at: Date.now() });
+  q.push({ kind: kind, key: want.key, names: names, at: Date.now(), team: useSupabase() ? supaTeam() : undefined });
   writeQueue(q);
   applyQueue(want.data);
   if (kind === "groups") { want.groups = names.map(g => g.map(grpPlayer)); want.saved = ""; want.dirty = false; }
@@ -5032,7 +5267,7 @@ function sendQueue() {
   }
   QUEUE_SENDING = true;
   const x = q[0];
-  libCall(SAVE_ACTIONS[x.kind], [AUTH.token, x.key, x.names]).then(function (res) {
+  libCall(SAVE_ACTIONS[x.kind], [AUTH.token, x.key, x.names].concat(x.team ? [x.team] : [])).then(function (res) {
     writeQueue(readQueue().filter(y => !(y.kind === x.kind && y.key === x.key && y.at === x.at)));
     if (GRP_CACHE) {
       const d = GRP_CACHE.data;
@@ -5120,7 +5355,7 @@ function askTwin(twin, save) {
 /* Removes one training's saved groups or matches: on the phone at once, on the server through the queue */
 function queueRemove(data, kind, key) {
   const q = readQueue().filter(x => !(x.kind === kind && x.key === key));
-  q.push({ kind: kind, key: key, names: [], at: Date.now() });
+  q.push({ kind: kind, key: key, names: [], at: Date.now(), team: useSupabase() ? supaTeam() : undefined });
   writeQueue(q);
   putSaved(data, kind, key, [], "");
   if (GRP_CACHE && GRP_CACHE.data === data) storeGroups();
@@ -5476,10 +5711,19 @@ fixBox.addEventListener("click", function (e) {
 prefetchGroups();                  // still logged in when the app opens: fetch the players ahead
 sendQueue();                       // saves that were waiting for a connection
 
+/* The address links are made from: this page's own, except inside the App Store / Google Play app (whose own address,
+   capacitor://localhost or https://localhost, only works on that phone), where it is the app on GitHub Pages. */
+const PUBLIC_APP_URL = "https://1shpshp1.github.io/traeningsparat/";
+function appAddress() {
+  return /^https?:$/.test(location.protocol) && location.hostname !== "localhost" && !window.Capacitor
+    ? location.origin + location.pathname : PUBLIC_APP_URL;
+}
+
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
 function sessionLink(s) {
   if (!s || !s.iso) return "";
-  return location.origin + location.pathname + "?s=" + encodeURIComponent(s.iso);
+  const hold = useSupabase() && PLAN_CODE ? "hold=" + encodeURIComponent(PLAN_CODE) + "&" : "";   // the team's plan
+  return appAddress() + "?" + hold + "s=" + encodeURIComponent(s.iso);
 }
 
 function copySessionLink(btn) {
@@ -5494,7 +5738,7 @@ function copySessionLink(btn) {
 
 /* Opened through a training link: show that training straight away */
 /* FCK's drill bank has no address for a single drill (a drill opens as a pop-up on its front page).
-   So "Kopiér link" on an FCK drill gives a Pasbygger link instead, which opens the drill here. */
+   So "Kopiér link" on an FCK drill gives a Træningsparat link instead, which opens the drill here. */
 function isFckLink(u) {
   try { return new URL(u).hostname === "fck.better-coaching.dk"; } catch (e) { return false; }
 }
@@ -5503,7 +5747,7 @@ function isFckLink(u) {
 function appDrillLink(d) {
   const id = cleanVal(d && d["ID"]);
   if (!id) return "";
-  return location.origin + location.pathname + "?d=" + encodeURIComponent(id);
+  return appAddress() + "?d=" + encodeURIComponent(id);
 }
 
 /* Opened through a drill link (?d=...): ask for the code if needed, then show that drill */

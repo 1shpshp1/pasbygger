@@ -1,5 +1,7 @@
 # Træningsparat
 
+(Formerly Pasbygger.) The app: https://1shpshp1.github.io/traeningsparat/
+
 Training plans, a drill library and training groups for youth football coaches. The app is `index.html`
 (served by GitHub Pages); its data comes from a Google Sheet through the Apps Script files in
 [`apps-script/`](apps-script/).
@@ -37,5 +39,8 @@ npm test
   run on the code exactly as it is in `index.html`.
 - `tests/server.test.js`: the Apps Script files in a simulated Google Sheet (login, players, groups, signups).
 - `tests/app.test.js`: the app in a real browser at phone size, with the server simulated.
+- `tests/supabase.test.js`: the database (`supabase/schema.sql`) on a real PostgreSQL, if one is installed.
+
+The app as an iOS / Android app is in `app/` (see its README); the database (Supabase) in `supabase/`.
 
 The tests use made-up players and never touch the real sheet.
