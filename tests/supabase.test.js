@@ -142,9 +142,9 @@ test.describe('database (Supabase)', { skip }, () => {
     assert.ok(!JSON.stringify(d).includes('"Bo"'), 'no trace of Bo');
     assert.deepEqual(d.matches['2026-11-09'].matches, [[[], ['Alma']]]);
   });
-  test('a team\'s training plan: coaches write it, anyone with the team\'s code reads it (unless it is not public)', () => {
+  test('a team\'s training plan: the admin writes it (with 0–8 stations), anyone with the team\'s code reads it (unless it is not public)', () => {
     const t = json(`select save_training('${A}', '{"iso": "2026-12-01", "date": "Tirsdag 1. dec.", "focus": "Afslutninger",
-      "notes": [{"text": "Husk kegler", "url": ""}], "station1": {"text": "Skud på mål", "url": "", "drillId": "d1", "coaches": ["Ole", " "]}}');`, U.coach);
+      "notes": [{"text": "Husk kegler", "url": ""}], "station1": {"text": "Skud på mål", "url": "", "drillId": "d1", "coaches": ["Ole", " "]}}');`, U.leader);
     assert.equal(t.ok, true);
     const code = sql(`select plan_code from teams where id = '${A}';`);
     const p = json(`select get_plan('${code}');`, 'anon');
@@ -154,10 +154,19 @@ test.describe('database (Supabase)', { skip }, () => {
     assert.deepEqual(s.station1, { text: 'Skud på mål', url: '', drillId: 'd1', coaches: ['Ole'] });
     assert.deepEqual(s.finish, { text: '', url: '', drillId: '', coaches: [] });
     assert.equal(json(`select get_plan('${code}', '${p.version}');`, 'anon').unchanged, true);
-    json(`select save_training('${A}', '{"id": "${t.id}", "iso": "2026-12-02", "focus": "Driblinger"}');`, U.coach);
+    json(`select save_training('${A}', '{"id": "${t.id}", "iso": "2026-12-02", "focus": "Driblinger"}');`, U.leader);
     assert.equal(json(`select get_plan('', '', '${A}');`, U.assistant).sessions[0].focus, 'Driblinger');   // the member's own team
-    fails(`select save_training('${A}', '{"focus": "x"}');`, U.other, /adgang/);
-    fails(`select save_training('${A}', '{"focus": "x"}');`, U.assistant, /adgang/);
+    fails(`select save_training('${A}', '{"focus": "x"}');`, U.other, /admin/);
+    fails(`select save_training('${A}', '{"focus": "x"}');`, U.assistant, /admin/);
+    fails(`select save_training('${A}', '{"focus": "x"}');`, U.coach, /admin/);          // only the team's admin plans
+    const six = json(`select save_training('${A}', '{"iso": "2026-12-03", "stations": 6, "station5": {"text": "Femte"}}');`, U.leader);
+    let st = json(`select get_plan('${code}');`, 'anon').sessions.find(x => x.id === six.id);
+    assert.deepEqual(Object.keys(st).filter(k => /^station/.test(k)).sort(), ['station1', 'station2', 'station3', 'station4', 'station5', 'station6']);
+    assert.equal(st.station5.text, 'Femte');
+    json(`select save_training('${A}', '{"id": "${six.id}", "iso": "2026-12-03", "stations": 2, "station5": {"text": "væk"}}');`, U.leader);
+    st = json(`select get_plan('${code}');`, 'anon').sessions.find(x => x.id === six.id);
+    assert.deepEqual(Object.keys(st).filter(k => /^station/.test(k)).sort(), ['station1', 'station2'], 'fewer stations: the rest are gone');
+    json(`select delete_training('${A}', '${six.id}');`, U.leader);
     sql(`update teams set plan_public = false where id = '${A}';`);
     fails(`select get_plan('${code}');`, 'anon', /ikke offentlig/);
     assert.equal(json(`select get_plan('${code}');`, U.coach).sessions.length, 1);
@@ -193,9 +202,10 @@ test.describe('database (Supabase)', { skip }, () => {
 
   test('without a login, a drill opens only if the team\'s plan uses it; app opens are counted, nothing about who', () => {
     const code = sql(`select plan_code from teams where id = '${A}';`);
-    json(`select save_training('${A}', '{"iso": "2026-12-08", "station2": {"text": "Rondo", "drillId": "d2"}}');`, U.coach);
+    json(`select save_training('${A}', '{"iso": "2026-12-08", "station2": {"text": "Rondo", "drillId": "d2"}}');`, U.leader);
     const r = json(`select get_session_drills(array['d2', 'd1', 'EGNE-2'], '${code}');`, 'anon');
-    assert.deepEqual(r.drills.map(d => d.ID), ['d2', 'd1']);                      // both in the plan; the other club's own drill is not
+    assert.deepEqual(r.drills.map(d => d.ID), ['d2']);                             // d1 left the plan when its training was edited;
+                                                                                  // the other club's own drill is not in it
     assert.equal(r.drills[0]['Navn (DA)'], 'Rondo på dansk');                       // the translation travels with it
     assert.equal(sql(`select get_session_drills(array['FCK-1', 'd3'], '${code}');`, 'anon'), '');   // not in the plan
     sql(`select track('open', 'true'); select track('open', 'false'); select track('drill', 'd2', 'Rondo');`, 'anon');
@@ -225,18 +235,18 @@ test.describe('database (Supabase)', { skip }, () => {
   });
   test('a deleted training can be brought back (90 days); it is gone from the plan meanwhile', () => {
     const code = sql(`select plan_code from teams where id = '${A}';`);
-    const t = json(`select save_training('${A}', '{"iso": "2026-12-15", "focus": "Til at slette"}');`, U.coach);
-    json(`select delete_training('${A}', '${t.id}');`, U.coach);
+    const t = json(`select save_training('${A}', '{"iso": "2026-12-15", "focus": "Til at slette"}');`, U.leader);
+    json(`select delete_training('${A}', '${t.id}');`, U.leader);
     assert.ok(!json(`select get_plan('${code}');`, 'anon').sessions.some(x => x.id === t.id), 'not in the plan');
-    const del = json(`select deleted_trainings('${A}');`, U.coach);
+    const del = json(`select deleted_trainings('${A}');`, U.leader);
     assert.equal(del[0].id, t.id);
     assert.deepEqual([del[0].iso, del[0].focus], ['2026-12-15', 'Til at slette']);
     assert.match(del[0].deleted, /^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/);
-    fails(`select deleted_trainings('${A}');`, U.assistant, /adgang/);
-    json(`select restore_training('${A}', '${t.id}');`, U.coach);
+    fails(`select deleted_trainings('${A}');`, U.assistant, /admin/);
+    json(`select restore_training('${A}', '${t.id}');`, U.leader);
     assert.ok(json(`select get_plan('${code}');`, 'anon').sessions.some(x => x.id === t.id), 'back in the plan');
-    assert.ok(!json(`select deleted_trainings('${A}');`, U.coach).some(x => x.id === t.id));
-    fails(`select restore_training('${A}', '${t.id}');`, U.coach, /findes ikke/);
+    assert.ok(!json(`select deleted_trainings('${A}');`, U.leader).some(x => x.id === t.id));
+    fails(`select restore_training('${A}', '${t.id}');`, U.leader, /findes ikke/);
   });
 
   test('the admin keeps the players: adds, changes levels, renames (the history follows), and only the admin', () => {

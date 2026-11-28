@@ -403,7 +403,7 @@ create table if not exists trainings (
   subtheme   text not null default '' check (length(subtheme) <= 200),
   focus      text not null default '' check (length(focus) <= 200),
   notes      jsonb not null default '[]',              -- [{ text, url }]
-  parts      jsonb not null default '{}',              -- { startup, station1–4, finish: { text, url, drillId, coaches } }
+  parts      jsonb not null default '{}',              -- { startup, station1–N (up to 8), finish: { text, url, drillId, coaches } }
   updated_at timestamptz not null default now(),
   updated_by uuid default auth.uid()
 );
@@ -480,8 +480,8 @@ alter table app_admins       enable row level security;
 alter table usage_counts     enable row level security;
 
 create policy "plan: members see it" on trainings for select using (has_team_role(team_id, 'assistant'));
-create policy "plan: coaches write it" on trainings for all
-  using (has_team_role(team_id, 'coach')) with check (has_team_role(team_id, 'coach'));
+create policy "plan: admins write it" on trainings for all
+  using (has_team_role(team_id, 'admin')) with check (has_team_role(team_id, 'admin'));
 create policy "sources: everyone logged in sees them" on drill_sources for select using (true);
 create policy "sources: app admins change them" on drill_sources for all using (is_app_admin()) with check (is_app_admin());
 create policy "drills: visible ones" on drills for select using (drill_visible(drills) or is_app_admin());
@@ -512,7 +512,7 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- The plan, as getPlan in apps-script/Code.gs: { version, sessions: [{ date, iso, theme, subtheme, focus, notes,
--- startup, station1–4, finish }] }, or { unchanged, version }. Anyone with the team's code may read a public plan.
+-- startup, station1–N, finish }] }, or { unchanged, version }. Anyone with the team's code may read a public plan.
 create or replace function get_plan(code text default '', have text default '', team uuid default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare t uuid := plan_team(coalesce(code, ''), team); data jsonb; v text;
@@ -523,7 +523,8 @@ begin
       'iso', coalesce(to_char(x.day, 'YYYY-MM-DD'), ''), 'theme', x.theme, 'subtheme', x.subtheme, 'focus', x.focus,
       'notes', x.notes) || (select coalesce(jsonb_object_agg(k, coalesce(x.parts -> k,
         '{"text": "", "url": "", "drillId": "", "coaches": []}'::jsonb)), '{}')
-        from unnest(array['startup', 'station1', 'station2', 'station3', 'station4', 'finish']) k)
+        from unnest(array['startup', 'finish']) k)
+        || coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(x.parts) e where e.key ~ '^station[0-9]+$'), '{}')
       order by x.day nulls last, x.updated_at), '[]')
     into data from trainings x where x.team_id = t and x.deleted_at is null;
   v := left(md5(data::text), 12);
@@ -532,16 +533,19 @@ begin
                             'code', (select plan_code from teams where id = t));
 end $$;
 
--- Saves one training of the plan (a new one when id is empty) and gives back { ok, id }. Coaches only.
+-- Saves one training of the plan (a new one when id is empty) and gives back { ok, id }. Admins only. The number of
+-- stations is training.stations (0–8), or else the stations sent (station1, station2, …).
 create or replace function save_training(team uuid, training jsonb) returns jsonb
 language plpgsql security invoker set search_path = public as $$
 #variable_conflict use_column
-declare tid uuid := nullif(training ->> 'id', '')::uuid; parts jsonb := '{}'; k text; p jsonb;
+declare tid uuid := nullif(training ->> 'id', '')::uuid; new_parts jsonb := '{}'; k text; p jsonb; n integer;
 begin
-  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
-  foreach k in array array['startup', 'station1', 'station2', 'station3', 'station4', 'finish'] loop
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan rette træningsplanen.'; end if;
+  n := least(8, greatest(0, coalesce(nullif(training ->> 'stations', '')::integer,
+         (select max(substr(key, 8)::integer) from jsonb_object_keys(training) key where key ~ '^station[0-9]+$'), 0)));
+  foreach k in array array['startup', 'finish'] || array(select 'station' || i from generate_series(1, n) i) loop
     p := coalesce(training -> k, '{}');
-    parts := parts || jsonb_build_object(k, jsonb_build_object('text', left(coalesce(p ->> 'text', ''), 300),
+    new_parts := new_parts || jsonb_build_object(k, jsonb_build_object('text', left(coalesce(p ->> 'text', ''), 300),
       'url', left(coalesce(p ->> 'url', ''), 500), 'drillId', left(coalesce(p ->> 'drillId', ''), 40),
       'coaches', coalesce((select jsonb_agg(left(btrim(c), 60)) from jsonb_array_elements_text(coalesce(p -> 'coaches', '[]')) c
                           where btrim(c) <> ''), '[]')));
@@ -550,12 +554,12 @@ begin
     insert into trainings (team_id, day, date_text, theme, subtheme, focus, notes, parts)
     values (team, nullif(training ->> 'iso', '')::date, left(coalesce(training ->> 'date', ''), 60),
             left(coalesce(training ->> 'theme', ''), 200), left(coalesce(training ->> 'subtheme', ''), 200),
-            left(coalesce(training ->> 'focus', ''), 200), coalesce(training -> 'notes', '[]'), parts)
+            left(coalesce(training ->> 'focus', ''), 200), coalesce(training -> 'notes', '[]'), new_parts)
     returning id into tid;
   else
     update trainings set day = nullif(training ->> 'iso', '')::date, date_text = left(coalesce(training ->> 'date', ''), 60),
       theme = left(coalesce(training ->> 'theme', ''), 200), subtheme = left(coalesce(training ->> 'subtheme', ''), 200),
-      focus = left(coalesce(training ->> 'focus', ''), 200), notes = coalesce(training -> 'notes', '[]'), parts = parts,
+      focus = left(coalesce(training ->> 'focus', ''), 200), notes = coalesce(training -> 'notes', '[]'), parts = new_parts,
       updated_at = now(), updated_by = auth.uid()
     where id = tid and team_id = team;
     if not found then raise exception 'Træningen findes ikke på holdet.'; end if;
@@ -566,7 +570,7 @@ end $$;
 create or replace function delete_training(team uuid, training_id uuid) returns jsonb
 language plpgsql security invoker set search_path = public as $$
 begin
-  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan rette træningsplanen.'; end if;
   update trainings set deleted_at = now(), deleted_by = auth.uid() where id = training_id and team_id = team and deleted_at is null;
   return jsonb_build_object('ok', true);
 end $$;
@@ -575,7 +579,7 @@ end $$;
 create or replace function deleted_trainings(team uuid) returns jsonb
 language plpgsql stable security invoker set search_path = public as $$
 begin
-  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan rette træningsplanen.'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'iso', coalesce(to_char(day, 'YYYY-MM-DD'), ''),
       'date', date_text, 'focus', focus, 'deleted', saved_text(deleted_at)) order by deleted_at desc)
     from trainings where team_id = team and deleted_at > now() - interval '90 days'), '[]');
@@ -585,7 +589,7 @@ end $$;
 create or replace function restore_training(team uuid, training_id uuid) returns jsonb
 language plpgsql security invoker set search_path = public as $$
 begin
-  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan rette træningsplanen.'; end if;
   update trainings set deleted_at = null, deleted_by = null, updated_at = now(), updated_by = auth.uid()
     where id = training_id and team_id = team and deleted_at is not null;
   if not found then raise exception 'Træningen findes ikke blandt de slettede.'; end if;
@@ -629,9 +633,9 @@ language plpgsql stable security definer set search_path = public as $$
 declare t uuid := plan_team(coalesce(code, ''), team); used text[]; list jsonb; s library_settings;
 begin
   if t is null then return null; end if;
-  select array_agg(distinct x.parts -> k ->> 'drillId') into used
-    from trainings x, unnest(array['startup', 'station1', 'station2', 'station3', 'station4', 'finish']) k
-    where x.team_id = t and x.deleted_at is null and coalesce(x.parts -> k ->> 'drillId', '') <> '';
+  select array_agg(distinct e.value ->> 'drillId') into used
+    from trainings x, jsonb_each(x.parts) e
+    where x.team_id = t and x.deleted_at is null and coalesce(e.value ->> 'drillId', '') <> '';
   select jsonb_agg(drill_json(d) || d.content_da order by d.name) into list
     from drills d join drill_sources src on src.id = d.source_id
     where d.id = any(ids[1:12]) and d.id = any(coalesce(used, '{}')) and d.published and src.active

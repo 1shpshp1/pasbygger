@@ -72,7 +72,7 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
   træninger (kun admin).
 - **Spillere** rettes indtil videre i *Table Editor → players* (navn, `lo` = Fra, `hi` = Til, `positions`, `active`),
   indtil der kommer adminsider i appen. **Træningsplanen** skrives i appen: *+ Ny træning* over listen, og *Ret
-  træningen* / *Kopiér til ny træning* i en åben træning (admins og trænere).
+  træningen* / *Kopiér til ny træning* i en åben træning (kun holdets admin; 0–8 stationer pr. træning).
 - **Statistik** står i `usage_counts` (antal pr. dag, intet om hvem).
 - **Backup:** Supabase tager daglig backup på betalte planer; på den gratis plan bør du selv eksportere jævnligt.
 

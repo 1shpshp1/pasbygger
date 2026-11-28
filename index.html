@@ -425,7 +425,7 @@
     .plan-edit { display: flex; gap: 10px; flex-wrap: wrap; }
     .plan-edit .v-findbtn { flex: 1 1 140px; width: auto; text-align: center; }
     .planner label { display: block; margin: 12px 0 0; font-weight: bold; font-size: 14px; }
-    .planner input, .planner textarea {
+    .planner input, .planner textarea, .planner select {
       display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 10px 12px; border: 1px solid #cccccc;
       border-radius: 10px; background: #ffffff; font: inherit; font-weight: normal;
     }
@@ -847,7 +847,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 29. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 29. nov. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2948,7 +2948,7 @@ function fetchSessionDrill(drillId, cb) {
 /* Fetch a session's drills in the background (one call), so the tap is instant */
 function prefetchSession(s) {
   if (LIB || !s) return;
-  loadSessionDrills(SESSION_ITEMS.map(it => s[it[1]] && s[it[1]].drillId).filter(Boolean));
+  loadSessionDrills(sessionItems(s).map(it => s[it[1]] && s[it[1]].drillId).filter(Boolean));
 }
 
 /* Tap on a station: open the swipeable drill; "Tilbage" returns to the session */
@@ -2965,14 +2965,22 @@ function openSessionItem(index, key) {
   else open(null);
 }
 
-/* The parts of a training, in order: label shown in the app + key (the same keys as STATION_KEYS in Code.gs) */
-const SESSION_ITEMS = [
-  ["Fælles opstart", "startup"], ["Station 1", "station1"], ["Station 2", "station2"],
-  ["Station 3", "station3"], ["Station 4", "station4"], ["Fælles afslutning", "finish"]
-];
+/* The parts of a training, in order: label shown in the app + key. A training has 0–8 stations (station1, station2, …;
+   the sheet's plan always 4), between the common start and finish. count: that many stations, else the training's own. */
+const STATION_MAX = 8;
+function stationCount(s) {
+  let n = 0;
+  Object.keys(s || {}).forEach(function (k) { const m = /^station(\d+)$/.exec(k); if (m) n = Math.max(n, +m[1]); });
+  return Math.min(n, STATION_MAX);
+}
+function sessionItems(s, count) {
+  const n = count == null ? stationCount(s) : count;
+  return [["Fælles opstart", "startup"]].concat(Array.from({ length: n }, (_, i) => ["Station " + (i + 1), "station" + (i + 1)]),
+                                                 [["Fælles afslutning", "finish"]]);
+}
 
 function sessionPages(s, index) {
-  const items = SESSION_ITEMS
+  const items = sessionItems(s)
     .map(it => ({ label: it[0], key: it[1], v: s[it[1]] }))
     .filter(it => it.v && (it.v.text || safeUrl(it.v.url)));
 
@@ -3085,7 +3093,7 @@ function renderAdmin() {
       ${ADM.members.map(m => `<div class="adm-row"><span><strong>${esc(m.email)}</strong>${m.me ? "<small>Dig</small>" : ""}</span>
         ${roleSelect(m.role, `data-adm="role" data-user="${esc(m.user_id)}" aria-label="Rolle for ${esc(m.email)}"`)}
         <button type="button" class="clearbtn planner-del" data-adm="remove" data-user="${esc(m.user_id)}" data-email="${esc(m.email)}">Fjern</button></div>`).join("")}
-      <p class="grp-hint">Admin: alt, også spillere, niveauer og trænere. Træner: træningsplan, grupper og kampe. Hjælpetræner: ser ingen niveauer og kan kun gemme tilmeldte.</p>
+      <p class="grp-hint">Admin: alt, også træningsplanen, spillere, niveauer og trænere. Træner: grupper og kampe. Hjælpetræner: ser ingen niveauer og kan kun gemme tilmeldte.</p>
     </section>
     <section class="adm-sec"><h3>Invitér en træner</h3>
       <div class="adm-invite">${roleSelect("coach", 'id="adm-invite-role" aria-label="Rolle for den nye træner"')}
@@ -3146,7 +3154,7 @@ document.getElementById("adm").addEventListener("submit", function (e) {
 function canPlan() {
   if (!useSupabase() || !isAuthed() || !supaTeam() || (PLAN_TEAM && PLAN_TEAM !== supaTeam())) return false;
   const t = ((supaSession() || {}).teams || []).find(x => x.id === supaTeam());
-  return !!t && (t.role === "admin" || t.role === "coach");
+  return !!t && t.role === "admin";                // only the team's admin writes the plan
 }
 let PLANNER = null;                                  // { index, base, copy, drills: [{ id, name }] }
 const plannerDrills = () => (LIB ? Promise.resolve(LIB.drills) : libCall("getDrills", [AUTH.token, ""]).then(r => r.drills || []))
@@ -3159,20 +3167,19 @@ function openPlanner(index, copy) {
   const notes = (v.notes || []).map(p => [p.text, p.url].filter(Boolean).join(" ")).join("\n");
   const field = (name, label, value, attrs) =>
     `<label>${label}<input name="${name}" value="${esc(value || "")}" ${attrs || ""}></label>`;
-  const parts = SESSION_ITEMS.map(function (it) {
-    const p = v[it[1]] || {};
-    return `<fieldset><legend>${esc(it[0])}</legend>
-      <input name="${it[1]}.text" list="planner-drills" value="${esc(p.text || "")}" placeholder="Søg øvelse eller skriv tekst" aria-label="${esc(it[0])}: øvelse eller tekst" autocomplete="off">
-      <input name="${it[1]}.url" type="url" value="${esc(p.url || "")}" placeholder="Link (valgfrit)" aria-label="${esc(it[0])}: link">
-      <input name="${it[1]}.coaches" value="${esc((p.coaches || []).join(", "))}" placeholder="Trænere, adskilt med komma" aria-label="${esc(it[0])}: trænere"></fieldset>`;
-  }).join("");
+  const n = base ? stationCount(base) : 4;
+  const part = it => plannerPart(it, v[it[1]] || {});
   const html = `<form id="planner" class="planner" onsubmit="event.preventDefault(); plannerSave();" novalidate>
     ${field("iso", "Dato", copy ? "" : v.iso, 'type="date"')}
     ${field("focus", "Overskrift (fokus)", v.focus, 'placeholder="Fx Afslutte, drible eller aflevere?"')}
     ${field("theme", "Tema", v.theme, 'placeholder="Flere adskilles med ;"')}
     ${field("subtheme", "Undertema", v.subtheme)}
     <label>Noter<textarea name="notes" rows="3" placeholder="Et link på en linje bliver til et link">${esc(notes)}</textarea></label>
-    ${parts}
+    ${part(["Fælles opstart", "startup"])}
+    <label>Antal stationer<select name="stations" onchange="plannerStations(+this.value)">${Array.from({ length: STATION_MAX + 1 },
+      (_, i) => `<option value="${i}"${i === n ? " selected" : ""}>${i}</option>`).join("")}</select></label>
+    <div id="planner-stations">${sessionItems(v, n).slice(1, -1).map(part).join("")}</div>
+    ${part(["Fælles afslutning", "finish"])}
     <datalist id="planner-drills"></datalist>
     <p class="planner-msg" role="status"></p>
     <div class="planner-actions">
@@ -3190,6 +3197,26 @@ function openPlanner(index, copy) {
     if (dl) dl.innerHTML = drills.map(d => `<option value="${esc(d.name)}"></option>`).join("");
   }, function () { plannerMsg("Kunne ikke hente øvelserne. Du kan stadig skrive tekst."); });
 }
+/* One part of the form (opstart, a station, afslutning): a drill or text, a link, the coaches */
+function plannerPart(it, p) {
+  return `<fieldset data-part="${it[1]}"><legend>${esc(it[0])}</legend>
+      <input name="${it[1]}.text" list="planner-drills" value="${esc(p.text || "")}" placeholder="Søg øvelse eller skriv tekst" aria-label="${esc(it[0])}: øvelse eller tekst" autocomplete="off">
+      <input name="${it[1]}.url" type="url" value="${esc(p.url || "")}" placeholder="Link (valgfrit)" aria-label="${esc(it[0])}: link">
+      <input name="${it[1]}.coaches" value="${esc((p.coaches || []).join(", "))}" placeholder="Trænere, adskilt med komma" aria-label="${esc(it[0])}: trænere"></fieldset>`;
+}
+/* "Antal stationer" changed: as many station boxes, keeping what was written in those that stay (and in those that
+   go, should the number go up again before saving) */
+function plannerStations(n) {
+  const box = document.getElementById("planner-stations");
+  if (!box || !PLANNER) return;
+  const kept = PLANNER.kept = PLANNER.kept || {};
+  box.querySelectorAll("fieldset[data-part]").forEach(function (fs) {
+    const k = fs.dataset.part, val = name => fs.querySelector(`[name="${k}.${name}"]`).value;
+    kept[k] = { text: val("text"), url: val("url"), coaches: val("coaches").split(/[,;]/).map(c => c.trim()).filter(Boolean) };
+  });
+  const from = PLANNER.copy || !PLANNER.base ? {} : PLANNER.base;
+  box.innerHTML = sessionItems(null, n).slice(1, -1).map(it => plannerPart(it, kept[it[1]] || (PLANNER.base || {})[it[1]] || from[it[1]] || {})).join("");
+}
 function plannerMsg(text, bad) {
   const el = document.querySelector("#planner .planner-msg");
   if (el) { el.textContent = text; el.classList.toggle("bad", bad !== false); }
@@ -3206,7 +3233,8 @@ function plannerTraining() {
     const m = line.match(/https?:\/\/\S+/);
     return { text: m ? line.replace(m[0], "").trim() || m[0] : line, url: m ? m[0] : "" };
   });
-  SESSION_ITEMS.forEach(function (it) {
+  t.stations = +get("stations") || 0;
+  sessionItems(null, t.stations).forEach(function (it) {
     const k = it[1], text = get(k + ".text"), old = (PLANNER.base || {})[k] || {};
     t[k] = { text: text, url: get(k + ".url"),
              drillId: byName[text.toLowerCase()] || (text && text === old.text ? old.drillId || "" : ""),

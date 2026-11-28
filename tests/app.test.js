@@ -1086,7 +1086,7 @@ test('the database is on for everyone; ?database=nej makes one phone use the she
   assert.deepEqual(page.errors, []);
 });
 
-test('The planner (database): a coach makes, edits, copies and deletes trainings, choosing drills from the library; assistants and visitors can\'t', { skip }, async () => {
+test('The planner (database): the admin makes, edits, copies and deletes trainings with 0–8 stations, choosing drills from the library; coaches and visitors can\'t', { skip }, async () => {
   const srv = testServer(), page = await phone(srv, { loggedIn: false });
   const jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'r'.repeat(120) + '.sig', saved = [], deleted = [];
   let role = 'admin';
@@ -1138,6 +1138,10 @@ test('The planner (database): a coach makes, edits, copies and deletes trainings
   await page.fill('#planner [name="station2.text"]', 'Portspillet');
   await page.fill('#planner [name="station2.coaches"]', 'Ole, Sune');
   await page.fill('#planner [name="station3.text"]', 'Fri leg');
+  assert.equal(await page.inputValue('#planner [name="stations"]'), '4', 'four stations to begin with');
+  await page.selectOption('#planner [name="stations"]', '6');
+  assert.equal(await page.inputValue('#planner [name="station2.text"]'), 'Portspillet', 'what was written stays');
+  await page.fill('#planner [name="station5.text"]', 'Femte station');
   await page.click('#planner .login-go');
   await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
   const t = saved[0].training;
@@ -1146,16 +1150,20 @@ test('The planner (database): a coach makes, edits, copies and deletes trainings
   assert.deepEqual(t.notes, [{ text: 'Kegler og veste', url: '' }, { text: 'Video', url: 'https://example.com/v' }]);
   assert.deepEqual(t.station2, { text: 'Portspillet', url: '', drillId: 'D2', coaches: ['Ole', 'Sune'] });
   assert.deepEqual(t.station3, { text: 'Fri leg', url: '', drillId: '', coaches: [] });
+  assert.deepEqual([t.stations, t.station5.text, Object.keys(t).filter(k => /^station\d/.test(k)).length], [6, 'Femte station', 6]);
   await page.waitForFunction(() => /Afslutninger/.test(document.getElementById('sessions').innerText));
   // edit: the drill stays, the focus changes
   await page.locator('#sessions .card', { hasText: 'Pasninger' }).locator('.header').click();
   await page.click('#viewer .plan-edit button:has-text("Ret træningen")');
   assert.equal(await page.inputValue('#planner [name="station1.text"]'), 'Rondo');
   await page.fill('#planner [name="focus"]', 'Pasninger og førsteberøring');
+  await page.selectOption('#planner [name="stations"]', '2');
+  assert.equal(await page.locator('#planner [name="station3.text"]').count(), 0);
   await page.click('#planner .login-go');
   await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
   assert.deepEqual([saved[1].training.id, saved[1].training.focus, saved[1].training.station1.drillId, saved[1].training.startup.coaches],
                    ['tr-1', 'Pasninger og førsteberøring', 'D1', ['Ole']]);
+  assert.deepEqual([saved[1].training.stations, 'station3' in saved[1].training], [2, false]);
   // copy: a new training with the same parts and no date
   await page.waitForFunction(() => /førsteberøring/.test(document.getElementById('sessions').innerText));
   await page.locator('#sessions .card', { hasText: 'førsteberøring' }).locator('.header').click();
@@ -1174,14 +1182,14 @@ test('The planner (database): a coach makes, edits, copies and deletes trainings
   await page.waitForFunction(() => document.querySelectorAll('#sessions .card').length === 2);
   assert.equal(deleted[0].training_id, 'tr-2');
   assert.deepEqual(page.errors, []);
-  // an assistant sees no planner
-  role = 'assistant';
+  // a coach (not the admin) sees no planner
+  role = 'coach';
   await page.evaluate(() => { localStorage.removeItem('oevAuth'); localStorage.removeItem('oevSupaSession'); });
   await page.goto(base);
   await page.waitForSelector('#sessions .card');
   await login();
   await page.waitForTimeout(500);
-  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'an assistant can\'t plan');
+  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'only the team\'s admin plans');
 });
 
 /* A stand-in for the club's Supabase project for the admin tests: answers the database functions from a little state */
@@ -1295,7 +1303,7 @@ test('Admin (database): the admin adds and changes players, sets coaches\' roles
 
 test('Deleted trainings (database): listed under the plan and brought back with "Gendan"', { skip }, async () => {
   const srv = testServer(), page = await phone(srv, { loggedIn: false });
-  const state = { teams: [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'coach' }], plan: [], invites: [], players: [], members: [],
+  const state = { teams: [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'admin' }], plan: [], invites: [], players: [], members: [],
     deleted: [{ id: 'tr-9', iso: '2030-02-04', date: '', focus: 'Slettet ved en fejl', deleted: '29.11.2026 10:00' }] };
   await fakeClub(page, srv, state);
   await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
