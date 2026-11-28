@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (2)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (3)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -974,10 +974,11 @@ function showServerNote() {
    With an address and key below (Supabase → Project Settings → API: the Project URL and the anon / publishable key),
    the players, groups, signups, matches and sets of matches are read from and saved in the database
    (supabase/schema.sql), and coaches log in with their own e-mail and a code sent to it instead of the shared code.
-   The training plan and the drills still come from the sheet: Code.gs accepts the same login (SUPABASE_URL and
-   SUPABASE_KEY in its Script Properties). Empty: everything comes from the sheet, as before.
+   The training plan, the drill library and the statistics then come from the database too, so the sheet and Apps
+   Script are not used at all. Each team's plan has a public link (<app>?hold=<code>) for players and parents; a
+   logged-in coach sees their own team's plan. Empty: everything comes from the sheet, as before.
    To try it on one phone first: localStorage.setItem("oevSupabase", JSON.stringify({ url: "…", key: "…" })). */
-const SUPABASE = { url: "", key: "" };
+const SUPABASE = { url: "", key: "", plan: "" };   // plan: the code of the team whose plan is shown to visitors without a link
 const SUPA_SESSION_KEY = "oevSupaSession";       // { refresh, exp (when the access token runs out), team, teams }
 const SUPA_LOGIN_DAYS = 14;                       // a personal login lasts 14 days after it was last used
 function supaConf() {
@@ -1018,7 +1019,25 @@ function supaFetch(path, body, token) {
       });
     });
 }
-const supaRpc = (name, params) => supaFetch("/rest/v1/rpc/" + name, params, AUTH.token);
+function authToken() { try { return AUTH.token; } catch (e) { return ""; } }   // (before the login code has loaded: none)
+const supaRpc = (name, params) => supaFetch("/rest/v1/rpc/" + name, params, authToken());
+
+/* Whose plan: a team link opened (?hold=<code>, remembered), else the logged-in coach's own team, else the code
+   remembered from a link opened earlier, else SUPABASE.plan */
+const PLAN_CODE_KEY = "oevPlanCode";
+function planArgs() {
+  let code = "";
+  try { code = new URLSearchParams(location.search).get("hold") || ""; } catch (e) { /* ignore */ }
+  if (code) { try { localStorage.setItem(PLAN_CODE_KEY, code); } catch (e) { /* ignore */ } return { code: code, team: null }; }
+  if (authToken() && supaTeam()) return { code: "", team: supaTeam() };
+  try { code = localStorage.getItem(PLAN_CODE_KEY) || ""; } catch (e) { /* ignore */ }
+  return { code: code || (supaConf() || {}).plan || "", team: null };
+}
+let PLAN_CODE = "";                                  // the shown plan's code, for links to a training
+function gotPlan(res) {
+  if (res && res.code) PLAN_CODE = res.code;
+  return res;
+}
 
 /* Logged in (access token, refresh token): the login is renewed whenever the app is used */
 function gotSupaSession(res) {
@@ -1046,7 +1065,14 @@ function supaRefreshIfNeeded() {
 
 /* The sheet server's functions for Grupper, Kampe and Spilleroversigt, done by the database instead (the same
    arguments and answers; the token is the login's). team: the team a save waiting on the phone was made for. */
+const SUPA_TEAM_ACTIONS = ["getGroupData", "saveGroups", "saveSignups", "saveMatches", "saveFixtureSet"];
 const SUPA_ACTIONS = {
+  getPlan:          version => supaRpc("get_plan", Object.assign({ have: version || "" }, planArgs())).then(gotPlan),
+  getSessions:      () => supaRpc("get_plan", planArgs()).then(gotPlan).then(res => res.sessions),
+  getSessionDrills: ids => supaRpc("get_session_drills", Object.assign({ ids: ids }, planArgs())),
+  getDrills:        (token, version) => supaRpc("get_drills", { have: version || "" }),
+  getDrillsDa:      (token, version) => supaRpc("get_drills_da", { have: version || "" }),
+  track:            (event, a, b) => supaRpc("track", { event: String(event), a: a == null ? "" : String(a), b: b == null ? "" : String(b) }),
   getGroupData:   (token, version) => supaRpc("get_group_data", { team: supaTeam(), have: version || "" }),
   saveGroups:     (token, key, groups, team) => supaRpc("save_groups", { team: team || supaTeam(), key: key, groups: groups }),
   saveSignups:    (token, key, names, team) => supaRpc("save_signups", { team: team || supaTeam(), key: key, names: names }),
@@ -1057,12 +1083,11 @@ const SUPA_ACTIONS = {
 /* Calls the server: the database for what it does (above), otherwise Code.gs. */
 function api(action, args) {
   if (!useSupabase()) return sheetApi(action, args);
-  let before;
-  try { before = AUTH.token; } catch (e) { return sheetApi(action, args); }   // the plan, asked for before the login code has loaded
-  return supaRefreshIfNeeded().then(function () {
+  const before = authToken();
+  return (before ? supaRefreshIfNeeded() : Promise.resolve()).then(function () {
     const a = (args || []).map(x => before && x === before ? AUTH.token : x);   // the renewed login in place of the old
     if (SUPA_ACTIONS[action]) {
-      if (!supaTeam()) throw serverError("LOGIN");
+      if (SUPA_TEAM_ACTIONS.indexOf(action) !== -1 && !supaTeam()) throw serverError("LOGIN");
       return SUPA_ACTIONS[action].apply(null, a);
     }
     return sheetApi(action, a);
@@ -5670,7 +5695,8 @@ function appAddress() {
 /* ---- Link to one training: <app address>?s=2026-10-19 ---- */
 function sessionLink(s) {
   if (!s || !s.iso) return "";
-  return appAddress() + "?s=" + encodeURIComponent(s.iso);
+  const hold = useSupabase() && PLAN_CODE ? "hold=" + encodeURIComponent(PLAN_CODE) + "&" : "";   // the team's plan
+  return appAddress() + "?" + hold + "s=" + encodeURIComponent(s.iso);
 }
 
 function copySessionLink(btn) {

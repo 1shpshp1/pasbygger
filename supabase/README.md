@@ -1,13 +1,19 @@
 # Pasbygger med database (Supabase)
 
-Appen kan hente og gemme spillere, grupper, tilmeldte, kampe og kampsæt i en database i stedet for Google-arket.
-Trænerne logger så ind med deres egen e-mail og en kode, der sendes til den. Træningsplan og øvelser kommer stadig
-fra arket, men med samme login.
+Appen kan hente og gemme alt i en database i stedet for Google-arket: spillere, grupper, tilmeldte, kampe, kampsæt,
+hvert holds træningsplan, øvelsesbiblioteket og statistikken. Trænerne logger ind med deres egen e-mail og en kode,
+der sendes til den. Google-arket og Apps Script bruges så slet ikke.
+
+- **Træningsplaner** hører til hvert hold. Spillere og forældre ser holdets plan via holdets link
+  (`…/pasbygger/?hold=<kode>`, koden står i `teams.plan_code`); en indlogget træner ser sit eget holds plan.
+- **Øvelsesbiblioteket** har kilder (`drill_sources`). Kun DBU er slået til; FCK, FA, NFF og et eget bibliotek er
+  forberedt, men slået fra. En klub kan have egne øvelser (`owner_club`), som kun den selv ser. Hele øvelsen vises i
+  appen med kilden krediteret, som i dag.
 
 Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 
 - `schema.sql`: databasen – tabeller, adgangsregler og de funktioner, appen kalder.
-- `import.js`: flytter et holds spillere og historik fra arket til databasen.
+- `import.js`: flytter et holds spillere, historik og træningsplan og DBU-øvelserne fra arket til databasen.
 - Testene (`tests/supabase.test.js`) kører skemaet på en rigtig PostgreSQL og tjekker adgangsreglerne.
 
 ## Opsætning (ca. 30 minutter)
@@ -41,18 +47,20 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
    node supabase/import.js --code <trænerkoden> --team <holdets id> > import.sql
    ```
 
-   Indsæt `import.sql` i *SQL Editor* og kør den. Kan køres igen; den erstatter så holdets gemte træninger med arkets.
-6. **Øvelser med samme login.** I Apps Script: *Project Settings → Script Properties*: tilføj `SUPABASE_URL`
-   (*Project URL* fra Supabase → *Project Settings → API*) og `SUPABASE_KEY` (*anon / publishable key* samme sted).
-   Kopiér den nye `Code.gs` ind, og vælg *Deploy → Manage deployments → Edit → New version*.
+   Indsæt `import.sql` i *SQL Editor* og kør den. Den flytter spillere, gemte grupper og kampe, træningsplanen og
+   øvelserne fra DBU (øvelser fra andre kilder springes over). Kan køres igen; den erstatter så holdets gemte
+   træninger og plan med arkets.
+6. **Dig som redaktør af det fælles bibliotek.** Kør `insert into app_admins select id from auth.users where email = '<din e-mail>';`
 7. **Prøv på én telefon.** Åbn appen, og skriv i browserens konsol (eller bed om hjælp til det):
 
    ```js
    localStorage.setItem("oevSupabase", JSON.stringify({ url: "https://<projekt>.supabase.co", key: "<anon key>" }))
    ```
 
-   Genindlæs. Grupper beder nu om e-mail og kode. Fjern igen med `localStorage.removeItem("oevSupabase")`.
-8. **Skift for alle.** Sæt `url` og `key` ind i `const SUPABASE = { url: "", key: "" };` i `index.html`, og merge.
+   Åbn derefter holdets link (`…/pasbygger/?hold=<kode>`). Grupper og Øvelser beder nu om e-mail og kode. Fjern igen
+   med `localStorage.removeItem("oevSupabase")`.
+8. **Skift for alle.** Sæt `url` og `key` ind i `const SUPABASE = { url: "", key: "", plan: "" };` i `index.html`
+   (`plan`: holdkoden for den plan, besøgende uden link ser), og merge. Del holdets link med spillere og forældre.
    Nøglen er offentlig af natur (den står i appen); det er adgangsreglerne i databasen, der beskytter data.
 
 ## Godt at vide
@@ -61,6 +69,7 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 - **Niveauændringer** gemmes med tidspunkt og hvem (`player_levels`), så 25-50-25-historikken kan læses tilbage.
 - **Sletning (GDPR):** `select forget_player('<holdets id>', 'Navn');` fjerner spilleren og navnet fra alle gemte
   træninger (kun holdleder).
-- **Spillere** rettes indtil videre i *Table Editor → players* (navn, `lo` = Fra, `hi` = Til, `positions`, `active`).
-  Adminsider i appen kommer i næste fase.
+- **Spillere** rettes indtil videre i *Table Editor → players* (navn, `lo` = Fra, `hi` = Til, `positions`, `active`),
+  og **træningsplanen** i *Table Editor → trainings*. En planlægger og adminsider i appen er næste skridt.
+- **Statistik** står i `usage_counts` (antal pr. dag, intet om hvem).
 - **Backup:** Supabase tager daglig backup på betalte planer; på den gratis plan bør du selv eksportere jævnligt.

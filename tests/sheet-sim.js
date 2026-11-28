@@ -87,10 +87,9 @@ function makeServer(sheets, props) {
     ContentService: { createTextOutput: t => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     HtmlService: { createHtmlOutput: html => { const o = { html, title: '', setTitle(t) { o.title = t; return o; }, addMetaTag() { return o; } }; return o; } },
     ScriptApp: {},
-    UrlFetchApp: { fetch: (url, opt) => (ctx.fetchStub || (() => ({ getResponseCode: () => 500, getContentText: () => '' })))(url, opt) },
     Utilities: {
-      DigestAlgorithm: { MD5: 'md5', SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
-      computeDigest: (a, s) => [...crypto.createHash(a).update(s, 'utf8').digest()],
+      DigestAlgorithm: { MD5: 'md5' }, Charset: { UTF_8: 'utf8' },
+      computeDigest: (a, s) => [...crypto.createHash('md5').update(s, 'utf8').digest()],
       base64EncodeWebSafe: b => Buffer.from(b.map(x => x & 255)).toString('base64url'),
       getUuid: () => crypto.randomUUID(),
       formatDate: (d, tz, f) => f === 'yyyy-MM-dd' ? iso(d) : d.toISOString().slice(0, 16),

@@ -966,9 +966,10 @@ test('links to a training or a drill use the page\'s own address, and the public
   assert.deepEqual(page.errors, []);
 });
 
-test('With the database (Supabase): log in with e-mail and a code, choose the team, the players come from it and saves go to it', { skip }, async () => {
+test('With the database (Supabase): the plan by the team\'s link, log in with e-mail and a code, choose the team, groups and drills from it, nothing from the sheet', { skip }, async () => {
   const srv = testServer(), page = await phone(srv, { loggedIn: false });
   const sb = { calls: [] }, jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'p'.repeat(120) + '.sig';
+  const plan = srv.call('getPlan', '').result, lib = srv.call('getDrills', srv.call('login', CODE).result.token, '').result;
   const data = { players: [{ name: 'Alma', lo: 1, hi: 2 }, { name: 'Bo', lo: 2, hi: 3 }, { name: 'Carl', lo: 1, hi: 3 }, { name: 'Dina', lo: 2, hi: 2 }],
                  history: {}, signups: {}, matches: {}, fixtures: {}, version: 'v1', server: 5 };
   await page.context().route('https://sb.test/**', r => {
@@ -980,11 +981,19 @@ test('With the database (Supabase): log in with e-mail and a code, choose the te
     if (url.pathname === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'U10', club: 'Klub', role: 'coach' }, { id: 't2', name: 'U12', club: 'Klub', role: 'coach' }]);
     if (url.pathname === '/rest/v1/rpc/get_group_data') return send(body.team === 't2' ? data : { message: 'LOGIN' }, body.team === 't2' ? 200 : 400);
     if (url.pathname === '/rest/v1/rpc/save_groups') return send({ ok: true, saved: '28.11.2026 12:00' });
+    if (url.pathname === '/rest/v1/rpc/get_plan') return send(Object.assign({}, plan, { code: body.code || 'own', server: 6 }));
+    if (url.pathname === '/rest/v1/rpc/get_drills') return send(Object.assign({}, lib, { daVersion: '' }));
+    if (url.pathname === '/rest/v1/rpc/get_drills_da') return send({ version: 'x', da: {} });
+    if (url.pathname === '/rest/v1/rpc/track') return send(true);
     send({ message: 'unknown' }, 404);
   });
   await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
-  await page.reload();
+  const sheetCalls = (srv.calls || []).length;
+  await page.goto(base + '?hold=abc123');                               // a team's link, as players and parents get it
   await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  const planCall = sb.calls.find(c => c[0] === '/rest/v1/rpc/get_plan');
+  assert.deepEqual([planCall[1].code, planCall[2]], ['abc123', 'Bearer anon']);   // no login needed
+  assert.match(await page.evaluate(() => sessionLink(SESSIONS[0])), /\?hold=abc123&s=\d{4}-\d{2}-\d{2}$/);
   await page.click('#nav-groups');
   assert.equal(await page.locator('#login-title').innerText(), 'Log ind med din e-mail');
   await page.fill('#login-pw', 'ukendt@x.dk'); await page.click('#login-go');
@@ -999,7 +1008,7 @@ test('With the database (Supabase): log in with e-mail and a code, choose the te
   await page.click('#login-go');
   await page.waitForSelector('#grp-tab .grp-slide');
   assert.match(await page.locator('#grp-tab').innerText(), /Alma/);
-  assert.ok(srv.calls.every(a => a !== 'getGroupData' && a !== 'login'), 'nothing about groups asked of the sheet');
+  assert.equal((srv.calls || []).length, sheetCalls, 'nothing asked of the sheet');
   await page.click('#grp-tab [data-act="make"]');
   await page.click('#grp-tab [data-act="save"]');
   await page.waitForFunction(() => /Gemt/.test(document.querySelector('#grp-tab .grp-save').innerText));
@@ -1008,9 +1017,13 @@ test('With the database (Supabase): log in with e-mail and a code, choose the te
   assert.match(save[1].key, /^\d{4}-\d{2}-\d{2} fri$/);
   assert.deepEqual(save[1].groups.flat().sort(), ['Alma', 'Bo', 'Carl', 'Dina']);
   assert.equal(save[2], 'Bearer ' + jwt);
-  // the drills (still in the sheet) are opened with the same login
+  // the drills, with the same login
   await page.click('#nav-library');
+  await page.waitForSelector('#drill-grid .card');
   assert.equal(await page.locator('#login').isHidden(), true);
+  assert.equal(sb.calls.find(c => c[0] === '/rest/v1/rpc/get_drills')[2], 'Bearer ' + jwt);
+  assert.ok(sb.calls.some(c => c[0] === '/rest/v1/rpc/track'), 'app opens counted in the database');
+  assert.equal((srv.calls || []).length, sheetCalls, 'still nothing asked of the sheet');
   assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('oevSupaSession'))).team, 't2');
   assert.deepEqual(page.errors, []);
 });

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-/* Moves a team's players and history from the Google Sheet into the database (supabase/schema.sql).
+/* Moves a team's data from the Google Sheet into the database (supabase/schema.sql): the players and their history,
+   the training plan, and the drills from DBU's drill bank (into the shared library; drills from other sources are
+   left out for now).
 
      node supabase/import.js --code <coach code> --team <team id> > import.sql
-     node supabase/import.js --file data.json --team <team id> > import.sql      (a saved copy of getGroupData)
+     node supabase/import.js --file data.json --team <team id> > import.sql      (a saved copy of getGroupData only)
 
-   It logs in to the sheet server (the address in index.html) with the coach code, fetches what the Grupper tab
-   gets (players, groups, signups, matches, sets of matches) and writes SQL that puts it on the team. Paste
-   import.sql into Supabase → SQL Editor → Run. Running it again replaces the team's saved trainings with the
-   sheet's and updates the players (nothing else is touched). Players marked inactive in the sheet are not sent by
-   the server, so they are not moved; their names stay in the saved groups. */
+   It logs in to the sheet server (the address in index.html) with the coach code, fetches what the app gets and
+   writes SQL. Paste import.sql into Supabase → SQL Editor → Run. Running it again replaces the team's saved
+   trainings and plan with the sheet's, and updates the players and drills (nothing else is touched). Players marked
+   inactive in the sheet are not sent by the server, so they are not moved; their names stay in the saved groups. */
 const fs = require('fs'), path = require('path');
 
 const q = s => "'" + String(s).replace(/'/g, "''") + "'";
@@ -39,6 +40,50 @@ function toSql(data, team) {
   return out.join('\n') + '\n';
 }
 
+const PARTS = ['startup', 'station1', 'station2', 'station3', 'station4', 'finish'];
+
+/* A drill from DBU's drill bank: its source says DBU, or its link goes to dbu.dk */
+const isDbu = d => /(^|[^a-z])dbu([^a-z]|$)/i.test(String(d['Kilde'] || '')) || /(^|\.)dbu\.dk\//i.test(String(d['Link'] || ''));
+
+/* The SQL for the shared library from getDrills' answer (lib) and getDrillsDa's (da): DBU's drills only.
+   Gives back { sql, ids, skipped }. */
+function libraryToSql(lib, da) {
+  const out = ['begin;'], ids = [];
+  let skipped = 0;
+  (lib.drills || []).forEach(d => {
+    const id = String(d['ID'] || '').trim();
+    if (!id || !isDbu(d)) { skipped++; return; }
+    const content = Object.assign({}, d);
+    delete content['__da'];
+    out.push(`insert into drills (id, source_id, name, content, content_da) values (${q(id)}, 'dbu', ${q(String(d['Navn']).slice(0, 200))}, ${j(content)}, ${j((da || {})[id] || {})})
+  on conflict (id) do update set name = excluded.name, content = excluded.content, content_da = excluded.content_da, published = true, updated_at = now();`);
+    ids.push(id);
+  });
+  out.push(`update library_settings set headers = ${j(lib.headers || [])}, aliases = ${j(lib.aliases || [])}, groups = ${j(lib.groups || [])} where id = 1;`);
+  out.push('commit;');
+  return { sql: out.join('\n') + '\n', ids: ids, skipped: skipped };
+}
+
+/* The SQL for a team's plan from getPlan's sessions, replacing the team's plan. A station keeps its drill only if the
+   drill is in the library (drillIds); its text and link stay either way. */
+function planToSql(sessions, team, drillIds) {
+  if (!/^[0-9a-f-]{36}$/i.test(team)) throw new Error('--team must be the team\'s id (a uuid, from the teams table).');
+  const known = new Set(drillIds || []), t = q(team) + '::uuid', out = ['begin;', `delete from trainings where team_id = ${t};`];
+  (sessions || []).forEach(s => {
+    const parts = {};
+    PARTS.forEach(k => {
+      const p = s[k] || {};
+      parts[k] = { text: String(p.text || ''), url: String(p.url || ''), drillId: known.has(String(p.drillId || '')) ? String(p.drillId) : '',
+                   coaches: Array.isArray(p.coaches) ? p.coaches : [] };
+    });
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(s.iso || '')) ? q(s.iso) + '::date' : 'null';
+    out.push(`insert into trainings (team_id, day, date_text, theme, subtheme, focus, notes, parts) values (${t}, ${day}, ${q(String(s.date || '').slice(0, 60))}, ` +
+      `${q(String(s.theme || '').slice(0, 200))}, ${q(String(s.subtheme || '').slice(0, 200))}, ${q(String(s.focus || '').slice(0, 200))}, ${j(s.notes || [])}, ${j(parts)});`);
+  });
+  out.push('commit;');
+  return out.join('\n') + '\n';
+}
+
 async function fromSheet(code) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const url = (html.match(/const API_URL = "([^"]+)"/) || [])[1];
@@ -51,18 +96,26 @@ async function fromSheet(code) {
   };
   const login = await call('login', [code]);
   if (!login || !login.ok) throw new Error('The coach code was not accepted.');
-  return call('getGroupData', [login.token, '']);
+  return {
+    group: await call('getGroupData', [login.token, '']),
+    plan: (await call('getPlan', [''])).sessions,
+    library: await call('getDrills', [login.token, '']),
+    da: (await call('getDrillsDa', [login.token, ''])).da
+  };
 }
 
 if (require.main === module) {
   const arg = name => { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : null; };
   (async () => {
     const team = arg('team') || '';
-    const data = arg('file') ? JSON.parse(fs.readFileSync(arg('file'), 'utf8')) : await fromSheet(arg('code') || '');
-    process.stdout.write(toSql(data, team));
+    if (arg('file')) { process.stdout.write(toSql(JSON.parse(fs.readFileSync(arg('file'), 'utf8')), team)); return; }
+    const all = await fromSheet(arg('code') || ''), data = all.group;
+    const lib = libraryToSql(all.library, all.da);
+    process.stdout.write(toSql(data, team) + lib.sql + planToSql(all.plan, team, lib.ids));
     process.stderr.write(`${(data.players || []).length} players, ${Object.keys(data.history || {}).length} trainings with groups, ` +
-      `${Object.keys(data.matches || {}).length} with matches, ${Object.keys(data.fixtures || {}).length} sets of matches.\n`);
+      `${Object.keys(data.matches || {}).length} with matches, ${Object.keys(data.fixtures || {}).length} sets of matches, ` +
+      `${(all.plan || []).length} trainings in the plan, ${lib.ids.length} DBU drills (${lib.skipped} from other sources left out).\n`);
   })().catch(e => { process.stderr.write('Stopped: ' + e.message + '\n'); process.exit(1); });
 }
 
-module.exports = { toSql };
+module.exports = { toSql, libraryToSql, planToSql, isDbu };

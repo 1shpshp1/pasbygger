@@ -19,9 +19,10 @@ function run(file, args, opts) {                     // as the postgres user whe
   const cmd = asPg ? ['runuser', ['-u', 'postgres', '--', file].concat(args)] : [file, args];
   return execFileSync(cmd[0], cmd[1], Object.assign({ encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }, opts));
 }
-/* Runs SQL as the database owner, or as a logged-in user (uid) under the access rules. Gives back the last result. */
+/* Runs SQL as the database owner, as a logged-in user (uid) or without a login ('anon'), under the access rules. Gives back the last result. */
 function sql(text, uid) {
-  const wrapped = uid ? `begin; set local role authenticated; set local request.jwt.claim.sub = '${uid}';\n${text}\ncommit;` : text;
+  const wrapped = uid === 'anon' ? `begin; set local role anon;\n${text}\ncommit;`          // no login (a player or parent)
+    : uid ? `begin; set local role authenticated; set local request.jwt.claim.sub = '${uid}';\n${text}\ncommit;` : text;
   const r = spawnSync(asPg ? 'runuser' : 'psql', (asPg ? ['-u', 'postgres', '--', 'psql'] : []).concat(
     ['-h', dir, '-p', String(port), '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-A', '-t', '-X']),
     { input: wrapped, encoding: 'utf8' });
@@ -113,7 +114,7 @@ test.describe('database (Supabase)', { skip }, () => {
     assert.equal(sql(`select count(*) from saved_groups where team_id = '${A}';`, U.other), '0');
     fails(`select save_groups('${A}', '2026-12-01', '[["Alma"]]');`, U.other, /row-level security/);
     assert.ok(json(`select get_group_data('${B}');`, U.other).players.some(p => p.name === 'Dina'));
-    fails(`select get_group_data('${A}');`, null, /LOGIN|permission/);          // no login at all
+    fails(`select get_group_data('${A}');`, 'anon', /permission denied/);       // no login at all
   });
 
   test('an assistant sees the players without levels and may save signups, not groups', () => {
@@ -140,5 +141,85 @@ test.describe('database (Supabase)', { skip }, () => {
     const d = json(`select get_group_data('${A}');`, U.leader);
     assert.ok(!JSON.stringify(d).includes('"Bo"'), 'no trace of Bo');
     assert.deepEqual(d.matches['2026-11-09'].matches, [[[], ['Alma']]]);
+  });
+  test('a team\'s training plan: coaches write it, anyone with the team\'s code reads it (unless it is not public)', () => {
+    const t = json(`select save_training('${A}', '{"iso": "2026-12-01", "date": "Tirsdag 1. dec.", "focus": "Afslutninger",
+      "notes": [{"text": "Husk kegler", "url": ""}], "station1": {"text": "Skud på mål", "url": "", "drillId": "d1", "coaches": ["Ole", " "]}}');`, U.coach);
+    assert.equal(t.ok, true);
+    const code = sql(`select plan_code from teams where id = '${A}';`);
+    const p = json(`select get_plan('${code}');`, 'anon');
+    assert.equal(p.sessions.length, 1);
+    const s = p.sessions[0];
+    assert.deepEqual([s.iso, s.date, s.focus, s.notes[0].text], ['2026-12-01', 'Tirsdag 1. dec.', 'Afslutninger', 'Husk kegler']);
+    assert.deepEqual(s.station1, { text: 'Skud på mål', url: '', drillId: 'd1', coaches: ['Ole'] });
+    assert.deepEqual(s.finish, { text: '', url: '', drillId: '', coaches: [] });
+    assert.equal(json(`select get_plan('${code}', '${p.version}');`, 'anon').unchanged, true);
+    json(`select save_training('${A}', '{"id": "${t.id}", "iso": "2026-12-02", "focus": "Driblinger"}');`, U.coach);
+    assert.equal(json(`select get_plan('', '', '${A}');`, U.assistant).sessions[0].focus, 'Driblinger');   // the member's own team
+    fails(`select save_training('${A}', '{"focus": "x"}');`, U.other, /adgang/);
+    fails(`select save_training('${A}', '{"focus": "x"}');`, U.assistant, /adgang/);
+    sql(`update teams set plan_public = false where id = '${A}';`);
+    fails(`select get_plan('${code}');`, 'anon', /ikke offentlig/);
+    assert.equal(json(`select get_plan('${code}');`, U.coach).sessions.length, 1);
+    sql(`update teams set plan_public = true where id = '${A}';`);
+    fails(`select get_plan('forkert');`, 'anon', /findes ikke/);
+  });
+
+  test('the drill library: only drills from active sources (DBU now), the shared ones and the club\'s own; Danish texts apart', () => {
+    const club = sql(`select club_id from teams where id = '${A}';`);
+    const other = sql(`insert into clubs (name) values ('Anden klub') returning id;`);
+    sql(`insert into library_settings (id, headers) values (1, '["ID", "Navn", "Beskrivelse"]') on conflict (id) do update set headers = excluded.headers;
+         insert into drills (id, source_id, name, content, content_da) values
+           ('d1', 'dbu', 'Skud på mål', '{"Navn": "Skud på mål", "Beskrivelse": "Fra kanten", "Kilde": "DBU"}', '{}'),
+           ('d2', 'dbu', 'Rondo', '{"Navn": "Rondo"}', '{"Navn (DA)": "Rondo på dansk"}'),
+           ('FCK-1', 'fck', 'FCK-øvelse', '{"Navn": "FCK-øvelse"}', '{}');
+         insert into drills (id, source_id, owner_club, name, content) values
+           ('EGNE-1', 'dbu', '${club}', 'Klubbens egen', '{"Navn": "Klubbens egen"}'),
+           ('EGNE-2', 'dbu', '${other}', 'Andens egen', '{"Navn": "Andens egen"}');
+         insert into drills (id, source_id, name, content, published) values ('d3', 'dbu', 'Skjult', '{"Navn": "Skjult"}', false);`);
+    const lib = json(`select get_drills();`, U.coach);
+    assert.deepEqual(lib.drills.map(d => d.ID).sort(), ['EGNE-1', 'd1', 'd2']);
+    assert.deepEqual(lib.headers, ['ID', 'Navn', 'Beskrivelse']);
+    const d1 = lib.drills.find(d => d.ID === 'd1'), d2 = lib.drills.find(d => d.ID === 'd2');
+    assert.deepEqual([d1.Kilde, d1.Beskrivelse, '__da' in d1, d2.Kilde, d2.__da], ['DBU', 'Fra kanten', false, 'DBU', 1]);
+    assert.equal(json(`select get_drills('${lib.version}');`, U.coach).unchanged, true);
+    assert.deepEqual(json(`select get_drills_da();`, U.coach).da, { d2: { 'Navn (DA)': 'Rondo på dansk' } });
+    sql(`update drill_sources set active = true where id = 'fck';`);                 // a source switched on later
+    assert.ok(json(`select get_drills();`, U.coach).drills.some(d => d.ID === 'FCK-1'));
+    sql(`update drill_sources set active = false where id = 'fck';`);
+    fails(`select get_drills();`, 'anon', /permission denied/);
+    fails(`insert into drills (id, source_id, name, content) values ('x', 'dbu', 'x', '{}');`, U.coach, /row-level security/);
+  });
+
+  test('without a login, a drill opens only if the team\'s plan uses it; app opens are counted, nothing about who', () => {
+    const code = sql(`select plan_code from teams where id = '${A}';`);
+    json(`select save_training('${A}', '{"iso": "2026-12-08", "station2": {"text": "Rondo", "drillId": "d2"}}');`, U.coach);
+    const r = json(`select get_session_drills(array['d2', 'd1', 'EGNE-2'], '${code}');`, 'anon');
+    assert.deepEqual(r.drills.map(d => d.ID), ['d2', 'd1']);                      // both in the plan; the other club's own drill is not
+    assert.equal(r.drills[0]['Navn (DA)'], 'Rondo på dansk');                       // the translation travels with it
+    assert.equal(sql(`select get_session_drills(array['FCK-1', 'd3'], '${code}');`, 'anon'), '');   // not in the plan
+    sql(`select track('open', 'true'); select track('open', 'false'); select track('drill', 'd2', 'Rondo');`, 'anon');
+    const n = json(`select json_object_agg(what, n) from usage_counts;`);
+    assert.deepEqual([n['App åbnet'], n['Unikke telefoner'], n['Øvelser åbnet'], n['Øvelse: Rondo']], [2, 1, 1, 1]);
+    fails(`select * from usage_counts;`, 'anon', /permission denied/);
+  });
+  test('the import moves DBU\'s drills (not other sources) and the team\'s plan; a station keeps only a drill that came along', () => {
+    const { libraryToSql, planToSql, isDbu } = require('../supabase/import.js');
+    assert.deepEqual([isDbu({ Kilde: 'DBU' }), isDbu({ Link: 'https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=7' }), isDbu({ Kilde: 'FCK' }), isDbu({ Kilde: 'DBUx' })], [true, true, false, false]);
+    const lib = { headers: ['ID', 'Navn', 'Beskrivelse'], aliases: [{ col: 'Fokus', from: 'a', to: 'b' }], groups: [],
+      drills: [{ ID: '701', Navn: "Kegle-'løb'", Kilde: 'DBU', Beskrivelse: 'Løb', __da: 1 }, { ID: 'FCK-9', Navn: 'FCK', Kilde: 'FCK' }, { Navn: 'Uden id', Kilde: 'DBU' }] };
+    const r = libraryToSql(lib, { 701: { 'Beskrivelse (DA)': 'Løb på dansk' } });
+    assert.deepEqual([r.ids, r.skipped], [['701'], 2]);
+    sql(r.sql); sql(r.sql);
+    const code = sql(`select plan_code from teams where id = '${B}';`);
+    const plan = [{ iso: '2026-09-01', date: '1. sep.', focus: 'Løb', notes: [], station1: { text: 'Kegleløb', url: '', drillId: '701', coaches: [] },
+                    station2: { text: 'FCK-øvelse', url: 'https://fck.better-coaching.dk/x', drillId: 'FCK-9', coaches: [] } }];
+    sql(planToSql(plan, B, r.ids)); sql(planToSql(plan, B, r.ids));             // again: replaced, not doubled
+    const p = json(`select get_plan('${code}');`, 'anon');
+    assert.equal(p.sessions.length, 1);
+    assert.deepEqual([p.sessions[0].station1.drillId, p.sessions[0].station2.drillId, p.sessions[0].station2.url], ['701', '', 'https://fck.better-coaching.dk/x']);
+    const d = json(`select get_drills();`, U.other).drills.find(x => x.ID === '701');
+    assert.deepEqual([d.Navn, d.Beskrivelse, d.Kilde, d.__da], ["Kegle-'løb'", 'Løb', 'DBU', 1]);
+    assert.deepEqual(json(`select get_drills();`, U.other).aliases, lib.aliases);
   });
 });
