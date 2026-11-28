@@ -421,6 +421,40 @@
       text-align: left; cursor: pointer;
     }
     .v-findbtn:hover, .v-findbtn:focus-visible { background: var(--red-tint); }
+    .plan-new { grid-column: 1 / -1; margin: 0 0 4px; text-align: center; }
+    .plan-edit { display: flex; gap: 10px; flex-wrap: wrap; }
+    .plan-edit .v-findbtn { flex: 1 1 140px; width: auto; text-align: center; }
+    .planner label { display: block; margin: 12px 0 0; font-weight: bold; font-size: 14px; }
+    .planner input, .planner textarea {
+      display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 10px 12px; border: 1px solid #cccccc;
+      border-radius: 10px; background: #ffffff; font: inherit; font-weight: normal;
+    }
+    .planner fieldset { margin: 16px 0 0; padding: 4px 12px 12px; border: 1px solid #dddddd; border-radius: 12px; }
+    .planner fieldset input { margin-top: 8px; }
+    .planner legend { padding: 0 6px; color: var(--red); font-weight: bold; }
+    .planner-msg { min-height: 1.3em; margin: 12px 0 0; font-size: 14px; }
+    .planner-msg.bad { color: #b00020; }
+    .planner-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 8px; }
+    .planner-del { color: #b00020; }
+    .deleted-list { padding: 4px 0 8px; }
+    .adm-sec { margin: 0 0 26px; }
+    .adm-sec h3 { margin: 0 0 8px; color: var(--red); }
+    .adm-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #eeeeee; }
+    .adm-row > span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .adm-row small { display: block; color: #666666; font-size: 13px; }
+    .adm-row select, .adm-invite select { padding: 8px; border: 1px solid #cccccc; border-radius: 10px; background: #ffffff; font: inherit; }
+    .adm-link { display: flex; align-items: center; gap: 8px; }
+    .adm-link code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+    .adm-invite { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .adm-form { margin: 8px 0 12px; padding: 4px 12px 8px; border: 1px solid #dddddd; border-radius: 12px; }
+    .adm-form label { display: block; margin: 10px 0 0; font-weight: bold; font-size: 14px; }
+    .adm-form input:not([type=checkbox]) { display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 10px 12px;
+      border: 1px solid #cccccc; border-radius: 10px; font: inherit; font-weight: normal; }
+    .adm-two { display: flex; gap: 10px; }
+    .adm-two label { flex: 1 1 0; }
+    .adm-check { font-weight: normal !important; }
+    .deleted-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eeeeee; }
+    .deleted-row small { display: block; color: #666666; font-size: 13px; }
     .v-findbtn + .v-sec { margin-top: 22px; }
 
     .var-list { list-style: none; padding-left: 0 !important; }
@@ -745,6 +779,7 @@
   <button type="button" class="navbtn" id="nav-groups" aria-current="false" onclick="showView('groups')">Grupper</button>
   <button type="button" class="navbtn" id="nav-fixtures" aria-current="false" onclick="showView('fixtures')">Kampe <small class="beta">(beta)</small></button>
   <button type="button" class="navbtn" id="nav-overview" aria-current="false" onclick="showView('overview')">Spilleroversigt</button>
+  <button type="button" class="navbtn" id="nav-admin" aria-current="false" onclick="showView('admin')" hidden>Admin</button>
 </nav>
 
 <div id="sessions">
@@ -777,6 +812,13 @@
   </div>
 </div>
 
+<div id="admin" class="view-hidden">
+  <div class="grp-page">
+    <h2>Admin</h2>
+    <div id="adm" class="grp"><p>Henter …</p></div>
+  </div>
+</div>
+
 <div id="library" class="view-hidden">
   <input type="search" id="lib-search" placeholder="Søg i øvelser" aria-label="Søg i øvelser">
   <details class="filter-panel" id="lib-panel">
@@ -803,7 +845,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (7)</p>
+<p class="build" id="build">App-version 29. nov. 2026 (1)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -982,7 +1024,7 @@ function showServerNote() {
 const SUPABASE = { url: "https://hfagotulnrjvqwrwweez.supabase.co", key: "sb_publishable_Bu5d8e3JqJV4OyvHmbLtHA_TjXh4fDI",
                    plan: "d8a11024", login: "password", on: true };
 // plan: the code of the team whose plan is shown to visitors without a link. login: "password" (e-mail and a password the
-// holdleder gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
+// admin gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
 const supaLoginKind = () => (supaConf() || {}).login === "code" ? "code" : "password";
 const SUPA_SESSION_KEY = "oevSupaSession";       // { refresh, exp (when the access token runs out), team, teams }
 const SUPA_LOGIN_DAYS = 14;                       // a personal login lasts 14 days after it was last used
@@ -1048,9 +1090,10 @@ function planArgs() {
   try { code = localStorage.getItem(PLAN_CODE_KEY) || ""; } catch (e) { /* ignore */ }
   return { code: code || (supaConf() || {}).plan || "", team: null };
 }
-let PLAN_CODE = "";                                  // the shown plan's code, for links to a training
+let PLAN_CODE = "", PLAN_TEAM = "";                  // the shown plan's code (for links) and team (whose coaches may edit it)
 function gotPlan(res) {
   if (res && res.code) PLAN_CODE = res.code;
+  if (res && res.team) PLAN_TEAM = res.team;
   return res;
 }
 
@@ -1080,13 +1123,19 @@ function supaRefreshIfNeeded() {
 
 /* The sheet server's functions for Grupper, Kampe and Spilleroversigt, done by the database instead (the same
    arguments and answers; the token is the login's). team: the team a save waiting on the phone was made for. */
-const SUPA_TEAM_ACTIONS = ["getGroupData", "saveGroups", "saveSignups", "saveMatches", "saveFixtureSet"];
+const SUPA_TEAM_ACTIONS = ["getGroupData", "saveGroups", "saveSignups", "saveMatches", "saveFixtureSet", "saveTraining", "deleteTraining",
+                           "deletedTrainings", "restoreTraining", "adminCall"];
 const SUPA_ACTIONS = {
   getPlan:          version => supaRpc("get_plan", Object.assign({ have: version || "" }, planArgs())).then(gotPlan),
   getSessions:      () => supaRpc("get_plan", planArgs()).then(gotPlan).then(res => res.sessions),
   getSessionDrills: ids => supaRpc("get_session_drills", Object.assign({ ids: ids }, planArgs())),
   getDrills:        (token, version) => supaRpc("get_drills", { have: version || "" }),
   getDrillsDa:      (token, version) => supaRpc("get_drills_da", { have: version || "" }),
+  saveTraining:     (token, training) => supaRpc("save_training", { team: supaTeam(), training: training }),
+  adminCall:        (token, fn, params) => supaRpc(fn, Object.assign({ team: supaTeam() }, params || {})),
+  deletedTrainings: () => supaRpc("deleted_trainings", { team: supaTeam() }),
+  restoreTraining:  (token, id) => supaRpc("restore_training", { team: supaTeam(), training_id: id }),
+  deleteTraining:   (token, id) => supaRpc("delete_training", { team: supaTeam(), training_id: id }),
   track:            (event, a, b) => supaRpc("track", { event: String(event), a: a == null ? "" : String(a), b: b == null ? "" : String(b) }),
   getGroupData:   (token, version) => supaRpc("get_group_data", { team: supaTeam(), have: version || "" }),
   saveGroups:     (token, key, groups, team) => supaRpc("save_groups", { team: team || supaTeam(), key: key, groups: groups }),
@@ -1186,6 +1235,7 @@ function firstRender() {
     renderSessions(LATEST);
     openSessionFromUrl();
     openDrillFromUrl();
+    openInviteFromUrl();
     trackOpen();
     if (isAuthed()) loadLibrary(null, true);   // only when already logged in: loads the drills in the background
   } catch (err) {
@@ -1407,7 +1457,7 @@ function renderSessions(sessions) {
 
   past.reverse();   // most recent past session first
 
-  let html = "";
+  let html = canPlan() ? `<button type="button" class="v-findbtn plan-new" onclick="openPlanner(-1)">+ Ny træning</button>` : "";
 
   // The tag goes to the first upcoming session that has a real date
   const nextPos = upcoming.findIndex(item => item.session.iso);
@@ -1431,6 +1481,8 @@ function renderSessions(sessions) {
     `;
   }
 
+  if (canPlan()) html += `<details class="past-group deleted-group" ontoggle="if (this.open) showDeleted()">
+      <summary>Slettede træninger</summary><div class="deleted-list" id="deleted-list"></div></details>`;
   html += `<div class="plan-bar"><span id="plan-time" role="status"></span><button type="button" class="clearbtn" id="plan-refresh">Opdater</button></div><p id="server-note" class="server-note" role="status" hidden></p>`;
   const pastOpen = document.querySelector("#sessions .past-group[open]");   // keep "Tidligere træninger" open when the plan is updated
   document.getElementById("sessions").innerHTML = html;
@@ -1525,7 +1577,7 @@ const isAuthed = () => !!AUTH.token && Date.now() < AUTH.until;
 /* The login is kept in localStorage, so it survives closing the app (sessionStorage is wiped by phones
    when the app is closed or put to sleep). It still ends after 30 minutes. */
 function saveAuth() {
-  setTimeout(updateServerNote);                        // logged in or out: the note is for coaches
+  setTimeout(function () { updateServerNote(); updateAdminNav(); });   // logged in or out: the note and Admin are for coaches
   try {
     if (AUTH.token) localStorage.setItem("oevAuth", JSON.stringify(AUTH));
     else localStorage.removeItem("oevAuth");
@@ -1605,6 +1657,10 @@ function closeLogin() {
 
 /* Logged in: fetch ahead, send what was waiting, and go on with what the login was for */
 function loginDone() {
+  updateAdminNav();
+  if (useSupabase() && SHOWN) {                    // the coach's own team's plan, with "Ny træning" and "Ret"
+    fetchPlan().then(function () { if (!viewerOpen()) renderSessions(LATEST); }).catch(function () { /* the list stays */ });
+  }
   prefetchGroups();
   sendQueue();                       // saves that were waiting for a login
   const cb = LOGIN_CB; LOGIN_CB = null;
@@ -1615,7 +1671,33 @@ function loginDone() {
 /* With the database: log in with your own e-mail and then your password (or the code Supabase sends to the e-mail,
    SUPABASE.login "code"), then (on more than one team) choose the team. LOGIN_SUPA.step: "email", "password", "code"
    or "team". */
-const LOGIN_SUPA = { step: "email", email: "", teams: [] };
+const LOGIN_SUPA = { step: "email", email: "", teams: [], invite: "", inviteInfo: null, joined: "", signup: false };
+const ROLE_NAMES = { admin: "Admin", coach: "Træner", assistant: "Hjælpetræner" };
+
+/* An invitation link (<app>?invite=CODE): the coach logs in, or creates a user, and joins the team */
+function supaJoinInvite() {
+  return supaRpc("accept_invite", { invite: LOGIN_SUPA.invite }).then(function (r) {
+    LOGIN_SUPA.joined = r.team_id; LOGIN_SUPA.invite = ""; LOGIN_SUPA.inviteInfo = null;
+    try { const u = new URL(location.href); u.searchParams.delete("invite"); history.replaceState(null, "", u.toString()); } catch (e) { /* ignore */ }
+    showToast("Velkommen på " + r.team + " som " + (ROLE_NAMES[r.role] || r.role).toLowerCase() + ".");
+  });
+}
+function openInviteFromUrl() {
+  let code = "";
+  try { code = new URLSearchParams(location.search).get("invite") || ""; } catch (e) { /* ignore */ }
+  if (!code || !useSupabase()) return;
+  supaRpc("invite_info", { invite: code }).then(function (info) {
+    if (!info) { showToast("Invitationen er brugt eller udløbet. Bed holdets admin om en ny."); return; }
+    LOGIN_SUPA.invite = code; LOGIN_SUPA.inviteInfo = info;
+    if (isAuthed()) {                                    // already logged in: join straight away
+      supaJoinInvite().then(() => supaRpc("my_teams", {})).then(function (teams) {
+        LOGIN_SUPA.teams = teams || [];
+        const team = LOGIN_SUPA.joined; LOGIN_SUPA.joined = "";
+        if (team) supaChooseTeam(team);
+      }).catch(function (err) { showToast(failText(err)); });
+    } else requireLogin(function () { showView("groups"); });
+  }, function () { showToast("Kunne ikke læse invitationen. Prøv linket igen, når der er forbindelse."); });
+}
 function supaLoginShow(step) {
   LOGIN_SUPA.step = step;
   const pw = document.getElementById("login-pw"), go = document.getElementById("login-go");
@@ -1623,14 +1705,22 @@ function supaLoginShow(step) {
   if (pick) pick.remove();
   pw.hidden = step === "team";
   pw.value = "";
+  const extra = document.getElementById("login-signup");
+  if (extra) extra.remove();
+  const inv = LOGIN_SUPA.inviteInfo;
+  if (step === "email") LOGIN_SUPA.signup = false;
   if (step === "email") {
-    document.getElementById("login-title").textContent = "Log ind med din e-mail";
+    document.getElementById("login-title").textContent = inv ? "Du er inviteret til " + inv.team + " (" + inv.club + ") som " + (ROLE_NAMES[inv.role] || inv.role).toLowerCase() : "Log ind med din e-mail";
     pw.type = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "username"); pw.removeAttribute("inputmode");
     go.textContent = supaLoginKind() === "code" ? "Send kode" : "Næste";
   } else if (step === "password") {
-    document.getElementById("login-title").textContent = "Indtast din adgangskode";
-    pw.type = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.setAttribute("autocomplete", "current-password"); pw.removeAttribute("inputmode");
-    go.textContent = "Log ind";
+    document.getElementById("login-title").textContent = LOGIN_SUPA.signup ? "Vælg en adgangskode (mindst 6 tegn)" : "Indtast din adgangskode";
+    pw.type = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.removeAttribute("inputmode");
+    pw.setAttribute("autocomplete", LOGIN_SUPA.signup ? "new-password" : "current-password");
+    go.textContent = LOGIN_SUPA.signup ? "Opret bruger" : "Log ind";
+    if (inv) go.insertAdjacentHTML("beforebegin", LOGIN_SUPA.signup
+      ? '<button type="button" class="clearbtn" id="login-signup" onclick="LOGIN_SUPA.signup = false; supaLoginShow(\'password\')">Jeg har en bruger</button>'
+      : '<button type="button" class="clearbtn" id="login-signup" onclick="LOGIN_SUPA.signup = true; supaLoginShow(\'password\')">Opret ny bruger</button>');
   } else if (step === "code") {
     document.getElementById("login-title").textContent = "Indtast koden fra e-mailen";
     pw.type = "text"; pw.setAttribute("aria-label", "Kode fra e-mailen"); pw.setAttribute("autocomplete", "one-time-code"); pw.setAttribute("inputmode", "numeric");
@@ -1666,32 +1756,46 @@ function supaLoginSubmit() {
     }, function (e) {
       done();
       err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt."
-        : /signup|not allowed|not found/i.test(e.message) ? "Den e-mail har ikke adgang. Spørg holdlederen om at blive tilføjet."
+        : /signup|not allowed|not found/i.test(e.message) ? "Den e-mail har ikke adgang. Spørg holdets admin om at blive tilføjet."
         : /rate|seconds/i.test(e.message) ? "Vent et øjeblik, før du beder om en ny kode." : "Kunne ikke sende koden: " + e.message;
     });
     return;
   }
-  const signIn = step === "password"
+  const signIn = step === "password" && LOGIN_SUPA.signup
+    ? supaFetch("/auth/v1/signup", { email: LOGIN_SUPA.email, password: pw.value }).then(function (res) {
+        if (!res || !res.access_token) throw serverError("Brugeren skal bekræftes på e-mail. Holdets admin skal slå \u201cConfirm email\u201d fra i Supabase.");
+        return res;
+      })
+    : step === "password"
     ? supaFetch("/auth/v1/token?grant_type=password", { email: LOGIN_SUPA.email, password: pw.value })
     : supaFetch("/auth/v1/verify", { type: "email", email: LOGIN_SUPA.email, token: value });
   signIn.then(function (res) {
     gotSupaSession(res);
+    return LOGIN_SUPA.invite ? supaJoinInvite() : null;
+  }).then(function () {
     return supaRpc("my_teams", {});
   }).then(function (teams) {
     done();
     LOGIN_SUPA.teams = Array.isArray(teams) ? teams : [];
     const s = supaSession() || {};
-    if (!LOGIN_SUPA.teams.length) {
+    if (LOGIN_SUPA.joined && LOGIN_SUPA.teams.some(t => t.id === LOGIN_SUPA.joined)) {
+      const team = LOGIN_SUPA.joined; LOGIN_SUPA.joined = "";
+      supaChooseTeam(team);
+    } else if (!LOGIN_SUPA.teams.length) {
       AUTH.token = ""; AUTH.until = 0; saveAuth(); storeSupaSession(null); supaLoginShow("email");
-      err.textContent = "Du er ikke tilknyttet et hold endnu. Spørg holdlederen.";
+      err.textContent = "Du er ikke tilknyttet et hold endnu. Spørg holdets admin.";
     } else if (LOGIN_SUPA.teams.length === 1 || LOGIN_SUPA.teams.some(t => t.id === s.team)) {
       supaChooseTeam(LOGIN_SUPA.teams.some(t => t.id === s.team) ? s.team : LOGIN_SUPA.teams[0].id);
     } else supaLoginShow("team");
   }, function (e) {
     done();
     err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt."
-      : step === "password" ? (/not confirmed/i.test(e.message) ? "Brugeren er ikke bekræftet endnu. Holdlederen skal oprette den med \u201cAuto Confirm User\u201d."
-        : /LOGIN|invalid/i.test(e.message) ? "Forkert e-mail eller adgangskode. Prøv igen, eller spørg holdlederen." : "Kunne ikke logge ind: " + e.message)
+      : LOGIN_SUPA.signup ? (/already|registered|exists/i.test(e.message) ? "Der er allerede en bruger med den e-mail. Tryk \u201cLog ind\u201d i stedet."
+        : /signup.*(disabled|not allowed)|not allowed/i.test(e.message) ? "Holdets admin skal slå \u201cAllow new users to sign up\u201d til i Supabase."
+        : /password/i.test(e.message) ? "Adgangskoden skal være på mindst 6 tegn." : "Kunne ikke oprette brugeren: " + e.message)
+      : /brugt eller udløbet/.test(e.message) ? e.message
+      : step === "password" ? (/not confirmed/i.test(e.message) ? "Brugeren er ikke bekræftet endnu. Holdets admin skal oprette den med \u201cAuto Confirm User\u201d."
+        : /LOGIN|invalid/i.test(e.message) ? "Forkert e-mail eller adgangskode. Prøv igen, eller spørg holdets admin." : "Kunne ikke logge ind: " + e.message)
       : "Forkert eller udløbet kode. Prøv igen, eller bed om en ny.";
     pw.select();
   });
@@ -1739,7 +1843,8 @@ document.getElementById("login-form").addEventListener("keydown", function (e) {
 function showView(name) {
   if (name === "library" && !isAuthed()) { requireLogin(function () { showView("library"); }); return; }
   if ((name === "groups" || name === "fixtures" || name === "overview") && !canGroup()) { requireLogin(function () { if (canGroup()) showView(name); }); return; }
-  ["sessions", "library", "groups", "fixtures", "overview"].forEach(function (v) {
+  if (name === "admin" && !isTeamAdmin()) { requireLogin(function () { if (isTeamAdmin()) showView(name); }); return; }
+  ["sessions", "library", "groups", "fixtures", "overview", "admin"].forEach(function (v) {
     document.getElementById(v).classList.toggle("view-hidden", v !== name);
     document.getElementById("nav-" + v).setAttribute("aria-current", v === name ? "page" : "false");
   });
@@ -1747,6 +1852,7 @@ function showView(name) {
   if (name === "groups") openGroupsTab();
   if (name === "overview") openPlayerOverview();
   if (name === "fixtures") openFixtures();
+  if (name === "admin") openAdmin();
 }
 
 /* Cleans a cell value. Invisible and "blank-looking" characters are removed, and a value
@@ -2814,6 +2920,7 @@ function loadSessionDrills(ids, cb) {
     });
   };
   api("getSessionDrills", [ids]).then(function (res) {
+      if (!res || !Array.isArray(res.drills)) res = null;  // nothing found (or an answer without drills)
       if (res && !LIB) {                                  // the same tidy-up of tags as in the library
         setAliases(res.aliases);
         res.drills.forEach(d => { SESSION_DRILLS[cleanVal(d["ID"])] = applyLang(d); });
@@ -2886,6 +2993,8 @@ function sessionPages(s, index) {
   }
   html += items.length ? `<div class="v-plan">${rows}</div>` : "<p>Intet planlagt.</p>";
   if (sessionKey(s)) html += `<button type="button" class="v-findbtn" onclick="openGroups(${index})">Grupper/kampe til denne træning</button>`;
+  if (canPlan() && s.id) html += `<div class="plan-edit"><button type="button" class="v-findbtn" onclick="openPlanner(${index})">Ret træningen</button>` +
+    `<button type="button" class="v-findbtn" onclick="openPlanner(${index}, true)">Kopiér til ny træning</button></div>`;
   return [{ title: s.focus || danishDate(s.iso, s.date), html: html }];
 }
 
@@ -2902,6 +3011,250 @@ function openSession(index) {
       `<span class="v-datebadge" aria-hidden="true">${esc(short)}</span><span class="v-sr">${esc(danishDate(s.iso, s.date))}</span>`;
   }
   document.getElementById("v-share").classList.toggle("view-hidden", !s.iso);   // a link needs a date
+}
+
+/* ===================== Admin (with the database): the team's players, coaches and invitations =====================
+   For the team's admins only: add players and change their levels (a new name follows into the saved trainings),
+   remove a player with all their history (GDPR), change the coaches' roles, and invite coaches with a link
+   (<app>?invite=CODE, one use, 14 days) that they open to log in or create a user. */
+function isTeamAdmin() {
+  if (!useSupabase() || !isAuthed() || !supaTeam()) return false;
+  const t = ((supaSession() || {}).teams || []).find(x => x.id === supaTeam());
+  return !!t && t.role === "admin";
+}
+function updateAdminNav() {
+  const b = document.getElementById("nav-admin");
+  if (b) b.hidden = !isTeamAdmin();
+}
+let ADM = null;                                  // { players, members, invites, edit: player id | "new" | null, link, msg }
+const admCall = (fn, params) => libCall("adminCall", [AUTH.token, fn, params]);
+
+function openAdmin() {
+  ADM = ADM || { players: null, members: [], invites: [], edit: null, link: "", msg: "" };
+  loadAdmin();
+}
+function loadAdmin() {
+  Promise.all([admCall("team_players"), admCall("team_members_list"), admCall("team_invites_list")]).then(function (r) {
+    ADM.players = r[0]; ADM.members = r[1]; ADM.invites = r[2];
+    renderAdmin();
+  }, function (err) {
+    document.getElementById("adm").innerHTML = `<p>Kunne ikke hente holdets data: ${esc(failText(err))}</p>`;
+  });
+}
+const levelText = p => p.lo == null ? "Uden niveau" : "Niveau " + (p.lo === p.hi ? String(p.lo) : p.lo + "–" + p.hi).replace(/\./g, ",");
+const inviteLink = code => appAddress() + "?invite=" + encodeURIComponent(code);
+function roleSelect(value, attrs) {
+  return `<select ${attrs}>${Object.keys(ROLE_NAMES).map(r => `<option value="${r}"${r === value ? " selected" : ""}>${ROLE_NAMES[r]}</option>`).join("")}</select>`;
+}
+function playerForm(p) {
+  const num = v => v == null ? "" : String(v).replace(".", ",");
+  return `<form class="adm-form" data-adm-form="player" novalidate>
+    <label>Navn<input name="name" value="${esc(p.name || "")}" autocomplete="off"></label>
+    <div class="adm-two"><label>Fra<input name="lo" value="${num(p.lo)}" inputmode="decimal" placeholder="fx 2"></label>
+      <label>Til<input name="hi" value="${num(p.hi)}" inputmode="decimal" placeholder="fx 3"></label></div>
+    <label>Favoritpladser<input name="positions" value="${esc(p.positions || "")}" placeholder="fx Keeper, forsvar"></label>
+    <label class="adm-check"><input type="checkbox" name="active"${p.active === false ? "" : " checked"}> Aktiv (med i Grupper og Kampe)</label>
+    <p class="planner-msg bad" role="status">${esc(ADM.msg || "")}</p>
+    <div class="planner-actions"><button type="submit" class="login-go">Gem spiller</button>
+      <button type="button" class="clearbtn" data-adm="cancel">Annuller</button>
+      ${p.id ? `<button type="button" class="clearbtn planner-del" data-adm="forget" data-name="${esc(p.name)}">Slet spiller og historik</button>` : ""}</div>
+  </form>`;
+}
+function renderAdmin() {
+  const box = document.getElementById("adm");
+  if (!box || !ADM || !ADM.players) return;
+  const row = p => ADM.edit === p.id ? playerForm(p)
+    : `<div class="adm-row"><span><strong>${esc(p.name)}</strong><small>${esc(levelText(p))}${p.positions ? " · " + esc(p.positions) : ""}</small></span>` +
+      `<button type="button" class="clearbtn" data-adm="edit" data-id="${esc(p.id)}">Ret</button></div>`;
+  const active = ADM.players.filter(p => p.active), inactive = ADM.players.filter(p => !p.active);
+  const plan = PLAN_CODE ? appAddress() + "?hold=" + encodeURIComponent(PLAN_CODE) : "";
+  box.innerHTML = `
+    ${plan ? `<section class="adm-sec"><h3>Holdets link</h3><p class="grp-hint">Spillere og forældre ser træningsplanen her uden login.</p>
+      <div class="adm-link"><code>${esc(plan)}</code><button type="button" class="clearbtn" data-adm="copy" data-url="${esc(plan)}">Kopiér</button></div></section>` : ""}
+    <section class="adm-sec"><h3>Spillere (${active.length})</h3>
+      ${ADM.edit === "new" ? playerForm({}) : `<button type="button" class="v-findbtn plan-new" data-adm="new">+ Ny spiller</button>`}
+      ${active.map(row).join("")}
+      ${inactive.length ? `<details class="past-group"${inactive.some(p => p.id === ADM.edit) ? " open" : ""}><summary>Ikke aktive (${inactive.length})</summary>${inactive.map(row).join("")}</details>` : ""}
+    </section>
+    <section class="adm-sec"><h3>Trænere (${ADM.members.length})</h3>
+      ${ADM.members.map(m => `<div class="adm-row"><span><strong>${esc(m.email)}</strong>${m.me ? "<small>Dig</small>" : ""}</span>
+        ${roleSelect(m.role, `data-adm="role" data-user="${esc(m.user_id)}" aria-label="Rolle for ${esc(m.email)}"`)}
+        <button type="button" class="clearbtn planner-del" data-adm="remove" data-user="${esc(m.user_id)}" data-email="${esc(m.email)}">Fjern</button></div>`).join("")}
+      <p class="grp-hint">Admin: alt, også spillere, niveauer og trænere. Træner: træningsplan, grupper og kampe. Hjælpetræner: ser ingen niveauer og kan kun gemme tilmeldte.</p>
+    </section>
+    <section class="adm-sec"><h3>Invitér en træner</h3>
+      <div class="adm-invite">${roleSelect("coach", 'id="adm-invite-role" aria-label="Rolle for den nye træner"')}
+        <button type="button" class="login-go" data-adm="invite">Lav invitationslink</button></div>
+      <p class="grp-hint">Send linket til træneren (fx på sms). Det kan bruges én gang og virker i 14 dage. Træneren logger ind eller opretter en bruger med sin e-mail.</p>
+      ${ADM.invites.map(i => `<div class="adm-row"><span><strong>${esc(ROLE_NAMES[i.role] || i.role)}</strong><small>Udløber ${esc(i.expires)}</small></span>
+        <button type="button" class="clearbtn" data-adm="copy" data-url="${esc(inviteLink(i.code))}">Kopiér link</button>
+        <button type="button" class="clearbtn planner-del" data-adm="revoke" data-code="${esc(i.code)}">Træk tilbage</button></div>`).join("")}
+    </section>`;
+  const f = box.querySelector("[data-adm-form] input[name=name]");
+  if (f) f.focus();
+}
+function admAfter(promise, ok) {
+  return promise.then(function (r) { ADM.msg = ""; if (ok) ok(r); loadAdmin(); if (GRP_CACHE) GRP_CACHE.at = 0; },
+    function (err) { ADM.msg = failText(err); showToast(failText(err)); renderAdmin(); });
+}
+document.getElementById("adm").addEventListener("click", function (e) {
+  const b = e.target.closest("[data-adm]");
+  if (!b || !ADM || b.tagName === "SELECT") return;
+  const act = b.dataset.adm;
+  if (act === "new" || act === "edit") { ADM.edit = act === "new" ? "new" : b.dataset.id; ADM.msg = ""; renderAdmin(); }
+  else if (act === "cancel") { ADM.edit = null; ADM.msg = ""; renderAdmin(); }
+  else if (act === "copy") copyRich(b.dataset.url, "Træningsparat").then(ok => ok ? markCopied(b, "Linket er kopieret") : showToast("Kopiér linket:", b.dataset.url));
+  else if (act === "forget") {
+    if (!confirm("Slet " + b.dataset.name + " og navnet i alle gemte grupper og kampe? Det kan ikke fortrydes. (Vil du bare skjule spilleren, så fjern fluebenet ved Aktiv.)")) return;
+    admAfter(admCall("forget_player", { player_name: b.dataset.name }), function () { ADM.edit = null; showToast(b.dataset.name + " er slettet."); });
+  } else if (act === "remove") {
+    if (!confirm("Fjern " + b.dataset.email + " fra holdet?")) return;
+    admAfter(admCall("remove_member", { member: b.dataset.user }));
+  } else if (act === "revoke") admAfter(admCall("revoke_invite", { invite: b.dataset.code }));
+  else if (act === "invite") {
+    const role = document.getElementById("adm-invite-role").value;
+    admAfter(admCall("create_invite", { role: role }), function (r) {
+      copyRich(inviteLink(r.code), "Invitation til Træningsparat").then(ok => showToast(ok ? "Invitationslinket er kopieret. Send det til træneren." : "Kopiér linket:", ok ? undefined : inviteLink(r.code)));
+    });
+  }
+});
+document.getElementById("adm").addEventListener("change", function (e) {
+  const sel = e.target.closest('select[data-adm="role"]');
+  if (sel && ADM) admAfter(admCall("set_member_role", { member: sel.dataset.user, new_role: sel.value }));
+});
+document.getElementById("adm").addEventListener("submit", function (e) {
+  const f = e.target.closest("[data-adm-form]");
+  if (!f || !ADM) return;
+  e.preventDefault();
+  const player = { id: ADM.edit === "new" ? "" : ADM.edit, name: f.elements.name.value.trim(), lo: f.elements.lo.value.trim(),
+                   hi: f.elements.hi.value.trim(), positions: f.elements.positions.value.trim(), active: f.elements.active.checked };
+  if (!player.name) { ADM.msg = "Spilleren skal have et navn."; renderAdmin(); return; }
+  if ([player.lo, player.hi].some(v => v && !/^\d+([.,]\d+)?$/.test(v))) { ADM.msg = "Fra og Til skal være tal, fx 2 eller 2,5."; renderAdmin(); return; }
+  f.querySelector(".login-go").disabled = true;
+  admAfter(admCall("save_player", { player: player }), function () { ADM.edit = null; showToast(player.name + " er gemt."); });
+});
+
+/* ===================== The planner (with the database): coaches write their team's plan in the app =====================
+   "+ Ny træning" above the list, and "Ret træningen" / "Kopiér til ny træning" in an open training. Each part
+   (opstart, stations, afslutning) is a drill from the library (search by typing its name) or any text, with an
+   optional link and the coaches. Saved straight in the database (save_training); needs a connection. */
+function canPlan() {
+  if (!useSupabase() || !isAuthed() || !supaTeam() || (PLAN_TEAM && PLAN_TEAM !== supaTeam())) return false;
+  const t = ((supaSession() || {}).teams || []).find(x => x.id === supaTeam());
+  return !!t && (t.role === "admin" || t.role === "coach");
+}
+let PLANNER = null;                                  // { index, base, copy, drills: [{ id, name }] }
+const plannerDrills = () => (LIB ? Promise.resolve(LIB.drills) : libCall("getDrills", [AUTH.token, ""]).then(r => r.drills || []))
+  .then(list => list.map(d => ({ id: cleanVal(d["ID"]), name: cleanVal(d["Navn"]) })).filter(d => d.id && d.name));
+
+function openPlanner(index, copy) {
+  const base = index >= 0 ? SESSIONS[index] : null;
+  PLANNER = { index: index, base: base, copy: !!copy, drills: [] };
+  const v = base || {};
+  const notes = (v.notes || []).map(p => [p.text, p.url].filter(Boolean).join(" ")).join("\n");
+  const field = (name, label, value, attrs) =>
+    `<label>${label}<input name="${name}" value="${esc(value || "")}" ${attrs || ""}></label>`;
+  const parts = SESSION_ITEMS.map(function (it) {
+    const p = v[it[1]] || {};
+    return `<fieldset><legend>${esc(it[0])}</legend>
+      <input name="${it[1]}.text" list="planner-drills" value="${esc(p.text || "")}" placeholder="Søg øvelse eller skriv tekst" aria-label="${esc(it[0])}: øvelse eller tekst" autocomplete="off">
+      <input name="${it[1]}.url" type="url" value="${esc(p.url || "")}" placeholder="Link (valgfrit)" aria-label="${esc(it[0])}: link">
+      <input name="${it[1]}.coaches" value="${esc((p.coaches || []).join(", "))}" placeholder="Trænere, adskilt med komma" aria-label="${esc(it[0])}: trænere"></fieldset>`;
+  }).join("");
+  const html = `<form id="planner" class="planner" onsubmit="event.preventDefault(); plannerSave();" novalidate>
+    ${field("iso", "Dato", copy ? "" : v.iso, 'type="date"')}
+    ${field("focus", "Overskrift (fokus)", v.focus, 'placeholder="Fx Afslutte, drible eller aflevere?"')}
+    ${field("theme", "Tema", v.theme, 'placeholder="Flere adskilles med ;"')}
+    ${field("subtheme", "Undertema", v.subtheme)}
+    <label>Noter<textarea name="notes" rows="3" placeholder="Et link på en linje bliver til et link">${esc(notes)}</textarea></label>
+    ${parts}
+    <datalist id="planner-drills"></datalist>
+    <p class="planner-msg" role="status"></p>
+    <div class="planner-actions">
+      <button type="submit" class="login-go">Gem træningen</button>
+      ${base && !copy ? '<button type="button" class="clearbtn planner-del" onclick="plannerDelete()">Slet</button>' : ""}
+      <button type="button" class="clearbtn" onclick="closeDrill()">Annuller</button>
+    </div></form>`;
+  openViewer(base && !copy ? "Ret træning" : "Ny træning", [{ title: base && !copy ? "Ret træning" : copy ? "Kopi af træning" : "Ny træning", html: html }],
+             document.activeElement);
+  const want = PLANNER;
+  plannerDrills().then(function (drills) {
+    if (PLANNER !== want) return;
+    PLANNER.drills = drills;
+    const dl = document.getElementById("planner-drills");
+    if (dl) dl.innerHTML = drills.map(d => `<option value="${esc(d.name)}"></option>`).join("");
+  }, function () { plannerMsg("Kunne ikke hente øvelserne. Du kan stadig skrive tekst."); });
+}
+function plannerMsg(text, bad) {
+  const el = document.querySelector("#planner .planner-msg");
+  if (el) { el.textContent = text; el.classList.toggle("bad", bad !== false); }
+}
+/* The form as a training for the database */
+function plannerTraining() {
+  const f = document.getElementById("planner"), get = n => (f.elements[n] ? f.elements[n].value : "").trim();
+  const base = PLANNER.copy ? null : PLANNER.base;
+  const byName = {};
+  PLANNER.drills.forEach(d => { byName[d.name.toLowerCase()] = d.id; });
+  const t = { id: base ? base.id : "", iso: get("iso"), theme: get("theme"), subtheme: get("subtheme"), focus: get("focus"),
+              date: base && base.iso === get("iso") && base.date !== base.iso ? base.date || "" : "" };
+  t.notes = get("notes").split("\n").map(l => l.trim()).filter(Boolean).map(function (line) {
+    const m = line.match(/https?:\/\/\S+/);
+    return { text: m ? line.replace(m[0], "").trim() || m[0] : line, url: m ? m[0] : "" };
+  });
+  SESSION_ITEMS.forEach(function (it) {
+    const k = it[1], text = get(k + ".text"), old = (PLANNER.base || {})[k] || {};
+    t[k] = { text: text, url: get(k + ".url"),
+             drillId: byName[text.toLowerCase()] || (text && text === old.text ? old.drillId || "" : ""),
+             coaches: get(k + ".coaches").split(/[,;]/).map(c => c.trim()).filter(Boolean) };
+  });
+  return t;
+}
+function plannerSave() {
+  if (!PLANNER) return;
+  const t = plannerTraining();
+  if (!t.iso && !t.focus) { plannerMsg("Skriv mindst en dato eller en overskrift."); return; }
+  if (!navigator.onLine) { plannerMsg("Planen kan kun gemmes med forbindelse. Prøv igen, når der er net."); return; }
+  const btn = document.querySelector("#planner .login-go");
+  btn.disabled = true; plannerMsg("Gemmer …", false);
+  libCall("saveTraining", [AUTH.token, t]).then(function () {
+    PLANNER = null;
+    closeDrill();
+    showToast("Træningen er gemt.");
+    fetchPlan().catch(function () { /* shown in the bar under the list */ });
+  }, function (err) {
+    btn.disabled = false;
+    plannerMsg("Kunne ikke gemme: " + (/LOGIN/.test(String(err && err.message)) ? "log ind igen." : failText(err)));
+  });
+}
+/* "Slettede træninger" under the list: the last 90 days' deleted trainings, each with "Gendan" */
+function showDeleted() {
+  const box = document.getElementById("deleted-list");
+  if (!box) return;
+  box.innerHTML = "<p>Henter …</p>";
+  libCall("deletedTrainings", []).then(function (list) {
+    box.innerHTML = list.length ? list.map(t => `<div class="deleted-row"><span><strong>${esc(danishDate(t.iso, t.date) || "Uden dato")}</strong>` +
+        `${t.focus ? " · " + esc(t.focus) : ""}<small>Slettet ${esc(t.deleted)}</small></span>` +
+        `<button type="button" class="clearbtn" onclick="restoreTraining('${esc(t.id)}', this)">Gendan</button></div>`).join("")
+      : "<p>Ingen træninger er slettet de sidste 90 dage.</p>";
+  }, function (err) { box.innerHTML = `<p>Kunne ikke hente de slettede træninger: ${esc(failText(err))}</p>`; });
+}
+function restoreTraining(id, btn) {
+  if (btn) btn.disabled = true;
+  libCall("restoreTraining", [AUTH.token, id]).then(function () {
+    showToast("Træningen er gendannet.");
+    fetchPlan().then(function () { if (!viewerOpen()) renderSessions(LATEST); }).catch(function () { /* shown in the bar */ });
+  }, function (err) { if (btn) btn.disabled = false; showToast("Kunne ikke gendanne: " + failText(err)); });
+}
+
+function plannerDelete() {
+  if (!PLANNER || !PLANNER.base || !PLANNER.base.id) return;
+  if (!confirm("Slet træningen " + danishDate(PLANNER.base.iso, PLANNER.base.date) + "? Den kan gendannes under \u201cSlettede træninger\u201d i 90 dage.")) return;
+  libCall("deleteTraining", [AUTH.token, PLANNER.base.id]).then(function () {
+    PLANNER = null;
+    closeDrill();
+    showToast("Træningen er slettet. Den kan gendannes under \u201cSlettede træninger\u201d.");
+    fetchPlan().catch(function () { /* shown in the bar under the list */ });
+  }, function (err) { plannerMsg("Kunne ikke slette: " + failText(err)); });
 }
 
 /* ---- The grouping itself (no screen code here) ----

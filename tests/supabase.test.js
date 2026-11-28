@@ -125,18 +125,18 @@ test.describe('database (Supabase)', { skip }, () => {
     fails(`select save_groups('${A}', '2026-11-07', '[["Bo"]]');`, U.assistant, /row-level security/);
   });
 
-  test('a level change is kept with when and by whom', () => {
-    sql(`update players set lo = 2, hi = 3 where name = 'Alma';`, U.coach);
+  test('a level change (by the admin) is kept with when and by whom', () => {
+    sql(`update players set lo = 2, hi = 3 where name = 'Alma';`, U.leader);
     const log = json(`select json_agg(json_build_object('lo', l.lo, 'hi', l.hi, 'by', l.changed_by) order by l.id)
                       from player_levels l join players p on p.id = l.player_id where p.name = 'Alma';`, U.coach);
     assert.deepEqual(log.map(x => [x.lo, x.hi]), [[1, 2], [2, 3]]);
-    assert.equal(log[1].by, U.coach);
+    assert.equal(log[1].by, U.leader);
   });
 
-  test('a player can be forgotten (GDPR): gone from the list and from every saved training; only by the holdleder', () => {
+  test('a player can be forgotten (GDPR): gone from the list and from every saved training; only by the admin', () => {
     json(`select save_signups('${A}', '2026-11-09', '["Bo", "Alma"]');`, U.coach);
     json(`select save_matches('${A}', '2026-11-09', '[[["Bo"], ["Alma"]]]');`, U.coach);
-    fails(`select forget_player('${A}', 'Bo');`, U.coach, /holdleder/);
+    fails(`select forget_player('${A}', 'Bo');`, U.coach, /admin/);
     assert.ok(+sql(`select forget_player('${A}', 'Bo');`, U.leader) >= 3);
     const d = json(`select get_group_data('${A}');`, U.leader);
     assert.ok(!JSON.stringify(d).includes('"Bo"'), 'no trace of Bo');
@@ -222,5 +222,86 @@ test.describe('database (Supabase)', { skip }, () => {
     const d = json(`select get_drills();`, U.other).drills.find(x => x.ID === '701');
     assert.deepEqual([d.Navn, d.Beskrivelse, d.Kilde, d.__da], ["Kegle-'løb'", 'Løb', 'DBU', 1]);
     assert.deepEqual(json(`select get_drills();`, U.other).aliases, lib.aliases);
+  });
+  test('a deleted training can be brought back (90 days); it is gone from the plan meanwhile', () => {
+    const code = sql(`select plan_code from teams where id = '${A}';`);
+    const t = json(`select save_training('${A}', '{"iso": "2026-12-15", "focus": "Til at slette"}');`, U.coach);
+    json(`select delete_training('${A}', '${t.id}');`, U.coach);
+    assert.ok(!json(`select get_plan('${code}');`, 'anon').sessions.some(x => x.id === t.id), 'not in the plan');
+    const del = json(`select deleted_trainings('${A}');`, U.coach);
+    assert.equal(del[0].id, t.id);
+    assert.deepEqual([del[0].iso, del[0].focus], ['2026-12-15', 'Til at slette']);
+    assert.match(del[0].deleted, /^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/);
+    fails(`select deleted_trainings('${A}');`, U.assistant, /adgang/);
+    json(`select restore_training('${A}', '${t.id}');`, U.coach);
+    assert.ok(json(`select get_plan('${code}');`, 'anon').sessions.some(x => x.id === t.id), 'back in the plan');
+    assert.ok(!json(`select deleted_trainings('${A}');`, U.coach).some(x => x.id === t.id));
+    fails(`select restore_training('${A}', '${t.id}');`, U.coach, /findes ikke/);
+  });
+
+  test('the admin keeps the players: adds, changes levels, renames (the history follows), and only the admin', () => {
+    json(`select save_groups('${A}', '2026-12-20', '[["Alma", "Carl"]]');`, U.coach);
+    const added = json(`select save_player('${A}', '{"name": "Erik", "lo": "2,5", "hi": "", "positions": "Keeper"}');`, U.leader);
+    let list = json(`select team_players('${A}');`, U.leader);
+    const erik = list.find(p => p.name === 'Erik');
+    assert.deepEqual([erik.id, erik.lo, erik.hi, erik.positions, erik.active], [added.id, 2.5, 2.5, 'Keeper', true]);
+    assert.ok(list.some(p => p.name === 'Gammel' && p.active === false), 'inactive players are listed too');
+    const carl = list.find(p => p.name === 'Carl');
+    json(`select save_player('${A}', '{"id": "${carl.id}", "name": "Carl Emil", "lo": 1, "hi": 3}');`, U.leader);
+    assert.deepEqual(json(`select get_group_data('${A}');`, U.coach).history['2026-12-20'].groups, [['Alma', 'Carl Emil']]);
+    fails(`select save_player('${A}', '{"name": "alma"}');`, U.leader, /allerede/);
+    fails(`select save_player('${A}', '{"name": "X", "lo": 3, "hi": 1}');`, U.leader, /Fra/);
+    fails(`select save_player('${A}', '{"name": "Y"}');`, U.coach, /admin/);
+    fails(`select team_players('${A}');`, U.coach, /admin/);
+    sql(`update players set lo = 0.5 where name = 'Alma';`, U.coach);                 // a coach can't change a level
+    assert.notEqual(json(`select team_players('${A}');`, U.leader).find(p => p.name === 'Alma').lo, 0.5);
+    json(`select save_player('${A}', '{"id": "${erik.id}", "name": "Erik", "lo": 2, "hi": 3, "active": false}');`, U.leader);
+    assert.ok(!json(`select get_group_data('${A}');`, U.coach).players.some(p => p.name === 'Erik'), 'inactive: not in Grupper');
+  });
+
+  test('coaches join by an invitation link (once, 14 days); the admin sets roles and removes; a team keeps one admin', () => {
+    const NEW = '55555555-5555-5555-5555-555555555555';
+    sql(`insert into auth.users values ('${NEW}', 'ny@x');`);
+    fails(`select create_invite('${A}', 'coach');`, U.coach, /admin/);
+    const inv = json(`select create_invite('${A}', 'assistant');`, U.leader);
+    assert.match(inv.code, /^[0-9A-F]{10}$/);
+    assert.deepEqual(json(`select invite_info('${inv.code.toLowerCase()}');`, 'anon'), { team: 'U10', club: 'Klub', role: 'assistant' });
+    assert.equal(json(`select team_invites_list('${A}');`, U.leader)[0].code, inv.code);
+    const r = json(`select accept_invite('${inv.code}');`, NEW);
+    assert.deepEqual([r.team_id, r.team, r.role], [A, 'U10', 'assistant']);
+    fails(`select accept_invite('${inv.code}');`, U.other, /brugt eller udløbet/);
+    assert.equal(sql(`select invite_info('${inv.code}');`, 'anon'), '');
+    const members = json(`select team_members_list('${A}');`, NEW);
+    assert.ok(members.some(m => m.email === 'ny@x' && m.role === 'assistant' && m.me));
+    json(`select set_member_role('${A}', '${NEW}', 'coach');`, U.leader);
+    assert.equal(json(`select my_teams();`, NEW).find(t => t.id === A).role, 'coach');
+    fails(`select set_member_role('${A}', '${U.leader}', 'coach');`, U.leader, /mindst én admin/);
+    fails(`select remove_member('${A}', '${U.leader}');`, U.leader, /mindst én admin/);
+    fails(`select set_member_role('${A}', '${NEW}', 'admin');`, U.coach, /admin/);
+    const old = json(`select create_invite('${A}', 'coach');`, U.leader);
+    json(`select revoke_invite('${A}', '${old.code}');`, U.leader);
+    assert.equal(sql(`select invite_info('${old.code}');`, 'anon'), '');
+    sql(`update team_invites set expires_at = now() - interval '1 day' where code = '${json(`select create_invite('${A}', 'coach');`, U.leader).code}';`);
+    assert.equal(json(`select team_invites_list('${A}');`, U.leader).length, 0, 'expired ones are not listed');
+    json(`select remove_member('${A}', '${NEW}');`, U.leader);
+    assert.deepEqual(json(`select my_teams();`, NEW), []);
+  });
+
+  test('own drills (ready for the own library): app admins keep the shared ones, club admins their club\'s; hidden until the source is on', () => {
+    const club = sql(`select club_id from teams where id = '${A}';`);
+    fails(`select save_drill('{"name": "Min øvelse"}');`, U.leader, /redaktører/);
+    sql(`insert into app_admins values ('${U.leader}');`);
+    const d = json(`select save_drill('{"name": "Min øvelse", "content": {"Beskrivelse": "Løb"}, "media": [{"type": "animation", "frames": []}]}');`, U.leader);
+    assert.match(d.id, /^EGNE-[0-9A-F]{8}$/);
+    sql(`insert into club_admins values ('${club}', '${U.coach}') on conflict do nothing;`);
+    const own = json(`select save_drill('{"owner_club": "${club}", "name": "Klubøvelse"}');`, U.coach);
+    fails(`select save_drill('{"id": "d1", "name": "x"}');`, U.leader, /Kun egne/);
+    assert.ok(!json(`select get_drills();`, U.other).drills.some(x => x.ID === d.id || x.ID === own.id), 'source off: not shown');
+    assert.ok(json(`select get_drills();`, U.coach).drills.some(x => x.ID === own.id), 'but the club admin sees it, to work on it');
+    sql(`update drill_sources set active = true where id = 'egne';`);
+    const lib = json(`select get_drills();`, U.coach).drills;
+    assert.deepEqual(lib.filter(x => [d.id, own.id].includes(x.ID)).map(x => [x.Navn, x.Kilde]).sort(), [['Klubøvelse', 'Træningsparat'], ['Min øvelse', 'Træningsparat']]);
+    assert.ok(!json(`select get_drills();`, '55555555-5555-5555-5555-555555555555').drills.some(x => x.ID === own.id), 'someone outside the club does not see it');
+    sql(`update drill_sources set active = false where id = 'egne';`);
   });
 });

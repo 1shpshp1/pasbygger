@@ -642,7 +642,7 @@ test('25-50-25 is the default for Grupper and Kampe til træning (also over an o
 
 test('Spilleroversigt is its own tab (and needs the code)', { skip }, async () => {
   const guest = await phone(testServer(), { loggedIn: false });
-  assert.deepEqual(await guest.locator('#nav-bar .navbtn').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe (beta)', 'Spilleroversigt']);
+  assert.deepEqual(await guest.locator('#nav-bar .navbtn:not([hidden])').allInnerTexts(), ['Træninger', 'Øvelser', 'Grupper', 'Kampe (beta)', 'Spilleroversigt']);
   await guest.click('#nav-overview');
   await guest.waitForSelector('#login-pw');
   const page = await phone(testServer());
@@ -1030,7 +1030,7 @@ test('With the database (Supabase): the plan by the team\'s link, log in with e-
   assert.deepEqual(page.errors, []);
 });
 
-test('With the database: log in with e-mail and the password the holdleder gave you (no e-mail is sent)', { skip }, async () => {
+test('With the database: log in with e-mail and the password the admin gave you (no e-mail is sent)', { skip }, async () => {
   const srv = testServer(), page = await phone(srv, { loggedIn: false });
   const sb = [], jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'q'.repeat(120) + '.sig';
   await page.context().route('https://sb.test/**', r => {
@@ -1083,5 +1083,257 @@ test('the database is on for everyone; ?database=nej makes one phone use the she
   assert.equal(await page.evaluate(() => useSupabase()), true);
   await page.goto(base + '?database=nej');
   assert.equal(await page.evaluate(() => useSupabase()), false);
+  assert.deepEqual(page.errors, []);
+});
+
+test('The planner (database): a coach makes, edits, copies and deletes trainings, choosing drills from the library; assistants and visitors can\'t', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'r'.repeat(120) + '.sig', saved = [], deleted = [];
+  let role = 'admin';
+  let plan = [{ id: 'tr-1', iso: '2030-01-07', date: '2030-01-07', focus: 'Pasninger', theme: 'Spil', subtheme: '', notes: [{ text: 'Husk bolde', url: '' }],
+    startup: { text: 'Opvarmning', url: '', drillId: '', coaches: ['Ole'] }, station1: { text: 'Rondo', url: '', drillId: 'D1', coaches: [] },
+    station2: { text: '', url: '', drillId: '', coaches: [] }, station3: { text: '', url: '', drillId: '', coaches: [] },
+    station4: { text: '', url: '', drillId: '', coaches: [] }, finish: { text: 'Kamp', url: '', drillId: '', coaches: [] } }];
+  const drills = { headers: ['ID', 'Navn'], drills: [{ ID: 'D1', Navn: 'Rondo', Kilde: 'DBU' }, { ID: 'D2', Navn: 'Portspillet', Kilde: 'DBU' }], aliases: [], groups: [], version: 'l', daVersion: '' };
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    const path = url.pathname;
+    if (path === '/auth/v1/token') return send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 });
+    if (path === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: role }]);
+    if (path === '/rest/v1/rpc/get_plan') return send({ version: 'v' + plan.length + saved.length + deleted.length, sessions: plan, server: 6, team: body.team || 't-other', code: 'abc' });
+    if (path === '/rest/v1/rpc/get_drills') return send(drills);
+    if (path === '/rest/v1/rpc/get_drills_da') return send({ version: 'x', da: {} });
+    if (path === '/rest/v1/rpc/get_group_data') return send({ players: [], history: {}, signups: {}, matches: {}, fixtures: {}, version: 'g', server: 5 });
+    if (path === '/rest/v1/rpc/save_training') {
+      saved.push(body);
+      const t = Object.assign({}, body.training, { id: body.training.id || 'tr-' + (plan.length + 1) });
+      plan = plan.filter(x => x.id !== t.id).concat([t]).sort((a, b) => a.iso < b.iso ? -1 : 1);
+      return send({ ok: true, id: t.id });
+    }
+    if (path === '/rest/v1/rpc/delete_training') { deleted.push(body); plan = plan.filter(x => x.id !== body.training_id); return send({ ok: true }); }
+    send(true);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base);
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'a visitor can\'t plan');
+  const login = async () => {
+    await page.click('#nav-groups');
+    await page.fill('#login-pw', 'træner@x.dk'); await page.click('#login-go');
+    await page.fill('#login-pw', 'kode'); await page.click('#login-go');
+    await page.waitForSelector('#groups:not(.view-hidden)');
+    await page.click('#nav-sessions');
+  };
+  await login();
+  await page.waitForSelector('#sessions .plan-new');
+  // a new training, with a drill from the library
+  await page.click('#sessions .plan-new');
+  await page.waitForFunction(() => document.querySelectorAll('#planner-drills option').length === 2);
+  await page.click('#planner .login-go');                          // nothing written yet
+  assert.match(await page.locator('#planner .planner-msg').innerText(), /mindst en dato eller en overskrift/);
+  await page.fill('#planner [name="iso"]', '2030-01-14');
+  await page.fill('#planner [name="focus"]', 'Afslutninger');
+  await page.fill('#planner [name="notes"]', 'Kegler og veste\nVideo https://example.com/v');
+  await page.fill('#planner [name="station2.text"]', 'Portspillet');
+  await page.fill('#planner [name="station2.coaches"]', 'Ole, Sune');
+  await page.fill('#planner [name="station3.text"]', 'Fri leg');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  const t = saved[0].training;
+  assert.equal(saved[0].team, 't1');
+  assert.deepEqual([t.id, t.iso, t.focus], ['', '2030-01-14', 'Afslutninger']);
+  assert.deepEqual(t.notes, [{ text: 'Kegler og veste', url: '' }, { text: 'Video', url: 'https://example.com/v' }]);
+  assert.deepEqual(t.station2, { text: 'Portspillet', url: '', drillId: 'D2', coaches: ['Ole', 'Sune'] });
+  assert.deepEqual(t.station3, { text: 'Fri leg', url: '', drillId: '', coaches: [] });
+  await page.waitForFunction(() => /Afslutninger/.test(document.getElementById('sessions').innerText));
+  // edit: the drill stays, the focus changes
+  await page.locator('#sessions .card', { hasText: 'Pasninger' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Ret træningen")');
+  assert.equal(await page.inputValue('#planner [name="station1.text"]'), 'Rondo');
+  await page.fill('#planner [name="focus"]', 'Pasninger og førsteberøring');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  assert.deepEqual([saved[1].training.id, saved[1].training.focus, saved[1].training.station1.drillId, saved[1].training.startup.coaches],
+                   ['tr-1', 'Pasninger og førsteberøring', 'D1', ['Ole']]);
+  // copy: a new training with the same parts and no date
+  await page.waitForFunction(() => /førsteberøring/.test(document.getElementById('sessions').innerText));
+  await page.locator('#sessions .card', { hasText: 'førsteberøring' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Kopiér til ny træning")');
+  assert.equal(await page.inputValue('#planner [name="iso"]'), '');
+  assert.equal(await page.locator('#planner .planner-del').count(), 0);
+  await page.fill('#planner [name="iso"]', '2030-01-21');
+  await page.click('#planner .login-go');
+  await page.waitForFunction(() => document.getElementById('viewer').classList.contains('view-hidden'));
+  assert.deepEqual([saved[2].training.id, saved[2].training.iso, saved[2].training.station1.drillId], ['', '2030-01-21', 'D1']);
+  // delete
+  await page.waitForFunction(() => document.querySelectorAll('#sessions .card').length === 3);
+  await page.locator('#sessions .card', { hasText: 'Afslutninger' }).locator('.header').click();
+  await page.click('#viewer .plan-edit button:has-text("Ret træningen")');
+  await page.click('#planner .planner-del');                       // (the confirm is accepted)
+  await page.waitForFunction(() => document.querySelectorAll('#sessions .card').length === 2);
+  assert.equal(deleted[0].training_id, 'tr-2');
+  assert.deepEqual(page.errors, []);
+  // an assistant sees no planner
+  role = 'assistant';
+  await page.evaluate(() => { localStorage.removeItem('oevAuth'); localStorage.removeItem('oevSupaSession'); });
+  await page.goto(base);
+  await page.waitForSelector('#sessions .card');
+  await login();
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#sessions .plan-new').count(), 0, 'an assistant can\'t plan');
+});
+
+/* A stand-in for the club's Supabase project for the admin tests: answers the database functions from a little state */
+function fakeClub(page, srv, state) {
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 's'.repeat(120) + '.sig';
+  state.calls = [];
+  return page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}'), path = url.pathname;
+    state.calls.push([path, body]);
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    const fn = path.replace('/rest/v1/rpc/', '');
+    if (path === '/auth/v1/token' || path === '/auth/v1/signup') {
+      if (path === '/auth/v1/signup' && state.signupOff) return send({ msg: 'Signups not allowed for this instance' }, 422);
+      return send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 });
+    }
+    const answers = {
+      my_teams: () => state.teams,
+      get_plan: () => ({ version: 'v' + state.calls.length, sessions: state.plan, server: 6, team: body.team || 't-other', code: 'abc123' }),
+      get_group_data: () => ({ players: [], history: {}, signups: {}, matches: {}, fixtures: {}, version: 'g', server: 5 }),
+      get_drills: () => ({ headers: [], drills: [], aliases: [], groups: [], version: 'l', daVersion: '' }),
+      get_drills_da: () => ({ version: 'x', da: {} }),
+      team_players: () => state.players,
+      team_members_list: () => state.members,
+      team_invites_list: () => state.invites,
+      save_player: () => { const p = Object.assign({}, body.player, { id: body.player.id || 'p' + (state.players.length + 1) });
+        state.players = state.players.filter(x => x.id !== p.id).concat([p]); return { ok: true, id: p.id }; },
+      forget_player: () => { state.players = state.players.filter(x => x.name !== body.player_name); return 3; },
+      set_member_role: () => { state.members.find(m => m.user_id === body.member).role = body.new_role; return { ok: true }; },
+      remove_member: () => { state.members = state.members.filter(m => m.user_id !== body.member); return { ok: true }; },
+      create_invite: () => { const i = { code: 'ABCDEF1234', role: body.role, expires: '13.12.2026 12:00' }; state.invites = [i]; return i; },
+      revoke_invite: () => { state.invites = []; return { ok: true }; },
+      deleted_trainings: () => state.deleted,
+      restore_training: () => { const t = state.deleted.find(x => x.id === body.training_id); state.deleted = state.deleted.filter(x => x !== t);
+        state.plan = state.plan.concat([Object.assign({ startup: {}, station1: {}, station2: {}, station3: {}, station4: {}, finish: {}, notes: [] }, t)]); return { ok: true }; },
+      invite_info: () => body.invite === 'GOOD123456' ? { team: 'Drenge2015', club: 'Østerbro IF', role: 'coach' } : null,
+      accept_invite: () => { state.teams = [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'coach' }]; return { team_id: 't1', team: 'Drenge2015', role: 'coach' }; },
+      track: () => true
+    };
+    if (answers[fn]) return send(answers[fn]());
+    send({ message: 'unknown ' + path }, 404);
+  });
+}
+async function supaLogin(page) {
+  await page.click('#nav-groups');
+  await page.fill('#login-pw', 'admin@x.dk'); await page.click('#login-go');
+  await page.fill('#login-pw', 'kode1234'); await page.click('#login-go');
+  await page.waitForSelector('#groups:not(.view-hidden)');
+}
+
+test('Admin (database): the admin adds and changes players, sets coaches\' roles, invites with a link; others see no Admin tab', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const state = { teams: [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'admin' }], plan: [], deleted: [], invites: [],
+    players: [{ id: 'p1', name: 'Alma', lo: 1, hi: 2, positions: 'Keeper', active: true }, { id: 'p2', name: 'Bo', lo: 2, hi: 3, positions: '', active: false }],
+    members: [{ user_id: 'u1', email: 'admin@x.dk', role: 'admin', me: true }, { user_id: 'u2', email: 'ole@x.dk', role: 'coach', me: false }] };
+  await fakeClub(page, srv, state);
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base);
+  await page.waitForSelector('#sessions');
+  assert.equal(await page.locator('#nav-admin').isHidden(), true, 'no Admin tab before logging in');
+  await supaLogin(page);
+  await page.waitForSelector('#nav-admin:not([hidden])');
+  await page.click('#nav-admin');
+  await page.waitForSelector('#adm .adm-sec');
+  const text = await page.locator('#adm').innerText();
+  assert.match(text, /Spillere \(1\)/);
+  assert.match(text, /Alma\nNiveau 1–2 · Keeper/);
+  assert.match(text, /Ikke aktive \(1\)/);
+  assert.match(text, /\?hold=abc123/, 'the team\'s link');
+  // a new player
+  await page.click('#adm [data-adm="new"]');
+  await page.fill('#adm [name="name"]', 'Carl');
+  await page.fill('#adm [name="lo"]', '2,5');
+  await page.click('#adm .adm-form .login-go');
+  await page.waitForFunction(() => /Carl/.test(document.getElementById('adm').innerText) && !document.querySelector('#adm .adm-form'));
+  assert.deepEqual(state.calls.find(c => c[0].endsWith('save_player'))[1].player, { id: '', name: 'Carl', lo: '2,5', hi: '', positions: '', active: true });
+  // a level changed, with a wrong number first
+  await page.click('#adm [data-adm="edit"][data-id="p1"]');
+  await page.fill('#adm [name="hi"]', 'tre');
+  await page.click('#adm .adm-form .login-go');
+  assert.match(await page.locator('#adm .adm-form .planner-msg').innerText(), /skal være tal/);
+  await page.fill('#adm [name="hi"]', '3');
+  await page.click('#adm .adm-form .login-go');
+  await page.waitForFunction(() => /Niveau 1–3/.test(document.getElementById('adm').innerText));
+  // roles and invitations
+  await page.selectOption('#adm select[data-user="u2"]', 'assistant');
+  await page.waitForFunction(() => document.querySelector('#adm select[data-user="u2"]').value === 'assistant');
+  assert.deepEqual(state.calls.find(c => c[0].endsWith('set_member_role'))[1], { team: 't1', member: 'u2', new_role: 'assistant' });
+  await page.selectOption('#adm-invite-role', 'coach');
+  await page.click('#adm [data-adm="invite"]');
+  await page.waitForFunction(() => /Udløber 13\.12\.2026/.test(document.getElementById('adm').innerText));
+  assert.equal(await page.locator('#adm [data-adm="copy"]').last().getAttribute('data-url'), base + '?invite=ABCDEF1234');
+  await page.click('#adm [data-adm="revoke"]');
+  await page.waitForFunction(() => !/Udløber/.test(document.getElementById('adm').innerText));
+  // a player forgotten (GDPR), after a question
+  await page.click('#adm [data-adm="edit"][data-id="p1"]');
+  await page.click('#adm [data-adm="forget"]');
+  await page.waitForFunction(() => !/Alma/.test(document.getElementById('adm').innerText));
+  assert.equal(state.calls.find(c => c[0].endsWith('forget_player'))[1].player_name, 'Alma');
+  assert.deepEqual(page.errors, []);
+  // a coach (on another phone): no Admin tab
+  state.teams = [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'coach' }];
+  const coach = await phone(srv, { loggedIn: false });
+  await fakeClub(coach, srv, state);
+  await coach.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await coach.goto(base);
+  await coach.waitForSelector('#sessions');
+  await supaLogin(coach);
+  await coach.waitForTimeout(300);
+  assert.equal(await coach.locator('#nav-admin').isHidden(), true, 'a coach has no Admin tab');
+});
+
+test('Deleted trainings (database): listed under the plan and brought back with "Gendan"', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const state = { teams: [{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'coach' }], plan: [], invites: [], players: [], members: [],
+    deleted: [{ id: 'tr-9', iso: '2030-02-04', date: '', focus: 'Slettet ved en fejl', deleted: '29.11.2026 10:00' }] };
+  await fakeClub(page, srv, state);
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base);
+  await page.waitForSelector('#sessions');
+  await supaLogin(page);
+  await page.click('#nav-sessions');
+  await page.waitForSelector('#sessions .deleted-group');
+  await page.click('#sessions .deleted-group summary');
+  await page.waitForSelector('#deleted-list .deleted-row');
+  assert.match(await page.locator('#deleted-list').innerText(), /Slettet ved en fejl\s*Slettet 29\.11\.2026 10:00/);
+  await page.click('#deleted-list button');
+  await page.waitForFunction(() => /Slettet ved en fejl/.test(document.querySelector('#sessions').innerText) && document.querySelectorAll('#sessions .card').length === 1);
+  assert.deepEqual(state.calls.find(c => c[0].endsWith('restore_training'))[1], { team: 't1', training_id: 'tr-9' });
+  assert.deepEqual(page.errors, []);
+});
+
+test('An invitation link: the coach creates a user (or logs in) and joins the team', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const state = { teams: [], plan: [], deleted: [], invites: [], players: [], members: [], signupOff: true };
+  await fakeClub(page, srv, state);
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base + '?invite=BAD');
+  await page.waitForFunction(() => /brugt eller udløbet/.test(document.getElementById('toast').innerText));
+  await page.goto(base + '?invite=GOOD123456');
+  await page.waitForSelector('#login:not(.view-hidden)');
+  assert.equal(await page.locator('#login-title').innerText(), 'Du er inviteret til Drenge2015 (Østerbro IF) som træner');
+  await page.fill('#login-pw', 'ny@x.dk'); await page.click('#login-go');
+  await page.click('#login-signup');                                         // "Opret ny bruger"
+  assert.equal(await page.locator('#login-title').innerText(), 'Vælg en adgangskode (mindst 6 tegn)');
+  await page.fill('#login-pw', 'hemmelig'); await page.click('#login-go');
+  await page.waitForFunction(() => /Allow new users to sign up/.test(document.getElementById('login-err').textContent));
+  state.signupOff = false;
+  await page.click('#login-go');
+  await page.waitForSelector('#login.view-hidden', { state: 'attached' });
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('oevSupaSession') || '{}').team === 't1');
+  assert.ok(state.calls.some(c => c[0] === '/auth/v1/signup' && c[1].email === 'ny@x.dk' && c[1].password === 'hemmelig'));
+  assert.equal(state.calls.find(c => c[0].endsWith('accept_invite'))[1].invite, 'GOOD123456');
+  assert.ok(!/invite=/.test(await page.evaluate(() => location.search)), 'the code is taken out of the address');
   assert.deepEqual(page.errors, []);
 });

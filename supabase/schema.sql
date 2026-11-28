@@ -1,11 +1,11 @@
--- Træningsparat (formerly Pasbygger): the database (Supabase / PostgreSQL), version 2.
+-- Træningsparat (formerly Pasbygger): the database (Supabase / PostgreSQL), version 3.
 -- Paste the whole file into Supabase → SQL Editor → Run. It can be run again: it only adds what is missing and
 -- replaces the functions.
 --
 -- What is where
 --   clubs, teams          a club has teams (a team = one group of players and their coaches)
 --   club_admins           who runs a club (may make teams and add coaches)
---   team_members          who coaches a team, and as what: admin (holdleder), coach (træner), assistant (hjælpetræner)
+--   team_members          who coaches a team, and as what: admin, coach (træner), assistant (hjælpetræner)
 --   players               a team's players: name, level band (lo–hi), favourite positions, active
 --   player_levels         every change of a player's level, with when and by whom (so 25-50-25 history is not lost)
 --   saved_groups          the groups of one training (key = the date, or the date + " fri"), as [[names]]
@@ -19,6 +19,7 @@
 --   library_settings      the library's column order, tag renames and tag groups (one row)
 --   app_admins            who looks after the shared library (you)
 --   usage_counts          the app's statistics: counts per day, nothing about who
+--   team_invites          links an admin makes to invite a coach to the team (one use, 14 days)
 --
 -- The app reads and writes through the functions at the end (get_group_data, save_groups, …), which give back
 -- exactly what the Google Sheet server (apps-script/Grupper.gs) gives, so the app works the same on both.
@@ -176,21 +177,21 @@ create policy "club: admins change it" on clubs for update using (is_club_admin(
 
 create policy "team: members see it" on teams for select using (has_team_role(id, 'assistant'));
 create policy "team: club admins make it" on teams for insert with check (is_club_admin(club_id));
-create policy "team: holdleder changes it" on teams for update using (has_team_role(id, 'admin'));
+create policy "team: admin changes it" on teams for update using (has_team_role(id, 'admin'));
 create policy "team: club admins remove it" on teams for delete using (is_club_admin(club_id));
 
 create policy "club admins: see each other" on club_admins for select using (is_club_admin(club_id));
 
 create policy "members: see the team's" on team_members for select using (has_team_role(team_id, 'assistant'));
-create policy "members: holdleder adds" on team_members for insert with check (has_team_role(team_id, 'admin'));
-create policy "members: holdleder changes" on team_members for update using (has_team_role(team_id, 'admin'));
-create policy "members: holdleder removes, or you leave" on team_members for delete
+create policy "members: admin adds" on team_members for insert with check (has_team_role(team_id, 'admin'));
+create policy "members: admin changes" on team_members for update using (has_team_role(team_id, 'admin'));
+create policy "members: admin removes, or you leave" on team_members for delete
   using (has_team_role(team_id, 'admin') or user_id = auth.uid());
 
 create policy "players: coaches see them" on players for select using (has_team_role(team_id, 'coach'));
-create policy "players: coaches add" on players for insert with check (has_team_role(team_id, 'coach'));
-create policy "players: coaches change" on players for update using (has_team_role(team_id, 'coach'));
-create policy "players: holdleder removes" on players for delete using (has_team_role(team_id, 'admin'));
+create policy "players: admins add" on players for insert with check (has_team_role(team_id, 'admin'));
+create policy "players: admins change" on players for update using (has_team_role(team_id, 'admin'));
+create policy "players: admin removes" on players for delete using (has_team_role(team_id, 'admin'));
 
 create policy "levels: coaches see the history" on player_levels for select
   using (exists (select 1 from players p where p.id = player_id and has_team_role(p.team_id, 'coach')));
@@ -356,13 +357,13 @@ begin
 end $$;
 
 -- GDPR: removes a player and every trace of their name in the team's saved groups, signups, matches and sets
--- (holdleder only). Gives back how many saved trainings were changed.
+-- (admin only). Gives back how many saved trainings were changed.
 create or replace function forget_player(team uuid, player_name text) returns integer
 language plpgsql security invoker set search_path = public as $$
 #variable_conflict use_column
 declare n integer := 0; c integer; who jsonb := to_jsonb(player_name);
 begin
-  if not has_team_role(team, 'admin') then raise exception 'Only the holdleder may remove a player.'; end if;
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan fjerne en spiller.'; end if;
   delete from players p where p.team_id = team and p.name = player_name;
   update saved_groups s set groups = (select coalesce(jsonb_agg((select coalesce(jsonb_agg(x), '[]') from jsonb_array_elements(e) x where x <> who)), '[]')
                                       from jsonb_array_elements(s.groups) e)
@@ -407,6 +408,9 @@ create table if not exists trainings (
   updated_by uuid default auth.uid()
 );
 create index if not exists trainings_team_day on trainings (team_id, day);
+-- a deleted training is kept (deleted_at set) so it can be brought back; the app shows the last 90 days of them
+alter table trainings add column if not exists deleted_at timestamptz;
+alter table trainings add column if not exists deleted_by uuid;
 
 create table if not exists drill_sources (
   id      text primary key check (id ~ '^[a-z0-9-]{1,20}$'),
@@ -521,7 +525,7 @@ begin
         '{"text": "", "url": "", "drillId": "", "coaches": []}'::jsonb)), '{}')
         from unnest(array['startup', 'station1', 'station2', 'station3', 'station4', 'finish']) k)
       order by x.day nulls last, x.updated_at), '[]')
-    into data from trainings x where x.team_id = t;
+    into data from trainings x where x.team_id = t and x.deleted_at is null;
   v := left(md5(data::text), 12);
   if have <> '' and have = v then return jsonb_build_object('unchanged', true, 'version', v, 'server', 6); end if;
   return jsonb_build_object('version', v, 'sessions', data, 'server', 6, 'team', t,
@@ -563,7 +567,28 @@ create or replace function delete_training(team uuid, training_id uuid) returns 
 language plpgsql security invoker set search_path = public as $$
 begin
   if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
-  delete from trainings where id = training_id and team_id = team;
+  update trainings set deleted_at = now(), deleted_by = auth.uid() where id = training_id and team_id = team and deleted_at is null;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- The team's trainings deleted in the last 90 days, newest first: [{ id, iso, date, focus, deleted }]
+create or replace function deleted_trainings(team uuid) returns jsonb
+language plpgsql stable security invoker set search_path = public as $$
+begin
+  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'iso', coalesce(to_char(day, 'YYYY-MM-DD'), ''),
+      'date', date_text, 'focus', focus, 'deleted', saved_text(deleted_at)) order by deleted_at desc)
+    from trainings where team_id = team and deleted_at > now() - interval '90 days'), '[]');
+end $$;
+
+-- Brings a deleted training back
+create or replace function restore_training(team uuid, training_id uuid) returns jsonb
+language plpgsql security invoker set search_path = public as $$
+begin
+  if not has_team_role(team, 'coach') then raise exception 'Du har ikke adgang til at rette holdets træningsplan.'; end if;
+  update trainings set deleted_at = null, deleted_by = null, updated_at = now(), updated_by = auth.uid()
+    where id = training_id and team_id = team and deleted_at is not null;
+  if not found then raise exception 'Træningen findes ikke blandt de slettede.'; end if;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -606,7 +631,7 @@ begin
   if t is null then return null; end if;
   select array_agg(distinct x.parts -> k ->> 'drillId') into used
     from trainings x, unnest(array['startup', 'station1', 'station2', 'station3', 'station4', 'finish']) k
-    where x.team_id = t and coalesce(x.parts -> k ->> 'drillId', '') <> '';
+    where x.team_id = t and x.deleted_at is null and coalesce(x.parts -> k ->> 'drillId', '') <> '';
   select jsonb_agg(drill_json(d) || d.content_da order by d.name) into list
     from drills d join drill_sources src on src.id = d.source_id
     where d.id = any(ids[1:12]) and d.id = any(coalesce(used, '{}')) and d.published and src.active
@@ -629,11 +654,206 @@ begin
   return true;
 end $$;
 
+-- ================================================================ admin: players, coaches and invitations
+
+create table if not exists team_invites (
+  code       text primary key,
+  team_id    uuid not null references teams on delete cascade,
+  role       team_role not null default 'coach',
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '14 days',
+  used_by    uuid references auth.users on delete set null,
+  used_at    timestamptz
+);
+alter table team_invites enable row level security;
+create policy "invites: admins see them" on team_invites for select using (has_team_role(team_id, 'admin'));
+
+-- All the team's players for the admin page (also inactive ones): [{ id, name, lo, hi, positions, active }]
+create or replace function team_players(team uuid) returns jsonb
+language plpgsql stable security invoker set search_path = public as $$
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan se dette.'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'name', name, 'lo', lo, 'hi', hi, 'positions', positions,
+                                                       'active', active) order by active desc, name)
+                   from players where team_id = team), '[]');
+end $$;
+
+-- Saves a player ({ id?, name, lo, hi, positions, active }); a new name is also changed in every saved training, so
+-- the 25-50-25 history follows the player. Admin only. Gives back { ok, id }.
+create or replace function save_player(team uuid, player jsonb) returns jsonb
+language plpgsql security invoker set search_path = public as $$
+#variable_conflict use_column
+declare pid uuid := nullif(player ->> 'id', '')::uuid; nm text := left(btrim(coalesce(player ->> 'name', '')), 60);
+        lo_ numeric := nullif(replace(coalesce(player ->> 'lo', ''), ',', '.'), '')::numeric;
+        hi_ numeric := nullif(replace(coalesce(player ->> 'hi', ''), ',', '.'), '')::numeric;
+        old text; o text; n text;
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan rette spillere.'; end if;
+  if nm = '' then raise exception 'Spilleren skal have et navn.'; end if;
+  if lo_ is null then lo_ := hi_; end if;
+  if hi_ is null then hi_ := lo_; end if;
+  if lo_ > hi_ then raise exception 'Fra skal være mindre end eller lig med Til.'; end if;
+  if exists (select 1 from players where team_id = team and lower(name) = lower(nm) and id is distinct from pid) then
+    raise exception 'Der er allerede en spiller med navnet %.', nm; end if;
+  if pid is null then
+    insert into players (team_id, name, lo, hi, positions, active)
+    values (team, nm, lo_, hi_, left(btrim(coalesce(player ->> 'positions', '')), 100), coalesce((player ->> 'active')::boolean, true))
+    returning id into pid;
+  else
+    select name into old from players where id = pid and team_id = team;
+    if old is null then raise exception 'Spilleren findes ikke på holdet.'; end if;
+    update players set name = nm, lo = lo_, hi = hi_, positions = left(btrim(coalesce(player ->> 'positions', '')), 100),
+      active = coalesce((player ->> 'active')::boolean, active) where id = pid;
+    if old <> nm then                                    -- the name in the saved trainings too
+      o := to_jsonb(old)::text; n := to_jsonb(nm)::text;
+      update saved_groups  set groups  = replace(groups::text,  o, n)::jsonb where team_id = team and groups::text  like '%' || o || '%';
+      update saved_signups set names   = replace(names::text,   o, n)::jsonb where team_id = team and names::text   like '%' || o || '%';
+      update saved_matches set matches = replace(matches::text, o, n)::jsonb where team_id = team and matches::text like '%' || o || '%';
+      update fixture_sets  set games   = replace(games::text,   o, n)::jsonb where team_id = team and games::text   like '%' || o || '%';
+    end if;
+  end if;
+  return jsonb_build_object('ok', true, 'id', pid);
+end $$;
+
+-- The team's coaches: [{ user_id, email, role, me }] (members of the team see them)
+create or replace function team_members_list(team uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not has_team_role(team, 'assistant') then raise exception 'LOGIN'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('user_id', m.user_id, 'email', u.email, 'role', m.role, 'me', m.user_id = auth.uid())
+                                    order by m.role, u.email)
+                   from team_members m join auth.users u on u.id = m.user_id where m.team_id = team), '[]');
+end $$;
+
+-- the number of admins a team would have left
+create or replace function admins_left(team uuid, without uuid) returns integer
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from team_members where team_id = team and role = 'admin' and user_id <> without
+$$;
+
+create or replace function set_member_role(team uuid, member uuid, new_role team_role) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan ændre roller.'; end if;
+  if new_role <> 'admin' and admins_left(team, member) = 0 then raise exception 'Holdet skal have mindst én admin.'; end if;
+  update team_members set role = new_role where team_id = team and user_id = member;
+  if not found then raise exception 'Træneren er ikke på holdet.'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+
+create or replace function remove_member(team uuid, member uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not has_team_role(team, 'admin') and member <> auth.uid() then raise exception 'Kun holdets admin kan fjerne trænere.'; end if;
+  if admins_left(team, member) = 0 then raise exception 'Holdet skal have mindst én admin.'; end if;
+  delete from team_members where team_id = team and user_id = member;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- An invitation link for a coach: { code, role, expires } (admin only)
+create or replace function create_invite(team uuid, role team_role default 'coach') returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare c text := upper(substr(md5(gen_random_uuid()::text), 1, 10)); e timestamptz;
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan invitere trænere.'; end if;
+  insert into team_invites (code, team_id, role) values (c, team, role) returning expires_at into e;
+  return jsonb_build_object('code', c, 'role', role, 'expires', saved_text(e));
+end $$;
+
+-- The team's open invitations: [{ code, role, created, expires }]
+create or replace function team_invites_list(team uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan se invitationer.'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('code', code, 'role', role, 'created', saved_text(created_at),
+                                                       'expires', saved_text(expires_at)) order by created_at desc)
+                   from team_invites where team_id = team and used_at is null and expires_at > now()), '[]');
+end $$;
+
+create or replace function revoke_invite(team uuid, invite text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not has_team_role(team, 'admin') then raise exception 'Kun holdets admin kan trække invitationer tilbage.'; end if;
+  delete from team_invites where team_id = team and code = upper(invite) and used_at is null;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- What an invitation is for, before logging in: { team, club, role } or null (used, expired or unknown)
+create or replace function invite_info(invite text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('team', t.name, 'club', c.name, 'role', i.role)
+  from team_invites i join teams t on t.id = i.team_id join clubs c on c.id = t.club_id
+  where i.code = upper(invite) and i.used_at is null and i.expires_at > now()
+$$;
+
+-- The logged-in user joins the team of an invitation (once): { team_id, team, role }
+create or replace function accept_invite(invite text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare i team_invites;
+begin
+  if auth.uid() is null then raise exception 'LOGIN'; end if;
+  select * into i from team_invites where code = upper(invite) for update;
+  if i.code is null or i.used_at is not null or i.expires_at < now() then
+    raise exception 'Invitationen er brugt eller udløbet. Bed holdets admin om en ny.'; end if;
+  insert into team_members (team_id, user_id, role) values (i.team_id, auth.uid(), i.role)
+    on conflict (team_id, user_id) do nothing;            -- already on the team: the role stays
+  update team_invites set used_by = auth.uid(), used_at = now() where code = i.code;
+  return jsonb_build_object('team_id', i.team_id, 'team', (select name from teams where id = i.team_id),
+                            'role', (select role from team_members where team_id = i.team_id and user_id = auth.uid()));
+end $$;
+
+-- ================================================================ an own drill library (ready, not switched on)
+-- An own drill: source 'egne' (switched on in drill_sources when the library is ready), in the shared library
+-- (owner_club empty, by the app admins) or a club's own (by its club admins). content holds the texts as the app shows
+-- them ("Navn", "Beskrivelse", "Fokuspunkter", "Temaer", "Fokus", "Aldersgruppe", …); media the drawings and animations:
+--   [{ "type": "image", "url": "…/drill-media/…", "caption": "…" },
+--    { "type": "animation", "frames": [{ "players": [{ "x": 0.2, "y": 0.5, "team": "a" }], "ball": { "x": …, "y": … },
+--      "arrows": [{ "from": [x, y], "to": [x, y], "kind": "run" | "pass" }] }], "caption": "…" },
+--    { "type": "video", "url": "…" }]
+-- (x and y from 0 to 1 across the field). Pictures go in the storage bucket "drill-media".
+
+-- Saves an own drill ({ id?, owner_club?, name, content, media, published }) and gives back { ok, id }
+create or replace function save_drill(drill jsonb) returns jsonb
+language plpgsql security invoker set search_path = public as $$
+declare did text := nullif(btrim(coalesce(drill ->> 'id', '')), ''); club uuid := nullif(drill ->> 'owner_club', '')::uuid;
+        nm text := left(btrim(coalesce(drill ->> 'name', drill -> 'content' ->> 'Navn', '')), 200);
+begin
+  if club is null and not is_app_admin() then raise exception 'Kun redaktører kan rette det fælles bibliotek.'; end if;
+  if club is not null and not is_club_admin(club) then raise exception 'Kun klubbens administratorer kan rette klubbens øvelser.'; end if;
+  if nm = '' then raise exception 'Øvelsen skal have et navn.'; end if;
+  if did is null then did := 'EGNE-' || upper(substr(md5(gen_random_uuid()::text), 1, 8)); end if;
+  if exists (select 1 from drills where id = did and source_id <> 'egne') then raise exception 'Kun egne øvelser kan rettes her.'; end if;
+  insert into drills (id, source_id, owner_club, name, content, media, published)
+  values (did, 'egne', club, nm, coalesce(drill -> 'content', '{}') || jsonb_build_object('Navn', nm, 'Kilde', 'Træningsparat'),
+          coalesce(drill -> 'media', '[]'), coalesce((drill ->> 'published')::boolean, true))
+  on conflict (id) do update set name = excluded.name, content = excluded.content, media = excluded.media,
+    published = excluded.published, owner_club = excluded.owner_club, updated_at = now();
+  return jsonb_build_object('ok', true, 'id', did);
+end $$;
+
+-- the storage bucket for drawings and pictures (only on Supabase, where storage exists): anyone may see them, app
+-- admins and club admins (in the folder clubs/<club id>/) may add and change them
+do $$ begin
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public) values ('drill-media', 'drill-media', true) on conflict (id) do nothing;
+    drop policy if exists "drill media: editors add" on storage.objects;
+    drop policy if exists "drill media: editors change" on storage.objects;
+    drop policy if exists "drill media: editors remove" on storage.objects;
+    create policy "drill media: editors add" on storage.objects for insert to authenticated with check (bucket_id = 'drill-media'
+      and (public.is_app_admin() or ((storage.foldername(name))[1] = 'clubs' and public.is_club_admin(((storage.foldername(name))[2])::uuid))));
+    create policy "drill media: editors change" on storage.objects for update to authenticated using (bucket_id = 'drill-media'
+      and (public.is_app_admin() or ((storage.foldername(name))[1] = 'clubs' and public.is_club_admin(((storage.foldername(name))[2])::uuid))));
+    create policy "drill media: editors remove" on storage.objects for delete to authenticated using (bucket_id = 'drill-media'
+      and (public.is_app_admin() or ((storage.foldername(name))[1] = 'clubs' and public.is_club_admin(((storage.foldername(name))[2])::uuid))));
+  end if;
+end $$;
+
 -- Who may call what: logged-in users (Supabase's "authenticated" role) the functions above; without a login (anon)
 -- only reading a public plan, the drills it uses, and counting app opens
 revoke all on all functions in schema public from public, anon;
 grant usage on schema public to authenticated, anon;
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant execute on all functions in schema public to authenticated;
-grant execute on function get_plan(text, text, uuid), get_session_drills(text[], text, uuid), track(text, text, text),
+grant execute on function get_plan(text, text, uuid), get_session_drills(text[], text, uuid), track(text, text, text), invite_info(text),
   plan_team(text, uuid), has_team_role(uuid, team_role), team_role_of(uuid), is_club_admin(uuid), drill_json(drills) to anon;
