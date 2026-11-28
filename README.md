@@ -1,4 +1,4 @@
-# Pasbygger
+# Træningsparat
 
 Training plans, a drill library and training groups for youth football coaches. The app is `index.html`
 (served by GitHub Pages); its data comes from a Google Sheet through the Apps Script files in
