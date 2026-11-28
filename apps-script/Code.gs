@@ -1,6 +1,6 @@
 /* The version of this file. Raise it by one whenever Code.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const CODE_VERSION = 5;
+const CODE_VERSION = 6;
 const SHEET_NAME = 'Træningspas Efterår \'26';
 const DRILLS_SHEET = 'Øvelser';   // tab with the drill library
 /* The password for the "Øvelser" tab is NOT written in this file.
@@ -350,9 +350,41 @@ function getPlan(version) {
 /* Throws "LOGIN" unless the code is valid. (The trailing underscore keeps it private to the server.) */
 function requireToken_(token) {
   const cache = CacheService.getScriptCache();
+  if (String(token || '').length > 100) {                 // a personal login from the database (see below)
+    const k = 'sb_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token)));
+    if (cache.get(k)) return;
+    if (!supabaseCoach_(String(token))) throw new Error('LOGIN');
+    cache.put(k, '1', 600);                               // asked again after 10 minutes (a withdrawn login stops then)
+    return;
+  }
   const kind = token ? cache.get('tok_' + token) : null;
   if (!kind) throw new Error('LOGIN');
   cache.put('tok_' + token, kind, LOGIN_SECONDS);     // in use: the login lasts another 30 minutes (the app does the same)
+}
+
+/* ---------- A personal login from the database (Supabase) ----------
+   When the app uses the database (SUPABASE in index.html, supabase/README.md), coaches log in with their own e-mail,
+   and the app sends that login (an access token) here too, for the plan and the drills. It is accepted when Supabase
+   says it belongs to someone on a team. Set SUPABASE_URL (the Project URL) and SUPABASE_KEY (the anon / publishable
+   key) in Project Settings → Script Properties; without them only the coach code works, as before. */
+const SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
+const SUPABASE_KEY_PROPERTY = 'SUPABASE_KEY';
+function supabaseCoach_(token) {
+  if (!/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token)) return false;
+  const props = PropertiesService.getScriptProperties();
+  const url = props.getProperty(SUPABASE_URL_PROPERTY), key = props.getProperty(SUPABASE_KEY_PROPERTY);
+  if (!url || !key) return false;
+  try {
+    const res = UrlFetchApp.fetch(String(url).replace(/\/+$/, '') + '/rest/v1/rpc/my_teams', {
+      method: 'post', contentType: 'application/json', payload: '{}', muteHttpExceptions: true,
+      headers: { apikey: key, Authorization: 'Bearer ' + token }
+    });
+    if (res.getResponseCode() !== 200) return false;
+    const teams = JSON.parse(res.getContentText() || '[]');
+    return Array.isArray(teams) && teams.length > 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 /* Header row of the "Øvelser" tab, with known column names in their standard spelling */

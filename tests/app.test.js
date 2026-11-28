@@ -965,3 +965,52 @@ test('links to a training or a drill use the page\'s own address, and the public
   assert.equal(await page.evaluate(() => { window.Capacitor = {}; return appAddress(); }), 'https://1shpshp1.github.io/pasbygger/');
   assert.deepEqual(page.errors, []);
 });
+
+test('With the database (Supabase): log in with e-mail and a code, choose the team, the players come from it and saves go to it', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const sb = { calls: [] }, jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'p'.repeat(120) + '.sig';
+  const data = { players: [{ name: 'Alma', lo: 1, hi: 2 }, { name: 'Bo', lo: 2, hi: 3 }, { name: 'Carl', lo: 1, hi: 3 }, { name: 'Dina', lo: 2, hi: 2 }],
+                 history: {}, signups: {}, matches: {}, fixtures: {}, version: 'v1', server: 5 };
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    sb.calls.push([url.pathname, body, r.request().headers().authorization]);
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (url.pathname === '/auth/v1/otp') return body.email === 'ukendt@x.dk' ? send({ msg: 'Signups not allowed for otp' }, 422) : send({});
+    if (url.pathname === '/auth/v1/verify') return body.token === '123456' ? send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 }) : send({ msg: 'Token has expired or is invalid' }, 403);
+    if (url.pathname === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'U10', club: 'Klub', role: 'coach' }, { id: 't2', name: 'U12', club: 'Klub', role: 'coach' }]);
+    if (url.pathname === '/rest/v1/rpc/get_group_data') return send(body.team === 't2' ? data : { message: 'LOGIN' }, body.team === 't2' ? 200 : 400);
+    if (url.pathname === '/rest/v1/rpc/save_groups') return send({ ok: true, saved: '28.11.2026 12:00' });
+    send({ message: 'unknown' }, 404);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.reload();
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  await page.click('#nav-groups');
+  assert.equal(await page.locator('#login-title').innerText(), 'Log ind med din e-mail');
+  await page.fill('#login-pw', 'ukendt@x.dk'); await page.click('#login-go');
+  await page.waitForFunction(() => /ikke adgang/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', 'træner@x.dk'); await page.click('#login-go');
+  await page.waitForFunction(() => document.getElementById('login-title').textContent === 'Indtast koden fra e-mailen');
+  await page.fill('#login-pw', '000000'); await page.click('#login-go');
+  await page.waitForFunction(() => /Forkert eller udløbet/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', '123456'); await page.click('#login-go');
+  await page.waitForSelector('#login-team');                          // two teams: choose
+  await page.selectOption('#login-team', 't2');
+  await page.click('#login-go');
+  await page.waitForSelector('#grp-tab .grp-slide');
+  assert.match(await page.locator('#grp-tab').innerText(), /Alma/);
+  assert.ok(srv.calls.every(a => a !== 'getGroupData' && a !== 'login'), 'nothing about groups asked of the sheet');
+  await page.click('#grp-tab [data-act="make"]');
+  await page.click('#grp-tab [data-act="save"]');
+  await page.waitForFunction(() => /Gemt/.test(document.querySelector('#grp-tab .grp-save').innerText));
+  const save = sb.calls.find(c => c[0] === '/rest/v1/rpc/save_groups');
+  assert.equal(save[1].team, 't2');
+  assert.match(save[1].key, /^\d{4}-\d{2}-\d{2} fri$/);
+  assert.deepEqual(save[1].groups.flat().sort(), ['Alma', 'Bo', 'Carl', 'Dina']);
+  assert.equal(save[2], 'Bearer ' + jwt);
+  // the drills (still in the sheet) are opened with the same login
+  await page.click('#nav-library');
+  assert.equal(await page.locator('#login').isHidden(), true);
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('oevSupaSession'))).team, 't2');
+  assert.deepEqual(page.errors, []);
+});

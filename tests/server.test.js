@@ -214,3 +214,20 @@ test('saveFixtureSet: a set of named matches, who can play each and who plays; o
   srv.call('saveFixtureSet', t, 'k1', { games: [] });
   assert.equal(srv.call('getGroupData', t).result.fixtures.k1, undefined, 'no matches removes the set');
 });
+
+test('a personal login from the database (Supabase) opens the drills, when the server knows the database and the user is on a team', () => {
+  const srv = testServer();
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'x'.repeat(120) + '.sig';
+  assert.match(srv.call('getDrills', jwt, '').error, /LOGIN/);          // no database set up: only the coach code works
+  srv.props.SUPABASE_URL = 'https://abc.supabase.co/';
+  srv.props.SUPABASE_KEY = 'anon';
+  const asked = [];
+  srv.ctx.fetchStub = (url, opt) => { asked.push([url, opt.headers.Authorization]); return { getResponseCode: () => 200, getContentText: () => '[{"id":"t1"}]' }; };
+  assert.ok(!srv.call('getDrills', jwt, '').error);
+  assert.ok(!srv.call('getDrills', jwt, '').error);
+  assert.deepEqual(asked, [['https://abc.supabase.co/rest/v1/rpc/my_teams', 'Bearer ' + jwt]], 'asked once, then remembered');
+  srv.ctx.fetchStub = () => ({ getResponseCode: () => 200, getContentText: () => '[]' });   // on no team
+  assert.match(srv.call('getDrills', jwt.replace('sig', 'other'), '').error, /LOGIN/);
+  srv.ctx.fetchStub = () => ({ getResponseCode: () => 401, getContentText: () => '{}' });   // not a valid login
+  assert.match(srv.call('getDrills', jwt.replace('sig', 'third'), '').error, /LOGIN/);
+});
