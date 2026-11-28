@@ -205,7 +205,8 @@ test.describe('database (Supabase)', { skip }, () => {
   });
   test('the import moves DBU\'s drills (not other sources) and the team\'s plan; a station keeps only a drill that came along', () => {
     const { libraryToSql, planToSql, isDbu } = require('../supabase/import.js');
-    assert.deepEqual([isDbu({ Kilde: 'DBU' }), isDbu({ Link: 'https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=7' }), isDbu({ Kilde: 'FCK' }), isDbu({ Kilde: 'DBUx' })], [true, true, false, false]);
+    assert.deepEqual([isDbu({ Kilde: 'DBU' }), isDbu({ Link: 'https://web.dbu.dk/fodboldapp?page=Exercise&exerciseId=7' }), isDbu({ Kilde: 'FCK' }), isDbu({ Kilde: 'DBUx' }),
+                      isDbu({ ID: '1234' }), isDbu({ ID: '1234', Kilde: 'FCK' }), isDbu({ ID: 'FA-12' })], [true, true, false, false, true, false, false]);
     const lib = { headers: ['ID', 'Navn', 'Beskrivelse'], aliases: [{ col: 'Fokus', from: 'a', to: 'b' }], groups: [],
       drills: [{ ID: '701', Navn: "Kegle-'løb'", Kilde: 'DBU', Beskrivelse: 'Løb', __da: 1 }, { ID: 'FCK-9', Navn: 'FCK', Kilde: 'FCK' }, { Navn: 'Uden id', Kilde: 'DBU' }] };
     const r = libraryToSql(lib, { 701: { 'Beskrivelse (DA)': 'Løb på dansk' } });

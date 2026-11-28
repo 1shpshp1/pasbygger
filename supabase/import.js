@@ -42,8 +42,13 @@ function toSql(data, team) {
 
 const PARTS = ['startup', 'station1', 'station2', 'station3', 'station4', 'finish'];
 
-/* A drill from DBU's drill bank: its source says DBU, or its link goes to dbu.dk */
-const isDbu = d => /(^|[^a-z])dbu([^a-z]|$)/i.test(String(d['Kilde'] || '')) || /(^|\.)dbu\.dk\//i.test(String(d['Link'] || ''));
+/* A drill from DBU's drill bank: its source says DBU, its link goes to dbu.dk, or (as the app reads it) its ID is DBU's
+   number – unless its source names another one (FCK, FA, NFF, Egne, …) */
+const isDbu = d => {
+  const src = String(d['Kilde'] || '').trim();
+  if (/(^|[^a-z])dbu([^a-z]|$)/i.test(src) || /(^|\.)dbu\.dk\//i.test(String(d['Link'] || ''))) return true;
+  return !src && /^\d+$/.test(String(d['ID'] || '').trim());
+};
 
 /* The SQL for the shared library from getDrills' answer (lib) and getDrillsDa's (da): DBU's drills only.
    Gives back { sql, ids, skipped }. */
