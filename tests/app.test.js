@@ -987,7 +987,7 @@ test('With the database (Supabase): the plan by the team\'s link, log in with e-
     if (url.pathname === '/rest/v1/rpc/track') return send(true);
     send({ message: 'unknown' }, 404);
   });
-  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon', login: 'code' })));
   const sheetCalls = (srv.calls || []).length;
   await page.goto(base + '?hold=abc123');                               // a team's link, as players and parents get it
   await page.waitForSelector('#sessions .card', { timeout: 15000 });
@@ -1025,5 +1025,39 @@ test('With the database (Supabase): the plan by the team\'s link, log in with e-
   assert.ok(sb.calls.some(c => c[0] === '/rest/v1/rpc/track'), 'app opens counted in the database');
   assert.equal((srv.calls || []).length, sheetCalls, 'still nothing asked of the sheet');
   assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('oevSupaSession'))).team, 't2');
+  assert.deepEqual(page.errors, []);
+});
+
+test('With the database: log in with e-mail and the password the holdleder gave you (no e-mail is sent)', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const sb = [], jwt = 'eyJhbGciOiJIUzI1NiJ9.' + 'q'.repeat(120) + '.sig';
+  await page.context().route('https://sb.test/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    sb.push(url.pathname + url.search);
+    const send = (x, status) => r.fulfill({ status: status || 200, contentType: 'application/json', body: JSON.stringify(x) });
+    if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password')
+      return body.email === 'træner@x.dk' && body.password === 'Hemmelig 1' ? send({ access_token: jwt, refresh_token: 'r1', expires_in: 3600 })
+        : send({ error: 'invalid_grant', error_description: 'Invalid login credentials' }, 400);
+    if (url.pathname === '/rest/v1/rpc/my_teams') return send([{ id: 't1', name: 'Drenge2015', club: 'Østerbro IF', role: 'admin' }]);
+    if (url.pathname === '/rest/v1/rpc/get_group_data') return send({ players: [{ name: 'Alma', lo: 1, hi: 2 }], history: {}, signups: {}, matches: {}, fixtures: {}, version: 'v', server: 5 });
+    if (url.pathname === '/rest/v1/rpc/get_plan') return send(Object.assign(srv.call('getPlan', '').result, { code: 'abc', server: 6 }));
+    if (url.pathname === '/rest/v1/rpc/track') return send(true);
+    send({ message: 'unknown' }, 404);
+  });
+  await page.evaluate(() => localStorage.setItem('oevSupabase', JSON.stringify({ url: 'https://sb.test', key: 'anon' })));
+  await page.goto(base + '?hold=abc');
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  await page.click('#nav-groups');
+  await page.fill('#login-pw', 'træner@x.dk');
+  assert.equal(await page.locator('#login-go').innerText(), 'Næste');
+  await page.click('#login-go');
+  assert.equal(await page.locator('#login-title').innerText(), 'Indtast din adgangskode');
+  assert.equal(await page.locator('#login-pw').getAttribute('type'), 'password');
+  await page.fill('#login-pw', 'forkert'); await page.click('#login-go');
+  await page.waitForFunction(() => /Forkert e-mail eller adgangskode/.test(document.getElementById('login-err').textContent));
+  await page.fill('#login-pw', 'Hemmelig 1'); await page.click('#login-go');
+  await page.waitForSelector('#grp-tab .grp-slide');
+  assert.match(await page.locator('#grp-tab').innerText(), /Alma/);
+  assert.ok(!sb.some(x => /otp|verify/.test(x)), 'no e-mail asked for');
   assert.deepEqual(page.errors, []);
 });

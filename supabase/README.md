@@ -21,22 +21,23 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 1. **Opret projektet.** Lav en gratis konto på [supabase.com](https://supabase.com) og et nyt projekt i regionen
    **Central EU (Frankfurt)**. Gem databasekoden et sikkert sted.
 2. **Databasen.** Åbn *SQL Editor*, indsæt hele `schema.sql`, og tryk *Run*.
-3. **Login.** Under *Authentication*:
-   - *Sign In / Providers → Email*: slå *Email* til og **slå "Allow new users to sign up" fra**, så kun inviterede kan logge ind.
-   - *Emails → Magic Link*: sæt skabelonen til at vise koden, fx
-     `<h2>Din kode til Træningsparat</h2><p>{{ .Token }}</p>`.
-   - Til rigtig brug: opsæt egen e-mailafsender (SMTP) under *Emails → SMTP Settings*; Supabases egen sender er
-     begrænset til få e-mails i timen.
-4. **Klub, hold og trænere.** Tilføj trænerne under *Authentication → Users → Add user* (kun e-mail). Kør derefter i
-   *SQL Editor* (ret navne og e-mails):
+3. **Login.** Under *Authentication → Sign In / Providers*: slå *Email* til og **slå "Allow new users to sign up" fra**,
+   så kun dem, du opretter, kan logge ind. Trænerne logger ind med e-mail og en adgangskode, du giver dem
+   (`login: "password"`, standard); der sendes ingen e-mails.
+   - Vil du hellere have en kode sendt på e-mail (`login: "code"` i `SUPABASE`), kræver det en egen e-mailafsender
+     (*Emails → SMTP Settings*), og skabelonen *Magic link* skal vise koden: `<p>Din kode: {{ .Token }}</p>`.
+4. **Klub, hold og trænere.** Opret hver træner under *Authentication → Users → Add user → Create new user* med
+   e-mail, en adgangskode og **Auto Confirm User** slået til. Kør derefter i *SQL Editor* (ret navne; kan køres igen):
 
    ```sql
-   with c as (insert into clubs (name) values ('Min klub') returning id),
-        t as (insert into teams (club_id, name) select id, 'U10' from c returning id)
+   insert into clubs (name) select 'Min klub' where not exists (select 1 from clubs where name = 'Min klub');
+   insert into teams (club_id, name) select c.id, 'U10' from clubs c
+     where c.name = 'Min klub' and not exists (select 1 from teams t where t.club_id = c.id and t.name = 'U10');
    insert into team_members (team_id, user_id, role)
-   select t.id, u.id, case u.email when 'holdleder@eksempel.dk' then 'admin' else 'coach' end::team_role
-   from t, auth.users u where u.email in ('holdleder@eksempel.dk', 'traener@eksempel.dk');
-   select id, name from teams;   -- holdets id, til importen
+     select t.id, u.id, case when u.email = 'holdleder@eksempel.dk' then 'admin' else 'coach' end::team_role
+     from teams t, auth.users u where t.name = 'U10' and u.email in ('holdleder@eksempel.dk', 'traener@eksempel.dk')
+     on conflict (team_id, user_id) do nothing;
+   select id as hold_id, plan_code as holdkode from teams where name = 'U10';
    ```
 
    Roller: `admin` (holdleder: alt, også at fjerne spillere), `coach` (træner) og `assistant` (hjælpetræner: ser

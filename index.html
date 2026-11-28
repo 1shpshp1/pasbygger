@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (4)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (5)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -978,7 +978,10 @@ function showServerNote() {
    Script are not used at all. Each team's plan has a public link (<app>?hold=<code>) for players and parents; a
    logged-in coach sees their own team's plan. Empty: everything comes from the sheet, as before.
    To try it on one phone first: localStorage.setItem("oevSupabase", JSON.stringify({ url: "…", key: "…" })). */
-const SUPABASE = { url: "", key: "", plan: "" };   // plan: the code of the team whose plan is shown to visitors without a link
+const SUPABASE = { url: "", key: "", plan: "", login: "password" };
+// plan: the code of the team whose plan is shown to visitors without a link. login: "password" (e-mail and a password the
+// holdleder gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
+const supaLoginKind = () => (supaConf() || {}).login === "code" ? "code" : "password";
 const SUPA_SESSION_KEY = "oevSupaSession";       // { refresh, exp (when the access token runs out), team, teams }
 const SUPA_LOGIN_DAYS = 14;                       // a personal login lasts 14 days after it was last used
 function supaConf() {
@@ -1597,8 +1600,9 @@ function loginDone() {
   if (cb && cb.ok) cb.ok();
 }
 
-/* With the database: log in with your own e-mail and the code Supabase sends to it, then (on more than one team)
-   choose the team. LOGIN_SUPA.step: "email", "code" or "team". */
+/* With the database: log in with your own e-mail and then your password (or the code Supabase sends to the e-mail,
+   SUPABASE.login "code"), then (on more than one team) choose the team. LOGIN_SUPA.step: "email", "password", "code"
+   or "team". */
 const LOGIN_SUPA = { step: "email", email: "", teams: [] };
 function supaLoginShow(step) {
   LOGIN_SUPA.step = step;
@@ -1609,8 +1613,12 @@ function supaLoginShow(step) {
   pw.value = "";
   if (step === "email") {
     document.getElementById("login-title").textContent = "Log ind med din e-mail";
-    pw.type = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "email"); pw.removeAttribute("inputmode");
-    go.textContent = "Send kode";
+    pw.type = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "username"); pw.removeAttribute("inputmode");
+    go.textContent = supaLoginKind() === "code" ? "Send kode" : "Næste";
+  } else if (step === "password") {
+    document.getElementById("login-title").textContent = "Indtast din adgangskode";
+    pw.type = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.setAttribute("autocomplete", "current-password"); pw.removeAttribute("inputmode");
+    go.textContent = "Log ind";
   } else if (step === "code") {
     document.getElementById("login-title").textContent = "Indtast koden fra e-mailen";
     pw.type = "text"; pw.setAttribute("aria-label", "Kode fra e-mailen"); pw.setAttribute("autocomplete", "one-time-code"); pw.setAttribute("inputmode", "numeric");
@@ -1635,6 +1643,7 @@ function supaLoginSubmit() {
   if (step === "team") { supaChooseTeam(document.getElementById("login-team").value); return; }
   if (!value) return;
   if (step === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) { err.textContent = "Skriv en gyldig e-mailadresse."; return; }
+  if (step === "email" && supaLoginKind() === "password") { LOGIN_SUPA.email = value; err.textContent = ""; supaLoginShow("password"); return; }
   const label = go.textContent;
   go.disabled = true; go.textContent = step === "email" ? "Sender…" : "Tjekker…"; err.textContent = "";
   const done = function () { go.disabled = false; go.textContent = label; };
@@ -1650,7 +1659,10 @@ function supaLoginSubmit() {
     });
     return;
   }
-  supaFetch("/auth/v1/verify", { type: "email", email: LOGIN_SUPA.email, token: value }).then(function (res) {
+  const signIn = step === "password"
+    ? supaFetch("/auth/v1/token?grant_type=password", { email: LOGIN_SUPA.email, password: pw.value })
+    : supaFetch("/auth/v1/verify", { type: "email", email: LOGIN_SUPA.email, token: value });
+  signIn.then(function (res) {
     gotSupaSession(res);
     return supaRpc("my_teams", {});
   }).then(function (teams) {
@@ -1665,7 +1677,10 @@ function supaLoginSubmit() {
     } else supaLoginShow("team");
   }, function (e) {
     done();
-    err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt." : "Forkert eller udløbet kode. Prøv igen, eller bed om en ny.";
+    err.textContent = !e.server ? "Ingen forbindelse. Prøv igen om lidt."
+      : step === "password" ? (/not confirmed/i.test(e.message) ? "Brugeren er ikke bekræftet endnu. Holdlederen skal oprette den med \u201cAuto Confirm User\u201d."
+        : /LOGIN|invalid/i.test(e.message) ? "Forkert e-mail eller adgangskode. Prøv igen, eller spørg holdlederen." : "Kunne ikke logge ind: " + e.message)
+      : "Forkert eller udløbet kode. Prøv igen, eller bed om en ny.";
     pw.select();
   });
 }
