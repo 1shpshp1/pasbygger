@@ -1,6 +1,6 @@
 /* The version of this file. Raise it by one whenever Code.gs changes: the app (index.html, SERVER_NEEDS) says
    "Serveren er ikke opdateret" when the deployed copy is older than the one it was made for. */
-const CODE_VERSION = 5;
+const CODE_VERSION = 6;
 const SHEET_NAME = 'Træningspas Efterår \'26';
 const DRILLS_SHEET = 'Øvelser';   // tab with the drill library
 /* The password for the "Øvelser" tab is NOT written in this file.
@@ -16,7 +16,7 @@ const SESSION_DRILL_CACHE_SECONDS = 300;   // drills opened from a session are k
 
 const ALIAS_SHEET = 'Omdøb';      // optional tab with tag renames (columns: Kolonne, Fra, Til)
 const TAGS_SHEET = 'Tags';        // optional tab with the fixed tag list (columns: Kolonne, Tag, Gruppe)
-const APP_TITLE = 'Pasbygger';   // shown in the browser tab (of the page that sends people on to the app)
+const APP_TITLE = 'Træningsparat';   // shown in the browser tab (of the page that sends people on to the app)
 
 /* Header names in row 1 of the sheet. Column order doesn't matter,
    but these names must match the sheet (capital letters don't matter). */
@@ -61,7 +61,7 @@ const DRILL_COLUMNS = ['ID', 'Navn', 'Publiceret', 'Video', 'Diagram', 'Link', '
    bookmarks and shared links still work. Google lets a script page leave its frame only when the visitor taps
    something, so the page is one big button (the automatic try below works in a few browsers).
    Change the address here if the app moves (e.g. to its own domain). */
-const APP_PAGE_URL = 'https://1shpshp1.github.io/pasbygger/';
+const APP_PAGE_URL = 'https://1shpshp1.github.io/traeningsparat/';
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
@@ -72,10 +72,10 @@ function doGet(e) {
   return HtmlService.createHtmlOutput(
       '<base target="_top">' +
       '<div style="font:18px/1.5 Arial,sans-serif;margin:32px 20px;max-width:30em">' +
-      '<h1 style="margin:0 0 8px;color:#AD152F;font-size:26px">Pasbygger er flyttet</h1>' +
+      '<h1 style="margin:0 0 8px;color:#AD152F;font-size:26px">Træningsparat er flyttet</h1>' +
       '<p style="margin:0 0 20px">Tryk på knappen for at åbne appen.</p>' +
       '<a href="' + attr + '" style="display:inline-block;padding:14px 28px;border-radius:99px;background:#AD152F;' +
-      'color:#fff;font-weight:bold;font-size:20px;text-decoration:none">Åbn Pasbygger</a>' +
+      'color:#fff;font-weight:bold;font-size:20px;text-decoration:none">Åbn Træningsparat</a>' +
       '<p style="margin:24px 0 0;color:#555;font-size:16px">Gem den nye adresse, så du kommer direkte ind næste gang:<br>' +
       '<strong>' + shown + '</strong><br>Har du appen på hjemmeskærmen, så slet den gamle og tilføj den igen fra den nye adresse.</p>' +
       '</div>' +

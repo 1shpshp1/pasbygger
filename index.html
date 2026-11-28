@@ -950,7 +950,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycby9CvNLV4fDCcGOLwGCbsKx
    what to copy, for coaches (logged in) only. Raise these together with the numbers in the .gs files. */
 const SERVER_NEEDS = { code: 5, grupper: 5 };
 const SERVER_HAS = { code: null, grupper: null };          // null: not heard from the server yet
-const GITHUB_FILE = f => "https://github.com/1shpshp1/pasbygger/blob/main/apps-script/" + f;
+const GITHUB_FILE = f => "https://github.com/1shpshp1/traeningsparat/blob/main/apps-script/" + f;
 function serverOutdated() {
   return ["code", "grupper"].filter(k => SERVER_HAS[k] != null && SERVER_HAS[k] < SERVER_NEEDS[k]);
 }
@@ -5686,7 +5686,7 @@ sendQueue();                       // saves that were waiting for a connection
 
 /* The address links are made from: this page's own, except inside the App Store / Google Play app (whose own address,
    capacitor://localhost or https://localhost, only works on that phone), where it is the app on GitHub Pages. */
-const PUBLIC_APP_URL = "https://1shpshp1.github.io/pasbygger/";
+const PUBLIC_APP_URL = "https://1shpshp1.github.io/traeningsparat/";
 function appAddress() {
   return /^https?:$/.test(location.protocol) && location.hostname !== "localhost" && !window.Capacitor
     ? location.origin + location.pathname : PUBLIC_APP_URL;

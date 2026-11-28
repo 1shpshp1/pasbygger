@@ -527,7 +527,7 @@ test('An old server copy: coaches are told what to copy; players see nothing', {
   await page.waitForFunction(() => !document.getElementById('server-note').hidden);
   assert.match(await page.locator('#server-note').innerText(), /Serveren er ikke opdateret[\s\S]*Code\.gs/);
   assert.deepEqual(await page.locator('#server-note a').evaluateAll(as => as.map(a => a.getAttribute('href'))),
-    ['Code.gs', 'Grupper.gs'].map(f => 'https://github.com/1shpshp1/pasbygger/blob/main/apps-script/' + f));
+    ['Code.gs', 'Grupper.gs'].map(f => 'https://github.com/1shpshp1/traeningsparat/blob/main/apps-script/' + f));
   await openGroups(page);
   await page.waitForFunction(() => /Grupper\.gs/.test(document.getElementById('grp-v').innerText));
   srv.oldServer = false;                                           // updated: the note goes once both files have answered
@@ -962,7 +962,7 @@ test('Kampe til sidst in puljer: pools by one rule, matches per pool by another,
 test('links to a training or a drill use the page\'s own address, and the public one inside the App Store / Google Play app', { skip }, async () => {
   const srv = testServer(), page = await phone(srv);
   assert.equal(await page.evaluate(() => appAddress()), base);
-  assert.equal(await page.evaluate(() => { window.Capacitor = {}; return appAddress(); }), 'https://1shpshp1.github.io/pasbygger/');
+  assert.equal(await page.evaluate(() => { window.Capacitor = {}; return appAddress(); }), 'https://1shpshp1.github.io/traeningsparat/');
   assert.deepEqual(page.errors, []);
 });
 

@@ -46,7 +46,7 @@ den skal have Apples certifikat og profil.
 
 ## Til butikkernes formularer
 
-- **Privatlivspolitik:** https://1shpshp1.github.io/pasbygger/privatliv.html (udfyld kontaktadressen først).
+- **Privatlivspolitik:** https://1shpshp1.github.io/traeningsparat/privatliv.html (udfyld kontaktadressen først).
 - **Dataindsamling:** navne og niveauvurderinger af spillere (indtastet af trænere), brug af appen uden id. Ingen
   sporing, ingen reklamer, intet salg af data.
 - **Login til Apples gennemgang:** Apple skal have en trænerkode for at kunne prøve appen. Lav en særskilt kode til
