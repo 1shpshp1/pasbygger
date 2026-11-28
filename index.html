@@ -760,6 +760,8 @@
       display: block; width: 100%; padding: 12px 14px; border: 1px solid #cccccc;
       border-radius: 10px; font: inherit; font-size: 18px;
     }
+    .login-who { margin: 8px 0 0 !important; color: #555555; font-size: 14px; overflow-wrap: anywhere; }
+    .linkbtn { padding: 0; border: 0; background: none; color: var(--red); font: inherit; text-decoration: underline; cursor: pointer; }
     .login-err { min-height: 1.3em; margin: 8px 0 0 !important; color: #b00020; font-size: 14px; }
     .login-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
     .login-go {
@@ -845,7 +847,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 29. nov. 2026 (1)</p>
+<p class="build" id="build">App-version 29. nov. 2026 (2)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -1705,18 +1707,21 @@ function supaLoginShow(step) {
   if (pick) pick.remove();
   pw.hidden = step === "team";
   pw.value = "";
-  const extra = document.getElementById("login-signup");
+  const extra = document.getElementById("login-signup"), who = document.getElementById("login-who");
   if (extra) extra.remove();
+  if (who) who.remove();
   const inv = LOGIN_SUPA.inviteInfo;
   if (step === "email") LOGIN_SUPA.signup = false;
   if (step === "email") {
     document.getElementById("login-title").textContent = inv ? "Du er inviteret til " + inv.team + " (" + inv.club + ") som " + (ROLE_NAMES[inv.role] || inv.role).toLowerCase() : "Log ind med din e-mail";
-    pw.type = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "username"); pw.removeAttribute("inputmode");
+    pw.type = "email"; pw.name = "email"; pw.setAttribute("aria-label", "E-mail"); pw.setAttribute("autocomplete", "username"); pw.removeAttribute("inputmode");
     go.textContent = supaLoginKind() === "code" ? "Send kode" : "Næste";
   } else if (step === "password") {
     document.getElementById("login-title").textContent = LOGIN_SUPA.signup ? "Vælg en adgangskode (mindst 6 tegn)" : "Indtast din adgangskode";
-    pw.type = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.removeAttribute("inputmode");
+    pw.type = "password"; pw.name = "password"; pw.setAttribute("aria-label", "Adgangskode"); pw.removeAttribute("inputmode");
     pw.setAttribute("autocomplete", LOGIN_SUPA.signup ? "new-password" : "current-password");
+    pw.insertAdjacentHTML("afterend", `<p class="login-who" id="login-who">${esc(LOGIN_SUPA.email)} · <button type="button" class="linkbtn" onclick="supaLoginShow('email')">skift</button>` +
+      ` · <button type="button" class="linkbtn" onclick="const p = document.getElementById('login-pw'); p.type = p.type === 'password' ? 'text' : 'password'; this.textContent = p.type === 'password' ? 'vis adgangskode' : 'skjul adgangskode'">vis adgangskode</button></p>`);
     go.textContent = LOGIN_SUPA.signup ? "Opret bruger" : "Log ind";
     if (inv) go.insertAdjacentHTML("beforebegin", LOGIN_SUPA.signup
       ? '<button type="button" class="clearbtn" id="login-signup" onclick="LOGIN_SUPA.signup = false; supaLoginShow(\'password\')">Jeg har en bruger</button>'
