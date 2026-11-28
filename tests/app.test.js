@@ -33,6 +33,8 @@ test.after(async () => { if (browser) await browser.close(); if (site) site.clos
 /* A phone with the app open on the trainings list, talking to the simulated server */
 async function phone(srv, { width = 390, loggedIn = true } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: 860 } });
+  // the app uses the club's database for everyone; these tests talk to the simulated sheet unless a test says otherwise
+  await ctx.addInitScript(() => { try { if (!localStorage.getItem('oevDatabase')) localStorage.setItem('oevDatabase', 'nej'); } catch (e) { /* ignore */ } });
   await ctx.route('https://script.google.com/**', r => {
     const body = r.request().postData();
     const action = JSON.parse(body).action;
@@ -1062,7 +1064,7 @@ test('With the database: log in with e-mail and the password the holdleder gave 
   assert.deepEqual(page.errors, []);
 });
 
-test('?database=ja makes this phone use the database (the plan of the club\'s team without a link), ?database=nej the sheet again', { skip }, async () => {
+test('the database is on for everyone; ?database=nej makes one phone use the sheet, ?database=ja the database again', { skip }, async () => {
   const srv = testServer(), page = await phone(srv, { loggedIn: false });
   const asked = [];
   await page.context().route('https://hfagotulnrjvqwrwweez.supabase.co/**', r => {
@@ -1071,7 +1073,8 @@ test('?database=ja makes this phone use the database (the plan of the club\'s te
     if (url.pathname === '/rest/v1/rpc/get_plan') return r.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(srv.call('getPlan', '').result, { code: 'd8a11024', server: 6 })) });
     r.fulfill({ contentType: 'application/json', body: 'true' });
   });
-  assert.equal(await page.evaluate(() => useSupabase()), false, 'off unless asked for');
+  assert.equal(await page.evaluate(() => SUPABASE.on), true, 'on for everyone');
+  assert.equal(await page.evaluate(() => useSupabase()), false, 'this test phone chose the sheet');
   await page.goto(base + '?database=ja');
   await page.waitForSelector('#sessions .card', { timeout: 15000 });
   assert.equal(await page.evaluate(() => useSupabase()), true);

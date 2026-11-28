@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (6)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (7)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -980,7 +980,7 @@ function showServerNote() {
    To try it on one phone first: open the app with ?database=ja (back to the sheet: ?database=nej); "on" switches it on
    for everyone. (For tests: localStorage "oevSupabase" = { url, key } uses another project.) */
 const SUPABASE = { url: "https://hfagotulnrjvqwrwweez.supabase.co", key: "sb_publishable_Bu5d8e3JqJV4OyvHmbLtHA_TjXh4fDI",
-                   plan: "d8a11024", login: "password", on: false };
+                   plan: "d8a11024", login: "password", on: true };
 // plan: the code of the team whose plan is shown to visitors without a link. login: "password" (e-mail and a password the
 // holdleder gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
 const supaLoginKind = () => (supaConf() || {}).login === "code" ? "code" : "password";
