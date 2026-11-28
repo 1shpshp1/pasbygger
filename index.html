@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (5)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (6)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -977,16 +977,28 @@ function showServerNote() {
    The training plan, the drill library and the statistics then come from the database too, so the sheet and Apps
    Script are not used at all. Each team's plan has a public link (<app>?hold=<code>) for players and parents; a
    logged-in coach sees their own team's plan. Empty: everything comes from the sheet, as before.
-   To try it on one phone first: localStorage.setItem("oevSupabase", JSON.stringify({ url: "…", key: "…" })). */
-const SUPABASE = { url: "", key: "", plan: "", login: "password" };
+   To try it on one phone first: open the app with ?database=ja (back to the sheet: ?database=nej); "on" switches it on
+   for everyone. (For tests: localStorage "oevSupabase" = { url, key } uses another project.) */
+const SUPABASE = { url: "https://hfagotulnrjvqwrwweez.supabase.co", key: "sb_publishable_Bu5d8e3JqJV4OyvHmbLtHA_TjXh4fDI",
+                   plan: "d8a11024", login: "password", on: false };
 // plan: the code of the team whose plan is shown to visitors without a link. login: "password" (e-mail and a password the
 // holdleder gives each coach; no e-mails are sent) or "code" (a code sent by e-mail; needs an e-mail sender in Supabase)
 const supaLoginKind = () => (supaConf() || {}).login === "code" ? "code" : "password";
 const SUPA_SESSION_KEY = "oevSupaSession";       // { refresh, exp (when the access token runs out), team, teams }
 const SUPA_LOGIN_DAYS = 14;                       // a personal login lasts 14 days after it was last used
+const SUPA_TRY_KEY = "oevDatabase";             // "ja": this phone uses the database (?database=ja), "nej": the sheet
+(function databaseFromAddress() {
+  try {
+    const want = new URLSearchParams(location.search).get("database");
+    if (want === "ja" || want === "nej") localStorage.setItem(SUPA_TRY_KEY, want);
+  } catch (e) { /* ignore */ }
+})();
 function supaConf() {
   try { const o = JSON.parse(localStorage.getItem("oevSupabase") || "null"); if (o && o.url && o.key) return o; } catch (e) { /* ignore */ }
-  return SUPABASE.url && SUPABASE.key ? SUPABASE : null;
+  let mine = null;
+  try { mine = localStorage.getItem(SUPA_TRY_KEY); } catch (e) { /* ignore */ }
+  const on = mine === "ja" || (SUPABASE.on && mine !== "nej");
+  return on && SUPABASE.url && SUPABASE.key ? SUPABASE : null;
 }
 const useSupabase = () => !!supaConf();
 function supaSession() {

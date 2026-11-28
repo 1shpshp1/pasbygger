@@ -1061,3 +1061,24 @@ test('With the database: log in with e-mail and the password the holdleder gave 
   assert.ok(!sb.some(x => /otp|verify/.test(x)), 'no e-mail asked for');
   assert.deepEqual(page.errors, []);
 });
+
+test('?database=ja makes this phone use the database (the plan of the club\'s team without a link), ?database=nej the sheet again', { skip }, async () => {
+  const srv = testServer(), page = await phone(srv, { loggedIn: false });
+  const asked = [];
+  await page.context().route('https://hfagotulnrjvqwrwweez.supabase.co/**', r => {
+    const url = new URL(r.request().url()), body = JSON.parse(r.request().postData() || '{}');
+    asked.push([url.pathname, body]);
+    if (url.pathname === '/rest/v1/rpc/get_plan') return r.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(srv.call('getPlan', '').result, { code: 'd8a11024', server: 6 })) });
+    r.fulfill({ contentType: 'application/json', body: 'true' });
+  });
+  assert.equal(await page.evaluate(() => useSupabase()), false, 'off unless asked for');
+  await page.goto(base + '?database=ja');
+  await page.waitForSelector('#sessions .card', { timeout: 15000 });
+  assert.equal(await page.evaluate(() => useSupabase()), true);
+  assert.equal(asked.find(a => a[0] === '/rest/v1/rpc/get_plan')[1].code, 'd8a11024');
+  await page.goto(base);                                                     // remembered on this phone
+  assert.equal(await page.evaluate(() => useSupabase()), true);
+  await page.goto(base + '?database=nej');
+  assert.equal(await page.evaluate(() => useSupabase()), false);
+  assert.deepEqual(page.errors, []);
+});
