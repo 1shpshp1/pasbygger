@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Pasbygger</string>
-    <string name="title_activity_main">Pasbygger</string>
-    <string name="package_name">dk.pasbygger.app</string>
-    <string name="custom_url_scheme">dk.pasbygger.app</string>
+    <string name="app_name">Træningsparat</string>
+    <string name="title_activity_main">Træningsparat</string>
+    <string name="package_name">dk.traeningsparat.app</string>
+    <string name="custom_url_scheme">dk.traeningsparat.app</string>
 </resources>

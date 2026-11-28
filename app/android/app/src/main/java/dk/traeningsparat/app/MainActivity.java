@@ -1,4 +1,4 @@
-package dk.pasbygger.app;
+package dk.traeningsparat.app;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -1,4 +1,4 @@
-# Pasbygger med database (Supabase)
+# Træningsparat med database (Supabase)
 
 Appen kan hente og gemme alt i en database i stedet for Google-arket: spillere, grupper, tilmeldte, kampe, kampsæt,
 hvert holds træningsplan, øvelsesbiblioteket og statistikken. Trænerne logger ind med deres egen e-mail og en kode,
@@ -24,7 +24,7 @@ Så længe `SUPABASE` i `index.html` er tom, bruger appen arket som før.
 3. **Login.** Under *Authentication*:
    - *Sign In / Providers → Email*: slå *Email* til og **slå "Allow new users to sign up" fra**, så kun inviterede kan logge ind.
    - *Emails → Magic Link*: sæt skabelonen til at vise koden, fx
-     `<h2>Din kode til Pasbygger</h2><p>{{ .Token }}</p>`.
+     `<h2>Din kode til Træningsparat</h2><p>{{ .Token }}</p>`.
    - Til rigtig brug: opsæt egen e-mailafsender (SMTP) under *Emails → SMTP Settings*; Supabases egen sender er
      begrænset til få e-mails i timen.
 4. **Klub, hold og trænere.** Tilføj trænerne under *Authentication → Users → Add user* (kun e-mail). Kør derefter i

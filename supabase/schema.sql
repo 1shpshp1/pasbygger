@@ -1,4 +1,4 @@
--- Pasbygger: the database (Supabase / PostgreSQL), version 2.
+-- Træningsparat (formerly Pasbygger): the database (Supabase / PostgreSQL), version 2.
 -- Paste the whole file into Supabase → SQL Editor → Run. It can be run again: it only adds what is missing and
 -- replaces the functions.
 --
@@ -417,7 +417,7 @@ create table if not exists drill_sources (
 );
 insert into drill_sources (id, name, credit, url, active) values
   ('dbu', 'DBU', 'Øvelse fra DBU''s øvelsesbank', 'https://www.dbu.dk', true),
-  ('egne', 'Pasbygger', 'Øvelse fra Pasbyggers eget bibliotek', '', false),
+  ('egne', 'Træningsparat', 'Øvelse fra Træningsparats eget bibliotek', '', false),
   ('fck', 'FCK', 'Øvelse fra FCK', 'https://fck.better-coaching.dk', false),
   ('fa', 'FA', 'Øvelse fra England Football', 'https://learn.englandfootball.com', false),
   ('nff', 'NFF', 'Øvelse fra Norges Fotballforbund', 'https://www.fotball.no', false)

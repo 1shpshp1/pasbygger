@@ -1,6 +1,6 @@
 {
-  "appId": "dk.pasbygger.app",
-  "appName": "Pasbygger",
+  "appId": "dk.traeningsparat.app",
+  "appName": "Træningsparat",
   "webDir": "www",
   "backgroundColor": "#AD152F",
   "ios": { "contentInset": "never" }

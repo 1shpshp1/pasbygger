@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "dk.pasbygger.app"
+    namespace = "dk.traeningsparat.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "dk.pasbygger.app"
+        applicationId "dk.traeningsparat.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

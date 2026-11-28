@@ -1,7 +1,7 @@
 # Builds the Android app (folder app/) from index.html. Run it by hand under Actions → "Android-app" → Run workflow,
 # or it runs by itself when the app changes on main. The result is under the run's "Artifacts":
-#  - pasbygger-test.apk: install it directly on an Android phone to try it (allow "unknown apps" when asked)
-#  - pasbygger-release.aab: for Google Play, only when the upload key is saved as secrets (see app/README.md)
+#  - traeningsparat-test.apk: install it directly on an Android phone to try it (allow "unknown apps" when asked)
+#  - traeningsparat-release.aab: for Google Play, only when the upload key is saved as secrets (see app/README.md)
 name: Android-app
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ jobs:
       - name: Test app (APK)
         run: cd android && ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
-        with: { name: pasbygger-test.apk, path: app/android/app/build/outputs/apk/debug/app-debug.apk }
+        with: { name: traeningsparat-test.apk, path: app/android/app/build/outputs/apk/debug/app-debug.apk }
       - name: Google Play (AAB, signed with the upload key)
         if: env.HAS_KEY == 'true'
         env:
@@ -42,4 +42,4 @@ jobs:
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
       - uses: actions/upload-artifact@v4
         if: hashFiles('app/android/app/build/outputs/bundle/release/*.aab') != ''
-        with: { name: pasbygger-release.aab, path: app/android/app/build/outputs/bundle/release/app-release.aab }
+        with: { name: traeningsparat-release.aab, path: app/android/app/build/outputs/bundle/release/app-release.aab }

@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Pasbygger</title>
+  <title>Træningsparat</title>
   <meta name="theme-color" content="#AD152F">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Pasbygger">
+  <meta name="apple-mobile-web-app-title" content="Træningsparat">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
   <style>
@@ -750,7 +750,7 @@
 <div id="sessions">
   <div class="loading" role="status">
     <div class="spinner" aria-hidden="true"></div>
-    <span>Indlæser Pasbygger…</span>
+    <span>Indlæser Træningsparat…</span>
   </div>
 </div>
 
@@ -803,7 +803,7 @@
 
 <div class="toast view-hidden" id="toast" role="status" aria-live="polite"></div>
 
-<p class="build" id="build">App-version 28. nov. 2026 (3)</p>
+<p class="build" id="build">App-version 28. nov. 2026 (4)</p>
 
 <div id="viewer" class="viewer view-hidden" role="dialog" aria-modal="true" aria-labelledby="v-title">
   <div class="v-top">
@@ -2749,7 +2749,7 @@ function openDrill(i) {
 }
 
 /* ---- training sessions in the same viewer ---- */
-/* The exercise ID in a link: from both the old and the new DBU address, and from a Pasbygger link (?d=ID) */
+/* The exercise ID in a link: from both the old and the new DBU address, and from a Træningsparat link (?d=ID) */
 function exerciseIdFromUrl(u) {
   const m = String(u || "").match(/[?&](?:exerciseId|id)=(\d+)/i);
   if (m) return m[1];
@@ -5711,7 +5711,7 @@ function copySessionLink(btn) {
 
 /* Opened through a training link: show that training straight away */
 /* FCK's drill bank has no address for a single drill (a drill opens as a pop-up on its front page).
-   So "Kopiér link" on an FCK drill gives a Pasbygger link instead, which opens the drill here. */
+   So "Kopiér link" on an FCK drill gives a Træningsparat link instead, which opens the drill here. */
 function isFckLink(u) {
   try { return new URL(u).hostname === "fck.better-coaching.dk"; } catch (e) { return false; }
 }

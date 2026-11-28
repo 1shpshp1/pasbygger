@@ -1,7 +1,7 @@
 {
-  "name": "pasbygger-app",
+  "name": "traeningsparat-app",
   "private": true,
-  "description": "Pasbygger as an app for the App Store and Google Play (Capacitor). The app itself is ../index.html.",
+  "description": "Træningsparat as an app for the App Store and Google Play (Capacitor). The app itself is ../index.html.",
   "license": "GPL-3.0",
   "scripts": {
     "copy": "node copy-web.js",

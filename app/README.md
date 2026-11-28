@@ -1,4 +1,4 @@
-# Pasbygger som app (App Store og Google Play)
+# Træningsparat som app (App Store og Google Play)
 
 Appen er den samme `index.html` som på GitHub Pages, pakket med [Capacitor](https://capacitorjs.com) til iOS og
 Android. Den taler stadig med det samme Google-ark gennem Apps Script, så ændringer i ark og server gælder for både
@@ -7,13 +7,13 @@ webappen og appen.
 - `app/android/` og `app/ios/`: de to app-projekter (genereret af Capacitor; ret kun her, hvis det er nødvendigt).
 - `app/assets/`: kilder til ikoner og startskærm. Kør `npm run icons` efter at have skiftet dem.
 - `app/copy-web.js`: kopierer appen ind i `app/www/` (bruges af `npm run sync`).
-- App-id: `dk.pasbygger.app` (i `capacitor.config.json`). Vælg det endelige id, før appen kommer i butikkerne:
+- App-id: `dk.traeningsparat.app` (i `capacitor.config.json`). Vælg det endelige id, før appen kommer i butikkerne:
   det kan ikke ændres bagefter.
 
 ## Prøv Android-appen nu
 
 1. På GitHub: **Actions → Android-app → Run workflow**.
-2. Når kørslen er færdig (ca. 5 minutter): hent **pasbygger-test.apk** under *Artifacts*.
+2. Når kørslen er færdig (ca. 5 minutter): hent **traeningsparat-test.apk** under *Artifacts*.
 3. Åbn filen på en Android-telefon og tillad installation fra ukendte kilder.
 
 ## iPhone (TestFlight)
@@ -37,7 +37,7 @@ den skal have Apples certifikat og profil.
 3. Gem dem på GitHub under *Settings → Secrets and variables → Actions*:
    `ANDROID_KEYSTORE_BASE64` (filen som base64: `base64 -w0 upload.jks`), `ANDROID_KEYSTORE_PASSWORD`,
    `ANDROID_KEY_ALIAS` og `ANDROID_KEY_PASSWORD`.
-4. Kør **Android-app** igen og hent **pasbygger-release.aab**. Upload den under *Test → Intern test* i Play Console.
+4. Kør **Android-app** igen og hent **traeningsparat-release.aab**. Upload den under *Test → Intern test* i Play Console.
 
 ## Ny version
 
